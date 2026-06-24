@@ -216,3 +216,6 @@ AGENTS.md
 
 # docs requirements file
 !docs/requirements_docs.txt
+
+# Claude Code local session settings
+.claude/

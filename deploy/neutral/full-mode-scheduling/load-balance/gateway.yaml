@@ -34,35 +34,6 @@ spec:
         role: gateway
     spec:
       terminationGracePeriodSeconds: 300
-      initContainers:
-      - name: download-tokenizer
-        image: llumnix-registry.cn-beijing.cr.aliyuncs.com/llumnix/python3:3.12-slim-bookworm
-        command: ["/bin/sh", "-c"]
-        args:
-        - |
-          pip3 install modelscope -i https://mirrors.aliyun.com/pypi/simple/ && \
-          pip3 install packaging -i https://mirrors.aliyun.com/pypi/simple/ && \
-          python3 << 'EOF'
-          from modelscope import snapshot_download
-          
-          model_dir = snapshot_download(
-              'Qwen/Qwen3-30B-A3B-FP8',
-              cache_dir='/tokenizers',
-              allow_patterns=['tokenizer.json', 'tokenizer_config.json']
-          )
-          
-          print(f"download tokenizer done: {model_dir}")
-          EOF
-        volumeMounts:
-        - name: tokenizer-storage
-          mountPath: /tokenizers
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "200m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
       containers:
       - name: gateway
         image: ${REPOSITORY}/gateway:${GATEWAY_IMAGE_TAG}
@@ -88,9 +59,9 @@ spec:
         - "--scheduling-policy"
         - "load-balance"
         - "--tokenizer-path"
-        - "/tokenizers/Qwen/Qwen3-30B-A3B-FP8"
+        - "/hf-cache/hub/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/8afb486c1db24fe5011ec46dfbe5b5dccdb575c2"
         - "--max-model-len"
-        - "40960"
+        - "8192"
         - "--enable-full-mode-scheduling=true"
         ports:
         - containerPort: 8089
@@ -116,9 +87,11 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
         volumeMounts:
-        - name: tokenizer-storage
-          mountPath: /tokenizers
+        - name: hf-cache
+          mountPath: /hf-cache
           readOnly: true
       volumes:
-      - name: tokenizer-storage
-        emptyDir: {}
+      - name: hf-cache
+        hostPath:
+          path: /NHNHOME/huggingface
+          type: Directory
