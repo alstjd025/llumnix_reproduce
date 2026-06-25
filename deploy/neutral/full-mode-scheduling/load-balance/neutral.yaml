@@ -75,7 +75,7 @@ spec:
           - name: HF_HUB_CACHE
             value: /hf-cache/hub
           - name: DP_SIZE_LOCAL
-            value: "4"
+            value: "8"
           - name: TP_SIZE
             value: "1"
           - name: TRITON_LIBCUDA_PATH
@@ -134,12 +134,12 @@ spec:
             limits:
               ephemeral-storage: 256Gi
               memory: 256Gi
-              nvidia.com/gpu: "4"
+              nvidia.com/gpu: "8"
             requests:
               cpu: 32
               ephemeral-storage: 256Gi
               memory: 256Gi
-              nvidia.com/gpu: "4"
+              nvidia.com/gpu: "8"
         - name: discovery
           image: ${REPOSITORY}/discovery:${DISCOVERY_IMAGE_TAG}
           command:
@@ -155,7 +155,7 @@ spec:
               --entrypoint_port 8000 \
               --kv_transfer_ip $(POD_IP) \
               --kv_transfer_port 28000 \
-              --dp_size_local 4 \
+              --dp_size_local 8 \
               --redis_address redis \
               --redis_port 6379
           env:
