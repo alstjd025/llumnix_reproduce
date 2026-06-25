@@ -223,11 +223,14 @@ kubectl exec -n llumnix neutral-0 -c vllm -- \
 
 ## 6. 제약 / 다음 단계
 
-- **불가(이 환경)**: live request migration, PD 분리(kvt), PD-KVS, SLO-aware. 전부 KV 전송에
-  RDMA(`/dev/infiniband/`)가 필요한데 이 컨테이너엔 노출돼 있지 않다. 현재 구성은
-  `LLUMNIX_ENABLE_MIGRATION=0`(초기 라우팅 로드밸런싱만).
-- **확장 후보**: 두 번째 동일 B200 호스트를 k3s **worker로 join** → 4 GPU / 2노드로 cross-node
-  로드밸런싱. (LAYER 1 우회설정을 그 호스트에도 적용하고 `k3s agent`로 join하면 됨. 아직 미구현.)
+- **이 4-GPU 환경에선 불가**: live request migration, PD 분리(kvt), PD-KVS, SLO-aware. 전부 KV 전송에
+  RDMA(`/dev/infiniband/`)가 필요한데 **이 컨테이너엔 IB가 노출돼 있지 않다**(cgroup이 open을 EPERM 차단).
+  현재 구성은 `LLUMNIX_ENABLE_MIGRATION=0`(초기 라우팅 로드밸런싱만).
+- **왜 안 되나 / 8-GPU에선 되나**: 4-GPU는 8-GPU 서버의 절반 조각 테넌트라 IB 미노출. **8-GPU 풀노드엔 IB가 딸려와
+  migration이 RDMA로 동작**한다(동료 노드에서 확인). 전체 조사·코드추적·8-GPU 켜는 법은
+  **[`notes/migration-rdma-and-8gpu-handoff.md`](notes/migration-rdma-and-8gpu-handoff.md)** 에 정리(다음 작업 핸드오프).
+- **확장 후보**: 두 번째 동일 B200 호스트를 k3s **worker로 join** → 멀티노드 cross-node 로드밸런싱.
+  (LAYER 1 우회설정을 그 호스트에도 적용하고 `k3s agent`로 join. 아직 미구현.)
 
 ---
 
