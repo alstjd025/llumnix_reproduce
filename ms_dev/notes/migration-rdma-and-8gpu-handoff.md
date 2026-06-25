@@ -110,13 +110,19 @@ IB가 되면, 순서:
 > 지금 환경은 **8-GPU 풀노드**라서 이전 4-GPU 환경과 달리 **InfiniBand가 노출돼 있을 것**(`ibv_devinfo`로 먼저 확인).
 > 할 일: (1) `ms_dev/scripts/00~04`로 베이스 셋업(8-GPU로 스케일), (2) 핸드오프 §5대로 **migration까지 켜기**.
 > 막히면 §3의 이미 검증된 실패를 반복하지 말고, 동료 NXC11의 working 설정을 받아 이식하는 §5-1을 우선해.
-> **※ 2026-06-25 NXC13에서 (1)은 완료, (2)는 §8 참고 — IB/RDMA는 더 이상 블로커가 아니고, 이미지 SW 갭(mooncake 미패치 / KVT의 EAS naming 요구)에서 막혔다. §8.4가 다음 할 일.**
+> **※ 2026-06-25 NXC13에서 (1)·(2) 모두 완료. migration 켜졌다(엔드투엔드 동작). 작동 레시피는 §9.**
+> **§8은 틀린 중간기록(읽되 결론은 믿지 말 것), §9가 진실원.** 핵심: Blade-KVT(HybridConnector `kvt+migration`) +
+> `naming_url:file:` + 엔진별 `BLLM_KVTRANS_PORT_BASE` + 스케줄러 `--colocated-rescheduling-mode=true`.
 
 > ⚠️ 이 핸드오프 문서가 새 노드의 clone에 있으려면 **이 변경이 GitHub에 push돼 있어야 한다**(아래).
 
 ---
 
 ## 8. 8-GPU(NXC13)에서 실제로 해본 결과 — 2026-06-25 (중요 업데이트)
+
+> ⚠️ **정정(2026-06-25 후반): 이 §8의 "migration은 못 켰다" 결론은 틀렸다. migration은 켜진다.**
+> §8.3은 MooncakeConnector(import 깨짐)와 잘못된 토폴로지 가정으로 막힌 *중간 기록*이다.
+> **실제 작동하는 레시피·근거는 아래 §9에 있다. §9가 최신 진실원.** §8은 디버깅 경로 기록으로만 남긴다.
 
 대상 호스트가 바뀌었다: **NXC13, B200 ×8 풀노드**. §0/§7이 기대한 환경이다.
 
@@ -154,3 +160,44 @@ single-pod 유지(파드당 8엔진) + RDMA 주입(`privileged`+`IPC_LOCK/SYS_RA
 - ⚠️ **반복 말 것**: ① MooncakeConnector를 손으로 shim(여러 심볼 skew, 런타임에서 또 터짐), ② 현 이미지로 KVT+`naming_url=fake://`(llumnix frontend가 무시), ③ single-pod에서 포트만 바꿔 재시도(포트는 이미 원인 아님, SW 갭이 원인).
 
 > 작업 후 known-good(`6d69a00`, migration OFF, 8엔진 로드밸런싱)으로 롤백해 둠. migration용 YAML 편집분은 **커밋 안 함**(블로커 때문). 위 분석이 단일 진실원.
+
+---
+
+## 9. ✅ migration 켜기 — 실제 작동 레시피 (2026-06-25, 검증됨)
+
+§8의 결론을 뒤집는다. **이 공식 이미지(`vllm:20260306-165123`, vLLM 0.12.1)로 migration이 엔드투엔드로 동작한다.** 커밋 `967384f`에 적용돼 있다(neutral.yaml=4×TP2 + migration, scheduler.yaml=rescheduling). 막힌 건 환경이 아니라 **설정 3가지**였다.
+
+### 9.1 왜 §8이 틀렸나 (핵심 교정)
+- **Mooncake가 아니라 Blade-KVT(HybridConnector)가 정답.** 공식 문서 `docs/source/design/llumlet/request_migration.md:63`: *"Mooncake Transfer Engine은 vLLM >0.12.0에서 migration 미지원, Blade-KVT를 써라."* 우리 이미지는 0.12.1 → MooncakeConnector는 import부터 깨지는 게 정상. §8.3①은 헛수고.
+- **EAS naming 불필요.** `docs/source/user_manual/llumlet_conf.md`의 "Migration Setup"에 `naming_url:"file:{dir}"` 템플릿이 있다. blade_kvt 네이티브에 **FSNAMING(파일 기반 naming)** 지원(`BLLM_KVTRANS_FSNAMING_*`). 공유 디렉토리 하나면 된다. §8.3의 "EAS 필요" 결론은 틀렸다.
+- 공식 deploy 레시피는 전부 `LLUMNIX_ENABLE_MIGRATION=0`이라 "out-of-box로 migration 데모"는 없다. 직접 켜야 한다.
+
+### 9.2 엔진 쪽 (`neutral.yaml`) — 켜는 데 필요한 것 전부
+1. **vLLM 커맨드에 `--kv-transfer-config`** (엔진별로 값 다르게, 단일 파드 N엔진이라):
+   `'{"kv_connector":"HybridConnector","kv_role":"kv_both","kv_connector_extra_config":{"backend":"kvt+migration","naming_url":"file:'"$NAMING_DIR"'","kvt_inst_id":"neutral-0-'"$i"'","rpc_port":'"$RPC_PORT"'}}'`
+   - `backend:"kvt+migration"` ← migration을 켜는 값("kvt"만 쓰면 PD 전송만, migration 안 됨).
+   - `naming_url:"file:/tmp/llumnix-kvt-naming"` ← 파일 naming, 시작 시 `mkdir -p`. (kv_role `kv_both` → NEUTRAL 유지)
+   - 엔진별 고유 `kvt_inst_id`, 엔진별 `rpc_port`(=28000+i*TP_SIZE).
+2. **`BLLM_KVTRANS_PORT_BASE=$((31218 + i*16))`** (엔진별!) ← **이게 빠지면 3/4 엔진이 죽는다.** ACCL/barex의 TCP 핸드셰이크 listener가 기본 포트 **31218/31219 고정**인데, 단일 파드 N엔진이 같은 IP라 `bind ... errno 98(EADDRINUSE)`로 충돌. 인스턴스별로 포트 윈도우를 띄워줘야 함. (증상: `xsimple_tcp_listener.cc:104 listen_v4, bind failed to port 31218`)
+3. **RDMA 주입**: `securityContext.privileged:true` + caps `IPC_LOCK/SYS_RAWIO/SYS_RESOURCE`, 스크립트에 `ulimit -SHl unlimited`, `/dev/infiniband` hostPath 마운트, env `VLLM_KV_TRANS_PROTOCOL=rdma`, `LLUMNIX_ENABLE_MIGRATION=1`.
+   - 이 환경 CapBnd=`a92c75fb`(IPC_LOCK 포함), memlock unlimited, `/dev/infiniband` open OK → 전부 충족(§8.2).
+
+### 9.3 스케줄러 쪽 (`scheduler.yaml`) — 이게 빠지면 엔진이 준비돼도 영원히 idle
+- **`--colocated-rescheduling-mode=true`** ← rescheduling 루프를 *실제로 돌리는* 플래그. ⚠️ **`--enable-rescheduling`은 효과 없다**(config엔 찍히지만 루프가 안 돈다). 참조본 `slo-aware/adaptive-pd/scheduler.yaml`이 colocated 모드를 씀.
+- `--rescheduling-policies neutral_load,neutral_failover` (neutral 모드는 `neutral_load`가 부하기반 정책. 스케줄러 로그 `rescheduling_policy.go:93 Rescheduling initialized, policies:[neutral_load neutral_failover]`로 수락 확인).
+- 데모용으로 임계값 낮춤: `--rescheduling-neutral-load-threshold 0.003`, `--rescheduling-load-balance-threshold 0.1`. (KV 캐시가 인스턴스당 ~154만 토큰이라 기본 임계 1은 사실상 안 걸린다.)
+
+### 9.4 검증된 증거 (엔드투엔드)
+- 엔진: `kv_transfer_impl.py: init kvt client/server ... protocols=[RDMA_DIRECT]`, ACCL가 실제 `mlx5_0~9` 잡음, `kvt_migration_frontend.py:95 MigrationFrontend initialized successfully` ×4.
+- 스케줄러: 부하 불균형 시 `rescheduling_policy.go:132 Generate rescheduling pairs, count: 1`.
+- 엔진 수신: `rpc_server.py:252 Received Migration request. MigrationParams(migration_type='TOKEN', mig_req_policy='SR', num_reqs=1, num_tokens=1024)`. → 스케줄러→llumlet→엔진 명령 경로 완전 동작.
+
+### 9.5 완료된 KV 전송 한 건을 "보려면" (다음 사람용 튜닝)
+관측의 catch-22: migration은 **불균형**에서 발동하는데 —
+- 게이트웨이 경유 부하 → 스케줄러가 추적하지만 load-balance dispatch가 균등 → 불균형 안 생김 → 쌍 0개.
+- 인스턴스에 직접(`localhost:8000`) 부하 → 불균형은 생기지만 스케줄러 local account에 없는 요청 → 명령은 나도 `kvt_migration_frontend.py:254 No requests to migrate`.
+→ **완료 데모엔 "스케줄러가 추적하는 불균형"이 필요.** 방법: (a) 정식 벤치(`deploy/benchmark/`)로 이질적 길이 부하를 게이트웨이에 흘려 자연 불균형 유도, (b) `--scheduling-policy flood`로 한쪽에 몰아주기, (c) failover migration(인스턴스 하나 죽여 `neutral_failover` 발동) — 이게 추적/불균형 둘 다 만족해 가장 확실. `loaded/saved`(`hybrid_modules.py:843 HybridScheduler status`)나 `scheduler_rescheduling_total`(observability 대시보드)로 확인.
+
+### 9.6 운영 주의
+- 데모용 낮은 임계값은 실부하에서 migration thrashing 위험 → 운영 시 `rescheduling-*-threshold` 올릴 것.
+- 단일 파드 N엔진은 모든 포트(side_channel/rpc/ACCL/listener)가 IP당 충돌하니 **엔진별 포트 오프셋이 필수**. 멀티노드/파드당 1엔진이면 이 복잡성은 사라진다(각자 IP).
