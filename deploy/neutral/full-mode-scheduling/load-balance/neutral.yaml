@@ -29,13 +29,17 @@ spec:
               find /dev/shm -type f -delete
 
               #################
-              # RUN vLLM (dense model: Llama-3-8B-Instruct, one independent instance per local GPU)
+              # RUN vLLM (dense Llama-3-8B-Instruct): DP_SIZE_LOCAL independent instances, each
+              # tensor-parallel across TP_SIZE local GPUs. Here 4 instances x TP=2 = 8 B200s.
+              # No MoE/EP/DeepEP. TP uses NVLink between the 2 GPUs (not RDMA).
               #################
-              # Launch one vLLM server per local GPU (TP=1). No MoE/EP/DeepEP/DP — this box has no RDMA.
+              # Instance i owns GPUs [TP_SIZE*i .. TP_SIZE*i+TP_SIZE-1] (i=0 -> 0,1; i=1 -> 2,3; ...).
               for i in $(seq 0 $((DP_SIZE_LOCAL - 1))); do
                 PORT=$((8000 + i))
+                GPU_START=$((TP_SIZE * i))
+                GPUS=$(seq -s, "$GPU_START" $((GPU_START + TP_SIZE - 1)))
 
-                CUDA_VISIBLE_DEVICES=$i vllm serve \
+                CUDA_VISIBLE_DEVICES=$GPUS vllm serve \
                   meta-llama/Meta-Llama-3-8B-Instruct \
                   --port $PORT \
                   --tensor-parallel-size $TP_SIZE \
@@ -75,9 +79,9 @@ spec:
           - name: HF_HUB_CACHE
             value: /hf-cache/hub
           - name: DP_SIZE_LOCAL
-            value: "8"
+            value: "4"
           - name: TP_SIZE
-            value: "1"
+            value: "2"
           - name: TRITON_LIBCUDA_PATH
             value: /usr/lib64
           - name: VLLM_SKIP_P2P_CHECK
@@ -155,7 +159,7 @@ spec:
               --entrypoint_port 8000 \
               --kv_transfer_ip $(POD_IP) \
               --kv_transfer_port 28000 \
-              --dp_size_local 8 \
+              --dp_size_local 4 \
               --redis_address redis \
               --redis_port 6379
           env:
