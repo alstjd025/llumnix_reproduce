@@ -5,12 +5,24 @@
 # Every value below can be overridden from the environment, e.g.
 #   NS=llumnix2 MODE=neutral/lite-mode-scheduling/load-balance ./03-deploy.sh
 
+# ---- PATH / kube ----
+# k3s installs kubectl/k3s under /usr/local/bin. Non-interactive script runs may not have it on
+# PATH (the user's login shell does, but `bash ./03-deploy.sh` from cron/CI may not) -> ensure it.
+case ":$PATH:" in *":/usr/local/bin:"*) ;; *) PATH="/usr/local/bin:$PATH"; export PATH ;; esac
+# kubectl reads ~/.kube/config by default (00/01 place it). Fall back to the in-cluster file.
+[ -z "${KUBECONFIG:-}" ] && [ ! -s "$HOME/.kube/config" ] && [ -r /etc/rancher/k3s/k3s.yaml ] \
+  && export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+
 # ---- cluster / host ----
-NODE="${NODE:-$(hostname | tr 'A-Z' 'a-z')}" # k3s node name (== lowercased hostname; nxc7 here, was nxc7-1)
+NODE="${NODE:-$(hostname | tr 'A-Z' 'a-z')}" # k3s node name (== lowercased hostname; nxc13 here, was nxc7/nxc7-1)
 CONTAINERD_XFS="${CONTAINERD_XFS:-/NHNHOME/k3s-containerd}"  # containerd root on local xfs
 
 # ---- Llumnix deployment ----
-REPO_DIR="${REPO_DIR:-/home/nxclab/llumnix}"
+# REPO_DIR is auto-derived from this file's location (repo/ms_dev/scripts/lib.sh -> repo), so the
+# scripts work no matter where the repo is cloned (this repo lives at .../llumnix_reproduce, not
+# the old .../llumnix). Override REPO_DIR=... to point elsewhere.
+_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_DIR="${REPO_DIR:-$(cd "$_LIB_DIR/../.." && pwd)}"
 DEPLOY_DIR="${DEPLOY_DIR:-$REPO_DIR/deploy}"
 MS_DEV_DIR="${MS_DEV_DIR:-$REPO_DIR/ms_dev}"
 DEPLOY_PATCH="${DEPLOY_PATCH:-$MS_DEV_DIR/llumnix-deploy.patch}"  # YAML customizations, for a fresh clone

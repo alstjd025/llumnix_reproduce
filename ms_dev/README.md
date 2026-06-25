@@ -7,9 +7,11 @@
 세 값으로 정해진다(현재 4; 2장 환경이면 2).
 
 > 작성/검증: 2026-06-23 (NXC7-1, 2×B200). 스크립트화·자기완결화: 2026-06-24.
-> **2026-06-24 마이그레이션: 새 호스트 `NXC7`(4×B200)로 이전** — 노드 이름이 `nxc7-1`→`nxc7`로
-> 바뀌어 `lib.sh`가 hostname에서 유도하도록 했고, 이 호스트의 `gcsudo`(argv 단어분할) 이슈와
-> AppArmor 이슈를 스크립트에 코드화했다(트러블슈팅 ⑤⑥). 4-GPU로 스케일업해 검증 완료(12/11/12/12 분산).
+> **2026-06-25 현재: 호스트 `NXC13`(8×B200 풀노드).** 토폴로지는 **4 인스턴스 × TP=2**(GPU 2장씩)이고,
+> 이전 4-GPU에서 막혔던 **RDMA live migration이 켜져 동작**한다. 위 본문의 "GPU당 인스턴스 1개"는 기본
+> 예시이며 `DP_SIZE_LOCAL`·`TP_SIZE`로 정한다. 이번 세션 전체 이슈/해결은
+> **[`notes/session-2026-06-25-issues-and-fixes.md`](notes/session-2026-06-25-issues-and-fixes.md)**, migration 레시피는
+> **[handoff §9](notes/migration-rdma-and-8gpu-handoff.md)**.
 > **배경 지식은 전부 `notes/` 에 박제돼 있다.** 이 폴더 하나로 처음부터 재현 가능하다 — 외부 메모리 불필요.
 
 ---
@@ -219,18 +221,32 @@ kubectl exec -n llumnix neutral-0 -c vllm -- \
 ```
 엔진 단독 확인은 같은 방식으로 `localhost:8000`(8000~8003 중 하나)을 친다.
 
+**⑧ 새 컨테이너에서 `git commit`이 `Author identity unknown`으로 실패**
+overlay라 git 설정도 휘발한다. 커밋 전에:
+`git config user.name alstjd025 && git config user.email alstjd025@gmail.com`.
+
+**⑨ `bash ./03-deploy.sh`가 `kubectl not found` / 엉뚱한 repo 경로를 봄**
+이제 `lib.sh`가 자동 처리한다: `REPO_DIR`을 파일 위치에서 유도(클론 경로 무관), `/usr/local/bin`을 PATH에
+보장, `KUBECONFIG` 폴백. **수동 `REPO_DIR=`/`export PATH` 불필요.** (예전엔 둘 다 수동이었음)
+
+**⑩ migration 켰는데 3/4 엔진이 `EADDRINUSE`(errno 98, port 31218)로 죽음**
+단일 파드 N엔진이 같은 IP라 ACCL/KVT의 TCP listener 기본 포트가 충돌. 엔진별
+`BLLM_KVTRANS_PORT_BASE`(+side_channel/rpc_port 오프셋)로 해결. → [issues-and-fixes M5](notes/session-2026-06-25-issues-and-fixes.md), [handoff §9.2](notes/migration-rdma-and-8gpu-handoff.md)
+
 ---
 
 ## 6. 제약 / 다음 단계
 
-- **이 4-GPU 환경에선 불가**: live request migration, PD 분리(kvt), PD-KVS, SLO-aware. 전부 KV 전송에
-  RDMA(`/dev/infiniband/`)가 필요한데 **이 컨테이너엔 IB가 노출돼 있지 않다**(cgroup이 open을 EPERM 차단).
-  현재 구성은 `LLUMNIX_ENABLE_MIGRATION=0`(초기 라우팅 로드밸런싱만).
-- **왜 안 되나 / 8-GPU에선 되나**: 4-GPU는 8-GPU 서버의 절반 조각 테넌트라 IB 미노출. **8-GPU 풀노드엔 IB가 딸려와
-  migration이 RDMA로 동작**한다(동료 노드에서 확인). 전체 조사·코드추적·8-GPU 켜는 법은
-  **[`notes/migration-rdma-and-8gpu-handoff.md`](notes/migration-rdma-and-8gpu-handoff.md)** 에 정리(다음 작업 핸드오프).
-- **확장 후보**: 두 번째 동일 B200 호스트를 k3s **worker로 join** → 멀티노드 cross-node 로드밸런싱.
-  (LAYER 1 우회설정을 그 호스트에도 적용하고 `k3s agent`로 join. 아직 미구현.)
+> 📌 **현재 NXC13(8-GPU)에서는 토폴로지 = 4 인스턴스 × TP=2, 그리고 RDMA live migration이 켜져 동작한다**(커밋 `967384f`).
+> 아래 "불가" 서술은 **이전 NXC7(4-GPU)** 기록이다. 이번 세션 전체 이슈/해결: **[`notes/session-2026-06-25-issues-and-fixes.md`](notes/session-2026-06-25-issues-and-fixes.md)**, migration 작동 레시피: **[handoff §9](notes/migration-rdma-and-8gpu-handoff.md)**.
+
+- **(NXC7 4-GPU에선 불가였던 것)**: live migration·PD·PD-KVS·SLO-aware. KV 전송에 RDMA(`/dev/infiniband/`)가 필요한데
+  4-GPU 컨테이너엔 IB 미노출(cgroup EPERM). → **NXC13 8-GPU 풀노드에선 IB가 노출돼 해소됨.**
+- **migration 켜는 법(요약, 8-GPU)**: Blade-KVT(HybridConnector `backend:"kvt+migration"`) + `naming_url:"file:..."`(EAS 불필요) +
+  엔진별 `BLLM_KVTRANS_PORT_BASE` + RDMA 주입(privileged/IPC_LOCK/`/dev/infiniband`) + 스케줄러 `--colocated-rescheduling-mode=true`.
+  전체는 [handoff §9](notes/migration-rdma-and-8gpu-handoff.md). ⚠️ Mooncake는 vLLM>0.12.0(이 이미지 0.12.1)에서 migration 미지원 → KVT를 써라.
+- **확장 후보**: 두 번째 동일 B200 호스트를 k3s **worker로 join** → 멀티노드 cross-node 로드밸런싱/migration.
+  (파드당 1엔진/노드별 IP라 단일파드 N엔진의 포트충돌 복잡성도 사라짐. 아직 미구현.)
 
 ---
 
@@ -246,3 +262,7 @@ kubectl exec -n llumnix neutral-0 -c vllm -- \
   자동 적용(수동 실행 제거). 단, 컨테이너 재생성 시 유닛 자체가 사라지므로 entrypoint 훅이 더 확실.
 - 2번째 노드 join 스크립트(`05-join-worker.sh`): 서버 토큰 + `k3s agent` + LAYER1 우회.
 - `make`/단일 `up.sh` 래퍼로 `01→02→03→04` 묶기.
+- ✅ **(완료 2026-06-25) `lib.sh` REPO_DIR 자동유도 + PATH/KUBECONFIG 보장** — 클론 경로/비대화형 PATH 문제 제거(트러블슈팅 ⑨).
+- **토폴로지 파라미터화**: `DP_SIZE_LOCAL`/`TP_SIZE`를 env로 받아 `03`이 YAML에 주입(지금은 수동 편집; 4×TP2는 커밋 `f0c66be`).
+- **migration 토글**: `ENABLE_MIGRATION=1`이면 KVT/RDMA 블록 + 엔진별 포트 + 스케줄러 `--colocated-rescheduling-mode`를
+  자동 주입(지금은 YAML 하드코딩, 커밋 `967384f`). + `06-migration-smoke.sh`(인스턴스 kill→`neutral_failover` 발동 확인).
