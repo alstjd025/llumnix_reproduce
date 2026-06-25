@@ -110,5 +110,47 @@ IB가 되면, 순서:
 > 지금 환경은 **8-GPU 풀노드**라서 이전 4-GPU 환경과 달리 **InfiniBand가 노출돼 있을 것**(`ibv_devinfo`로 먼저 확인).
 > 할 일: (1) `ms_dev/scripts/00~04`로 베이스 셋업(8-GPU로 스케일), (2) 핸드오프 §5대로 **migration까지 켜기**.
 > 막히면 §3의 이미 검증된 실패를 반복하지 말고, 동료 NXC11의 working 설정을 받아 이식하는 §5-1을 우선해.
+> **※ 2026-06-25 NXC13에서 (1)은 완료, (2)는 §8 참고 — IB/RDMA는 더 이상 블로커가 아니고, 이미지 SW 갭(mooncake 미패치 / KVT의 EAS naming 요구)에서 막혔다. §8.4가 다음 할 일.**
 
 > ⚠️ 이 핸드오프 문서가 새 노드의 clone에 있으려면 **이 변경이 GitHub에 push돼 있어야 한다**(아래).
+
+---
+
+## 8. 8-GPU(NXC13)에서 실제로 해본 결과 — 2026-06-25 (중요 업데이트)
+
+대상 호스트가 바뀌었다: **NXC13, B200 ×8 풀노드**. §0/§7이 기대한 환경이다.
+
+### 8.1 베이스 셋업: 성공
+- `00~04` 그대로, `neutral.yaml` 세 값(`DP_SIZE_LOCAL`/`nvidia.com/gpu` req+lim/discovery `--dp_size_local`)을 **8**로 스케일 → **8엔진 Ready, 로드밸런싱 동작**(24요청 → 3/4/5/7/5/4/4/3). 커밋 `6d69a00`(known-good).
+- 노드명은 `nxc13`(hostname 유도 정상). vLLM 25GB 이미지는 `/NHNHOME`에 없어 재-pull(수 분).
+
+### 8.2 IB/RDMA 전제: **이번엔 충족됨** (§3의 블로커는 사라졌다)
+- `ls /dev/infiniband` → `uverbs0~9`(`crw-rw-rw-`), `ibv_devinfo` → mlx5_0..9 `PORT_ACTIVE`.
+- `python3 -c "import os;os.open('/dev/infiniband/uverbs0',os.O_RDWR)"` → **EPERM 안 남**(4-GPU에선 났음).
+- `grep CapBnd /proc/self/status` → `a92c75fb` (= **IPC_LOCK 포함**, 4-GPU의 `a92c35fb`엔 없었음), `ulimit -l` = unlimited.
+- 즉 **RDMA reg_mr 가능** → §3에서 크래시하던 "KV connector가 KV메모리 등록"을 **넘어섰다**. 막힌 지점이 RDMA가 아니라 그 위(connector/naming SW 계층)로 이동했다.
+
+### 8.3 migration 시도와 **새 블로커(이미지 SW 갭)** — 검증된 실패, 반복 말 것
+single-pod 유지(파드당 8엔진) + RDMA 주입(`privileged`+`IPC_LOCK/SYS_RAWIO/SYS_RESOURCE`, `ulimit -SHl unlimited`, `/dev/infiniband` hostPath, `VLLM_KV_TRANS_PROTOCOL=rdma`) + `LLUMNIX_ENABLE_MIGRATION=1`로 두 connector를 모두 시도. 코드 추적으로 알아낸 것:
+
+- **side_channel_port 공식**(mooncake_connector_v1.py:200): `6557 + dp_rank*tp`. 우리 8엔진은 전부 독립 `vllm serve`(dp_rank=0,tp=1) → **전부 6557로 충돌**(=§3가 본 것). 엔진별 `VLLM_MOONCAKE_SIDE_CHANNEL_PORT=6557+i`로 회피 가능. mooncake rpc_port는 `get_rpc_port()`로 P2PHANDSHAKE 자동할당이라 14579 충돌은 실제론 안 남.
+- **MooncakeConnector**(P2P, naming 불필요 — §1이 권한 길): vLLM `KVConnectorFactory` 빌트인 레지스트리에 **미등록**. `kv_connector_module_path:"mooncake.mooncake_connector_v1"`로 동적로드는 되나, 그 모듈이 **구버전 vLLM API에 의존**해서 import 자체가 깨짐:
+  - `mooncake_connector_v1.py:25` `from vllm.attention.selector import backend_name_to_enum` → **이 vLLM엔 그 심볼 없음**.
+  - 추가로 `from vllm.platforms import _Backend`(import 실패), `_Backend.FLASHINFER_VLLM_V1` / `PALLAS_VLLM_V1`(현 `AttentionBackendEnum`엔 그 멤버명 없음, line 432-433) 등 **여러 옛 API**를 씀. = 한 줄 shim 아님, 모듈 전체가 구버전용.
+  - llumnix 에러 메시지가 직접 말함: *"ensure 'mooncake_connector_v1' is correctly installed **with the llumnix patch**"* → **이 이미지엔 그 패치가 미적용.**
+- **HybridConnector**(backend `kvt`): 팩토리에 **빌트인 등록 + llumnix compat 셰임 보유**. import OK, KV 등록 OK. 그런데 migration frontend가 **naming 서비스 필수**:
+  - `kvt_migration_frontend.py:126` `naming_url = kv_transfer_config.get_from_extra_config("naming_url","badbad")` → 기본 `badbad` → `connect_naming()` → **`RuntimeError: unrecognized naming url`**.
+  - naming 클라이언트 = `EASNamingClient`(Alibaba EAS naming, `kvtransfer_ops.*.so`). blade_kvt의 KVS backend는 `naming_url=="fake://"`면 naming을 건너뛰지만(P2P), **llumnix의 kvt frontend는 fake:// 우회가 없어 무조건 connect_naming 호출** → 회피 불가.
+  - 레포 참조본(`slo-aware/base`, `pd*`)은 전부 HybridConnector지만 **naming_url을 안 줌** → 그쪽은 migration frontend(naming)를 안 켜고 PD KV전송만 쓰는 구성이거나, EAS가 있는 환경 전제. 우리처럼 `LLUMNIX_ENABLE_MIGRATION=1`+neutral이면 naming에서 막힌다.
+
+### 8.4 결론 + 다음 사람 할 일
+- **환경(IB/RDMA)은 더 이상 블로커가 아니다.** 막는 건 **이 vLLM 이미지(`vllm:20260306-165123`)의 패키징**: (a) mooncake 모듈이 이 vLLM에 맞게 패치 안 됨, (b) KVT migration이 Alibaba EAS naming을 요구.
+- **그래서 §5-1(동료 NXC11의 working 설정 이식)이 여전히 정답이다.** 단 이제 필요한 건 "config"만이 아니라 **NXC11이 쓰는 vLLM 이미지 태그**(= llumnix-patched mooncake가 들어간 빌드)와, KVT라면 그들이 띄운 **naming 서비스 주소(`naming_url`)**다. NXC11 vllm 파드에서:
+  - `ps aux | grep vllm` 의 `--kv-transfer-config` 전체(특히 `kv_connector`/`naming_url`/`backend`),
+  - `kubectl get pod <그쪽 vllm> -o yaml | grep image:` (이미지 태그),
+  - `python3 -c "import mooncake.mooncake_connector_v1"` 가 그쪽 이미지에선 되는지(되면 패치된 빌드),
+  - naming 파드/서비스가 있는지(`kubectl get pod,svc -A | grep -iE 'naming|eas|etcd'`).
+- 대안: 이 vLLM 버전과 맞는 mooncake 휠(llumnix patch 포함)을 구해 이미지에 넣거나, EAS-호환 naming을 세우는 것 — 둘 다 외부 아티팩트 필요.
+- ⚠️ **반복 말 것**: ① MooncakeConnector를 손으로 shim(여러 심볼 skew, 런타임에서 또 터짐), ② 현 이미지로 KVT+`naming_url=fake://`(llumnix frontend가 무시), ③ single-pod에서 포트만 바꿔 재시도(포트는 이미 원인 아님, SW 갭이 원인).
+
+> 작업 후 known-good(`6d69a00`, migration OFF, 8엔진 로드밸런싱)으로 롤백해 둠. migration용 YAML 편집분은 **커밋 안 함**(블로커 때문). 위 분석이 단일 진실원.
