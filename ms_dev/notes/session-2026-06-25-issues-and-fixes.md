@@ -31,6 +31,7 @@
 |---|---|---|
 | T1 | 8-GPU로 스케일 | `neutral.yaml` 세 값(`DP_SIZE_LOCAL`/`nvidia.com/gpu` req+lim/discovery `--dp_size_local`)을 4→8. 커밋 `6d69a00` |
 | T2 | **GPU 2개씩 × 4 인스턴스(TP=2) 요청** | `DP_SIZE_LOCAL 8→4`, `TP_SIZE 1→2`, discovery `--dp_size_local 4`, `nvidia.com/gpu`는 8 유지. GPU 핀닝을 `CUDA_VISIBLE_DEVICES`를 `TP_SIZE` 기반 범위(`seq`)로 일반화(인스턴스 i → GPU `[TP*i .. TP*i+TP-1]`). 커밋 `f0c66be` |
+| **T3** | **TP=2가 깨진 출력(garbage)을 냄** ⚠️ | **증상**: TP=1은 정상인데 TP=2면 4엔진 전부 "The capital of France is"→"the best way to get the most out of the most out"(반복/무의미). `temperature=0`이라 결정적. **NVLink·P2P는 멀쩡**(`nvidia-smi topo -m`=NV18, P2P 전부 OK)인데도 깨짐. **원인**: vLLM의 **custom all-reduce 커널이 B200에서 TP>1일 때 잘못된 값**을 냄(NCCL 아닌 자체 P2P all-reduce). **해법**: vllm serve에 **`--disable-custom-all-reduce`**(NCCL all-reduce로 폴백) → 즉시 정상("Paris…", "2+2=4"). 커밋 `967384f` 위에 적용. **migration과 무관**(migration OFF에서도 동일했음). **TP>1 쓰면 항상 이 플래그 필요.** |
 
 > TODO(스크립트화): 지금은 토폴로지가 YAML 하드코딩. `DP_SIZE_LOCAL`/`TP_SIZE`를 env로 받아 `03-deploy.sh`가 `sed`/kustomize로 주입하면 한 줄로 바뀜. (README §7 TODO와 동일)
 

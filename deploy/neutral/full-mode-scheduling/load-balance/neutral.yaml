@@ -65,6 +65,7 @@ spec:
                   meta-llama/Meta-Llama-3-8B-Instruct \
                   --port $PORT \
                   --tensor-parallel-size $TP_SIZE \
+                  --disable-custom-all-reduce \
                   --max-model-len 8192 \
                   --gpu-memory-utilization 0.6 \
                   --async-scheduling \

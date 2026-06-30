@@ -233,6 +233,12 @@ overlay라 git 설정도 휘발한다. 커밋 전에:
 단일 파드 N엔진이 같은 IP라 ACCL/KVT의 TCP listener 기본 포트가 충돌. 엔진별
 `BLLM_KVTRANS_PORT_BASE`(+side_channel/rpc_port 오프셋)로 해결. → [issues-and-fixes M5](notes/session-2026-06-25-issues-and-fixes.md), [handoff §9.2](notes/migration-rdma-and-8gpu-handoff.md)
 
+**⑪ TP>1(예: TP=2)인데 출력이 깨진 무의미 텍스트(garbage)** ⚠️ **(TP 쓰면 필수)**
+TP=1은 정상인데 TP=2면 "capital of France"→"the best way to get the most out…" 같은 반복/엉터리.
+**NVLink·P2P는 정상**(`nvidia-smi topo -m`=NV18, `topo -p2p r`=OK)인데도 깨진다 = vLLM **custom
+all-reduce 커널이 B200/TP>1에서 잘못된 값**을 내는 것. → vllm serve에 **`--disable-custom-all-reduce`**
+추가(NCCL all-reduce 폴백) → 즉시 정상. migration과 무관. ([issues-and-fixes T3](notes/session-2026-06-25-issues-and-fixes.md))
+
 ---
 
 ## 6. 제약 / 다음 단계
