@@ -17,6 +17,12 @@ spec:
         - name: vllm
           image: ${REPOSITORY}/vllm:${VLLM_IMAGE_TAG}
           securityContext:
+            privileged: true
+            capabilities:
+              add:
+              - IPC_LOCK
+              - SYS_RAWIO
+              - SYS_RESOURCE
             runAsGroup: 0
             runAsUser: 0
           imagePullPolicy: IfNotPresent
@@ -28,17 +34,38 @@ spec:
               # Clear /dev/shm on start to prevent running out of space when crashes occur
               find /dev/shm -type f -delete
 
+              # unlimit memlock so Blade-KVT can register the KV cache as an RDMA memory region
+              ulimit -SHl unlimited
+              # File-based naming dir for inter-instance discovery (no Alibaba EAS needed); all
+              # local instances share this container fs, so they find each other's KVT endpoints here.
+              NAMING_DIR=/tmp/llumnix-kvt-naming
+              mkdir -p "$NAMING_DIR"
+
               #################
               # RUN vLLM (dense Llama-3-8B-Instruct): DP_SIZE_LOCAL independent instances, each
               # tensor-parallel across TP_SIZE local GPUs. Here 4 instances x TP=2 = 8 B200s.
-              # No MoE/EP/DeepEP. TP uses NVLink between the 2 GPUs (not RDMA).
+              # MIGRATION ON via Blade-KVT (HybridConnector). Mooncake does NOT support migration on
+              # vLLM >0.12.0 (this image is 0.12.1), so KVT is the path.
+              # ⚠️ backend MUST be "migration" (migration-only), NOT "kvt+migration": "kvt" is the
+              # PD-disaggregation backend that treats EVERY request as needing a remote KV load
+              # (ali_llumnix_disagg defaults true). In neutral mode the gateway never sets local-prefill,
+              # so requests load wrong/absent KV -> garbage output (single engine aborts "no p"). The
+              # migration-only backend processes requests locally and transfers KV only on real migration.
+              # naming_url=file:$NAMING_DIR (file-system naming, no EAS). Each instance needs a unique
+              # kvt_inst_id and a distinct rpc_port window (TP_SIZE ports each) to avoid collisions.
+              # The KVT/ACCL transport ALSO opens a fixed TCP handshake listener whose base port is
+              # BLLM_KVTRANS_PORT_BASE (default 31218, +1 per TP rank). Since all instances share this
+              # pod's IP, give each a distinct BLLM_KVTRANS_PORT_BASE window or they EADDRINUSE-collide.
               #################
               # Instance i owns GPUs [TP_SIZE*i .. TP_SIZE*i+TP_SIZE-1] (i=0 -> 0,1; i=1 -> 2,3; ...).
               for i in $(seq 0 $((DP_SIZE_LOCAL - 1))); do
                 PORT=$((8000 + i))
                 GPU_START=$((TP_SIZE * i))
                 GPUS=$(seq -s, "$GPU_START" $((GPU_START + TP_SIZE - 1)))
+                RPC_PORT=$((28000 + i * TP_SIZE))
+                KVT_PORT_BASE=$((31218 + i * 16))
 
+                BLLM_KVTRANS_PORT_BASE=$KVT_PORT_BASE \
                 CUDA_VISIBLE_DEVICES=$GPUS vllm serve \
                   meta-llama/Meta-Llama-3-8B-Instruct \
                   --port $PORT \
@@ -47,6 +74,7 @@ spec:
                   --max-model-len 8192 \
                   --gpu-memory-utilization 0.6 \
                   --async-scheduling \
+                  --kv-transfer-config '{"kv_connector":"HybridConnector","kv_role":"kv_both","kv_connector_extra_config":{"backend":"migration","naming_url":"file:'"$NAMING_DIR"'","kvt_inst_id":"neutral-0-'"$i"'","rpc_port":'"$RPC_PORT"'}}' \
                   &
               done
 
@@ -66,9 +94,12 @@ spec:
           - name: VLLM_ENABLE_LLUMNIX
             value: "1"
           - name: LLUMNIX_ENABLE_MIGRATION
-            value: "0"
+            value: "1"
           - name: LLUMNIX_INSTANCE_TYPE
             value: "neutral"
+          # KV transfer over RDMA/InfiniBand (NXC13 full node exposes /dev/infiniband).
+          - name: VLLM_KV_TRANS_PROTOCOL
+            value: rdma
 
           # model source: pre-downloaded HuggingFace cache on Lustre, offline (no token, no download)
           - name: VLLM_USE_MODELSCOPE
@@ -135,6 +166,8 @@ spec:
           - name: hf-cache
             mountPath: /hf-cache
             readOnly: true
+          - name: infiniband-devices
+            mountPath: /dev/infiniband
           resources:
             limits:
               ephemeral-storage: 256Gi
@@ -176,5 +209,9 @@ spec:
         - name: hf-cache
           hostPath:
             path: /NHNHOME/huggingface
+            type: Directory
+        - name: infiniband-devices
+          hostPath:
+            path: /dev/infiniband
             type: Directory
   
