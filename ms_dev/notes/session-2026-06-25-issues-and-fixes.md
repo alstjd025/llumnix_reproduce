@@ -51,6 +51,7 @@
 | M6 | **스케줄러가 명령을 안 냄** | `--enable-rescheduling`만 줌 → config엔 찍히나 rescheduling 루프가 안 돔(엔진은 준비됐는데 영원히 idle) | **`--colocated-rescheduling-mode=true`** 가 루프를 돌림. (`rescheduling_policy.go:103 Starting rescheduling loop`) |
 | M7 | 임계값 과다 | KV 캐시가 인스턴스당 ~154만 토큰이라 기본 임계 1은 사실상 안 걸림 | 데모용 `--rescheduling-neutral-load-threshold 0.003`, `--rescheduling-load-balance-threshold 0.1`, 정책 `neutral_load,neutral_failover` |
 | M8 | 완료 KV전송 관측 catch-22 | 게이트웨이 부하=균등(불균형 X), 직접 부하=스케줄러 미추적("No requests to migrate") | 명령 경로는 검증됨(엔진이 `Received Migration request` 수신). **완료 데모는 failover(인스턴스 kill) 또는 정식 벤치 필요** — 튜닝 영역, 블로커 아님 |
+| **M9** | **⚠️ migration ON이면 추론 출력이 손상됨(garbage)** | migration **머신러리는 동작**(KVT/RDMA/PeerManager/명령전달 OK)하지만, KVT HybridConnector가 **활성화(PeerManager peers 연결)되면 KV 캐시가 손상**돼 출력이 일관되게 깨짐("Paris" 대신 "the best way to get the most out…"). 첫 응답만 정상(peers 연결 전 짧은 창). migration OFF에선 동일 TP=2가 일관 정상. = **KVT 커넥터의 KV 정합성 버그(미해결, 오픈 이슈).** → **올바른 추론 서빙은 migration OFF**(캐노니컬 `406d9a8`). migration은 "메커니즘은 되지만 출력은 틀림" 상태 — 정합성 디버깅 전엔 정상 서빙용 아님 |
 
 **RDMA 주입(공통):** `privileged:true` + caps `IPC_LOCK/SYS_RAWIO/SYS_RESOURCE`, `ulimit -SHl unlimited`,
 `/dev/infiniband` hostPath, env `VLLM_KV_TRANS_PROTOCOL=rdma`, `LLUMNIX_ENABLE_MIGRATION=1`.

@@ -239,6 +239,12 @@ TP=1은 정상인데 TP=2면 "capital of France"→"the best way to get the most
 all-reduce 커널이 B200/TP>1에서 잘못된 값**을 내는 것. → vllm serve에 **`--disable-custom-all-reduce`**
 추가(NCCL all-reduce 폴백) → 즉시 정상. migration과 무관. ([issues-and-fixes T3](notes/session-2026-06-25-issues-and-fixes.md))
 
+**⑫ migration 켜면 출력이 손상됨(garbage)** ⚠️ **(정상 서빙은 migration OFF)**
+migration **메커니즘은 동작**(KVT/RDMA/PeerManager/명령전달)하지만, KVT 커넥터가 활성화되면 **KV 캐시가
+손상**돼 출력이 일관되게 깨진다(⑪ 고친 뒤에도). migration OFF의 동일 TP=2는 일관 정상. = KVT 커넥터의
+KV 정합성 버그(오픈 이슈). **캐노니컬은 migration OFF**(커밋 `406d9a8`). migration은 메커니즘 실험용으로만.
+([issues-and-fixes M9](notes/session-2026-06-25-issues-and-fixes.md), [handoff §9 경고](notes/migration-rdma-and-8gpu-handoff.md))
+
 ---
 
 ## 6. 제약 / 다음 단계

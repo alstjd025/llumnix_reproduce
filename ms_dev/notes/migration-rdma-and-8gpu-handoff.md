@@ -163,9 +163,17 @@ single-pod 유지(파드당 8엔진) + RDMA 주입(`privileged`+`IPC_LOCK/SYS_RA
 
 ---
 
-## 9. ✅ migration 켜기 — 실제 작동 레시피 (2026-06-25, 검증됨)
+## 9. migration 켜기 — 메커니즘 작동 레시피 + ⚠️출력 손상 경고 (2026-06-25)
 
-§8의 결론을 뒤집는다. **이 공식 이미지(`vllm:20260306-165123`, vLLM 0.12.1)로 migration이 엔드투엔드로 동작한다.** 커밋 `967384f`에 적용돼 있다(neutral.yaml=4×TP2 + migration, scheduler.yaml=rescheduling). 막힌 건 환경이 아니라 **설정 3가지**였다.
+> ⚠️⚠️ **중대 경고(2026-06-30 추가): migration을 켜면 추론 출력이 손상된다(garbage).**
+> migration **메커니즘은 엔드투엔드로 동작**한다(KVT/RDMA/PeerManager/스케줄러 명령전달 모두 OK) — 그 부분은 아래 레시피가 맞다.
+> 그러나 **KVT HybridConnector가 활성화되면(PeerManager peers 연결) KV 캐시가 손상돼 토큰 출력이 일관되게 깨진다**("Paris"→"the best way to get the most out…").
+> migration OFF의 동일 TP=2는 일관 정상. = **KVT 커넥터의 KV 정합성 버그(오픈 이슈, 미해결).**
+> **따라서 올바른 출력이 필요한 서빙은 migration OFF로 한다**(캐노니컬 = 커밋 `406d9a8`: 4×TP2 + `--disable-custom-all-reduce`, migration OFF).
+> 아래 레시피는 **migration 메커니즘 실험용**이며, 정상 출력 서빙용이 아니다. (정합성 디버깅 다음 사람 몫.)
+> 또한 **TP>1이면 무조건 `--disable-custom-all-reduce` 필요**(custom all-reduce가 B200에서 틀린 값 — issues-and-fixes T3).
+
+§8의 "migration 못 켰다"는 틀렸다 — **메커니즘은 켜진다**(아래). 막혔던 건 환경이 아니라 **설정 3가지**였다.
 
 ### 9.1 왜 §8이 틀렸나 (핵심 교정)
 - **Mooncake가 아니라 Blade-KVT(HybridConnector)가 정답.** 공식 문서 `docs/source/design/llumlet/request_migration.md:63`: *"Mooncake Transfer Engine은 vLLM >0.12.0에서 migration 미지원, Blade-KVT를 써라."* 우리 이미지는 0.12.1 → MooncakeConnector는 import부터 깨지는 게 정상. §8.3①은 헛수고.
