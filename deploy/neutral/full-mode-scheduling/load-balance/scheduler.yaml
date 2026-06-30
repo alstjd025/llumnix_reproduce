@@ -63,19 +63,6 @@ spec:
             - "--cms-pull-metadata-interval-ms"
             - "10000"
             - "--enable-full-mode-scheduling=true"
-            # Run the rescheduling loop so the scheduler actually ISSUES migrate commands (engine-side
-            # migration machinery is ready but idle without this). colocated-rescheduling-mode runs the
-            # loop in-process (matches the working slo-aware reference). neutral_load rebalances neutral
-            # instances by load; low thresholds make load-imbalance migration easy to observe.
-            - "--colocated-rescheduling-mode=true"
-            - "--rescheduling-policies"
-            - "neutral_load,neutral_failover"
-            - "--rescheduling-neutral-load-threshold"
-            - "0.003"
-            - "--rescheduling-load-balance-threshold"
-            - "0.1"
-            - "--rescheduling-interval-ms"
-            - "500"
           ports:
             - containerPort: 8088
               name: http
