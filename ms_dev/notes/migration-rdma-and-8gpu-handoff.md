@@ -165,13 +165,14 @@ single-pod 유지(파드당 8엔진) + RDMA 주입(`privileged`+`IPC_LOCK/SYS_RA
 
 ## 9. migration 켜기 — 메커니즘 작동 레시피 + ⚠️출력 손상 경고 (2026-06-25)
 
-> ⚠️⚠️ **중대 경고(2026-06-30 추가): migration을 켜면 추론 출력이 손상된다(garbage).**
-> migration **메커니즘은 엔드투엔드로 동작**한다(KVT/RDMA/PeerManager/스케줄러 명령전달 모두 OK) — 그 부분은 아래 레시피가 맞다.
-> 그러나 **KVT HybridConnector가 활성화되면(PeerManager peers 연결) KV 캐시가 손상돼 토큰 출력이 일관되게 깨진다**("Paris"→"the best way to get the most out…").
-> migration OFF의 동일 TP=2는 일관 정상. = **KVT 커넥터의 KV 정합성 버그(오픈 이슈, 미해결).**
-> **따라서 올바른 출력이 필요한 서빙은 migration OFF로 한다**(캐노니컬 = 커밋 `406d9a8`: 4×TP2 + `--disable-custom-all-reduce`, migration OFF).
-> 아래 레시피는 **migration 메커니즘 실험용**이며, 정상 출력 서빙용이 아니다. (정합성 디버깅 다음 사람 몫.)
+> ✅ **해결 업데이트(2026-06-30): migration ON + 정상 출력 둘 다 된다. 단 backend는 `"migration"`이어야 한다.**
+> 처음엔 backend `"kvt+migration"`으로 켰다가 출력이 garbage라 "migration=손상"으로 오결론냈었다. **진짜 원인**:
+> `"kvt+migration"`은 Blade-KVT의 **PD-분리 백엔드**를 켜서 모든 요청을 "원격 KV load consumer"로 취급(`ali_llumnix_disagg` 기본 true),
+> neutral 모드는 게이트웨이가 `do_local_prefill`을 안 set하므로 엉뚱한 KV를 load → garbage(엔진1개는 `no p` abort).
+> **고침: backend `"migration"` 단독**(= MigrationBackend만, PD-load 없음) → 요청 로컬 prefill, 실제 마이그레이션 때만 KV 전송 →
+> **출력 일관 정상**(검증: "Paris"/"Tokyo" 4엔진, 부하 후에도 정상), MigrationFrontend ×4. 커밋 `34c434e`. 자세히는 issues-and-fixes **M10**.
 > 또한 **TP>1이면 무조건 `--disable-custom-all-reduce` 필요**(custom all-reduce가 B200에서 틀린 값 — issues-and-fixes T3).
+> ⇒ 아래 §9.2 레시피에서 **`backend`만 `kvt+migration`→`migration`으로 읽을 것**(나머지는 그대로 유효).
 
 §8의 "migration 못 켰다"는 틀렸다 — **메커니즘은 켜진다**(아래). 막혔던 건 환경이 아니라 **설정 3가지**였다.
 
