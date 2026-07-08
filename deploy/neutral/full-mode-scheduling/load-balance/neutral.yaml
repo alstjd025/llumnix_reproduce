@@ -10,7 +10,7 @@ spec:
       metadata:
         labels:
           llumnix.io/infer-type: "neutral"
-          llumnix.io/model: "Meta-Llama-3-8B-Instruct"
+          llumnix.io/model: "Meta-Llama-3-70B-Instruct"
       spec:
         terminationGracePeriodSeconds: 30
         containers:
@@ -67,12 +67,12 @@ spec:
 
                 BLLM_KVTRANS_PORT_BASE=$KVT_PORT_BASE \
                 CUDA_VISIBLE_DEVICES=$GPUS vllm serve \
-                  meta-llama/Meta-Llama-3-8B-Instruct \
+                  meta-llama/Meta-Llama-3-70B-Instruct \
                   --port $PORT \
                   --tensor-parallel-size $TP_SIZE \
                   --disable-custom-all-reduce \
                   --max-model-len 8192 \
-                  --gpu-memory-utilization 0.6 \
+                  --gpu-memory-utilization 0.9 \
                   --async-scheduling \
                   --kv-transfer-config '{"kv_connector":"HybridConnector","kv_role":"kv_both","kv_connector_extra_config":{"backend":"migration","naming_url":"file:'"$NAMING_DIR"'","kvt_inst_id":"neutral-0-'"$i"'","rpc_port":'"$RPC_PORT"'}}' \
                   &

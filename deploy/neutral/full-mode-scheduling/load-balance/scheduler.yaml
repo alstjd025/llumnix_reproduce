@@ -81,12 +81,16 @@ spec:
               name: http
               protocol: TCP
           resources:
+            # NXC13 benchmarking: default 500m CPU limit CFS-throttled the scheduler;
+            # under load each full-mode schedule decision ballooned 2ms->89ms (waiting
+            # for CPU quota), serializing dispatch and capping throughput. Raised to 8
+            # cores. See Agent_applications/.../experiments/EXP-02.
             requests:
-              memory: "256Mi"
-              cpu: "100m"
+              memory: "1Gi"
+              cpu: "2"
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: "4Gi"
+              cpu: "8"
           livenessProbe:
             httpGet:
               path: /healthz

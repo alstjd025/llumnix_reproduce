@@ -59,7 +59,7 @@ spec:
         - "--scheduling-policy"
         - "load-balance"
         - "--tokenizer-path"
-        - "/hf-cache/hub/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/8afb486c1db24fe5011ec46dfbe5b5dccdb575c2"
+        - "/hf-cache/hub/models--meta-llama--Meta-Llama-3-70B-Instruct/snapshots/50fd307e57011801c7833c87efa1984ddf2db42f"
         - "--max-model-len"
         - "8192"
         - "--enable-full-mode-scheduling=true"
@@ -68,12 +68,17 @@ spec:
           name: http
           protocol: TCP
         resources:
+          # NXC13 benchmarking: the default 500m (0.5 core) CPU limit CFS-throttled
+          # the gateway and capped end-to-end throughput at ~37 resp/s while the GPU
+          # engines sat idle (per-schedule latency ballooned 2ms->89ms). Raised to 8
+          # cores so the control plane is not the bottleneck. See
+          # Agent_applications/.../experiments/EXP-02.
           requests:
-            memory: "256Mi"
-            cpu: "100m"
+            memory: "1Gi"
+            cpu: "2"
           limits:
-            memory: "512Mi"
-            cpu: "500m"
+            memory: "4Gi"
+            cpu: "8"
         livenessProbe:
           httpGet:
             path: /healthz
