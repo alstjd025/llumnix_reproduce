@@ -62,7 +62,7 @@ func (rp *ResponseChunkProcessor) ChatCompletionStreamProcess(req *types.Request
 	}
 
 	reasoningParser := llmRequest.ReasoningParser
-	toolParser := llmRequest.ToolParser
+	toolParser, _ := llmRequest.ToolParser.(*sglang.ToolParser)
 	choice := cmpStreamResp.Choices[0]
 	parseResult := &toolParseResult{}
 	reasoningContent, content := "", ""
@@ -208,7 +208,7 @@ func (rp *ResponseChunkProcessor) ChatCompletionProcess(req *types.RequestContex
 		return nil
 	}
 
-	toolParser := req.LLMRequest.ToolParser
+	toolParser, _ := req.LLMRequest.ToolParser.(*sglang.ToolParser)
 	stats := req.RequestStats
 	choice := cmpStreamResp.Choices[0]
 	parseResult := &toolParseResult{NormalText: "", ToolCalls: nil}

@@ -122,6 +122,25 @@ func newLoadBalanceDispatchFullMode(p *options.SchedulerConfig) *loadBalanceDisp
 		neutralInstanceSelector.metricNames = append([]string{p.DispatchPrefillCacheLocalityMetric}, neutralInstanceSelector.metricNames...)
 	}
 
+	// Hard KV-occupancy admission filter (neutral only). Unlike the load
+	// threshold filter above, this one is NOT skipped on fallback: when every
+	// instance's hot KV usage ratio is >= the threshold, scheduling fails with
+	// no-available-endpoint and the request is rejected upstream (429/503)
+	// instead of being force-dispatched to the least-loaded instance.
+	if p.AdmissionKvUsageThreshold > 0 {
+		neutral := policy.baseDispatchPolicy[consts.InferTypeNeutral]
+		neutral.metrics[consts.SchedulingMetricKVCacheUsageRatio] =
+			getSchedulingMetric(p, consts.SchedulingMetricKVCacheUsageRatio)
+		neutral.singleInstanceFilters = append(neutral.singleInstanceFilters,
+			&metricBasedFilter{
+				metricName:          consts.SchedulingMetricKVCacheUsageRatio,
+				threshold:           p.AdmissionKvUsageThreshold,
+				notSkipWhenFallback: true,
+			})
+		klog.Infof("KV-usage admission filter enabled for neutral dispatch: threshold=%.3f",
+			p.AdmissionKvUsageThreshold)
+	}
+
 	return policy
 }
 

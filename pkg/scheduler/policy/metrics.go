@@ -50,6 +50,15 @@ func getSchedulingMetric(p *options.SchedulerConfig, metricName string) func() i
 				},
 			}
 		}
+	case consts.SchedulingMetricKVCacheUsageRatio:
+		klog.V(3).Infof("Creating KVCacheUsageRatio metric factory")
+		return func() instanceSchedulingMetric {
+			return &kvCacheUsageRatio{
+				baseMetric: baseMetric{
+					name: consts.SchedulingMetricKVCacheUsageRatio,
+				},
+			}
+		}
 	case consts.SchedulingMetricDecodeBatchSize:
 		klog.V(3).Infof("Creating DecodeBatchSize metric factory")
 		return func() instanceSchedulingMetric {
@@ -221,6 +230,27 @@ func (br *kvCacheUsageRatioProjected) Calculate(
 			instanceView.cmsView.NumTokensInflightDispatchDecodeRequests,
 			instanceView.cmsView.Status.NumTotalGpuTokens,
 			br.value)
+	}
+}
+
+// kvCacheUsageRatio is the instantaneous ("hot") KV occupancy: GPU tokens held
+// by blocks referenced by running requests over pool capacity, in [0, 1].
+// Unlike kvCacheUsageRatioProjected it adds no queued/committed tokens, so it
+// matches the engine-side vllm:kv_cache_usage_perc gauge.
+type kvCacheUsageRatio struct {
+	baseMetric
+}
+
+func (br *kvCacheUsageRatio) Calculate(
+	request *types.SchedulingRequest, instanceView *instanceViewScheduling) {
+	if instanceView.cmsView.Status.NumTotalGpuTokens == 0 {
+		br.value = float32(math.MaxFloat32)
+		klog.V(3).Infof(
+			"Instance %s has zero total GPU tokens, setting KVCacheUsageRatio to MaxFloat32: %f",
+			instanceView.GetInstanceId(), br.value)
+	} else {
+		br.value = float32(instanceView.cmsView.Status.NumUsedGpuTokens) /
+			float32(instanceView.cmsView.Status.NumTotalGpuTokens)
 	}
 }
 

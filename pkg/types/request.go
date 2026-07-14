@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sglang/sglang-go-grpc-sdk"
 	"k8s.io/klog/v2"
 
 	reasoning_parser "llumnix/pkg/gateway/processor/reasoning-parser"
@@ -188,7 +187,10 @@ type LLMRequest struct {
 
 	// reasoning parser
 	ReasoningParser *reasoning_parser.ReasoningParser
-	ToolParser      *sglang.ToolParser
+	// ToolParser holds a *sglang.ToolParser (from the cgo sgl-model-gateway
+	// SDK). Typed as any so that scheduler-only builds do not link the cgo
+	// SDK; gateway code type-asserts it back at the use sites.
+	ToolParser any
 
 	// To convert from streaming to non-streaming, the returned results need to be merged.
 	BufferChatResp *protocol.ChatCompletionResponse

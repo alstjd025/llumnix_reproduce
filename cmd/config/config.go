@@ -242,6 +242,7 @@ type FullModeSchedulingConfig struct {
 	DispatchDecodeLoadMetric            string
 	DispatchDecodeLoadThreshold         float32
 	DispatchPrefillCacheLocalityMetric  string
+	AdmissionKvUsageThreshold           float32
 	EnableInstanceStatusLocalAccount    bool
 	RequestLocalAccountStalenessSeconds int32
 	AllowConcurrentScheduling           bool
@@ -321,6 +322,7 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 	flags.StringVar(&c.DispatchDecodeLoadMetric, "dispatch-decode-load-metric", consts.DefaultDispatchDecodeLoadMetric, "Llumnix dispatch decode load metric")
 	flags.Float32Var(&c.DispatchDecodeLoadThreshold, "dispatch-decode-load-threshold", consts.DefaultDispatchDecodeLoadThreshold, "Llumnix dispatch decode load threshold")
 	flags.StringVar(&c.DispatchPrefillCacheLocalityMetric, "dispatch-prefill-cache-locality-metric", consts.DefaultDispatchPrefillCacheLocalityMetric, "Llumnix dispatch prefill cache locality metric")
+	flags.Float32Var(&c.AdmissionKvUsageThreshold, "admission-kv-usage-threshold", 0, "if > 0, add a hard per-instance admission filter on neutral dispatch: an instance is ineligible while its hot KV cache usage ratio (kv_cache_usage_ratio, 0-1) is >= this threshold, and the filter is NOT skipped on fallback, so when all instances exceed it the scheduler returns 429 (no available endpoint). 0 disables (stock behavior)")
 	flags.BoolVar(&c.EnableInstanceStatusLocalAccount, "enable-instance-status-local-account", consts.DefaultEnableInstanceStatusLocalAccount, "Llumnix enable instance status local account")
 	flags.Int32Var(&c.RequestLocalAccountStalenessSeconds, "request-local-account-staleness-seconds", consts.DefaultRequestLocalAccountStalenessSeconds, "Llumnix request local account staleness seconds")
 	flags.BoolVar(&c.AllowConcurrentScheduling, "allow-concurrent-scheduling", consts.DefaultAllowConcurrentScheduling, "Llumnix allow concurrent scheduling")

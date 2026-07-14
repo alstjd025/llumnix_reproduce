@@ -50,6 +50,7 @@ const (
 
 const (
 	SchedulingMetricKVCacheUsageRatioProjected     = "kv_cache_usage_ratio_projected"
+	SchedulingMetricKVCacheUsageRatio              = "kv_cache_usage_ratio"
 	SchedulingMetricDecodeBatchSize                = "decode_batch_size"
 	SchedulingMetricNumWaitingRequests             = "num_waiting_requests"
 	SchedulingMetricAllPrefillsTokensNum           = "all_prefills_tokens_num"

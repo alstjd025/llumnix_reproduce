@@ -14,10 +14,15 @@ import (
 
 	"llumnix/cmd/gateway/app/options"
 	"llumnix/pkg/consts"
-	"llumnix/pkg/gateway/tokenizer"
 	"llumnix/pkg/resolver"
 	"llumnix/pkg/types"
 )
+
+// TokenEncoder counts tokens of a response text. It is injected by binaries
+// that link the cgo tokenizer SDK (the gateway, see pkg/gateway/service);
+// scheduler-only builds leave it nil and fall back to byte length. This keeps
+// the scheduler binary free of the cgo sgl-model-gateway dependency.
+var TokenEncoder func(text string) (int, error)
 
 type RequestStateTracker struct {
 	mux           sync.RWMutex
@@ -237,15 +242,14 @@ func (rs *RequestTokenState) GetNumTokens() uint64 {
 	if count != 0 {
 		return count
 	}
-	tk, err := tokenizer.GetTokenizer()
-	if err != nil {
+	if TokenEncoder == nil {
 		count = uint64(len(rs.ResponseText))
 	} else {
-		tokens, err := tk.Encode(rs.ResponseText, false)
+		n, err := TokenEncoder(rs.ResponseText)
 		if err != nil {
 			klog.Warningf("Failed to encode response text: %v", err)
 		}
-		count = uint64(len(tokens))
+		count = uint64(n)
 	}
 	rs.ResponseText = ""
 	rs.lastNumTokens += count
