@@ -4,16 +4,31 @@ import (
 	"context"
 	"io"
 	"llumnix/pkg/consts"
+	"os"
 	"time"
 
 	"github.com/tmaxmax/go-sse"
 	"k8s.io/klog/v2"
 )
 
-const (
-	// ReadTimeout sets the maximum duration to wait for reading from backend stream.
-	ReadTimeout = 5 * time.Minute
-)
+// ReadTimeout sets the maximum duration to wait for reading from backend
+// stream. Default 5 minutes; override with GATEWAY_SSE_READ_TIMEOUT (Go
+// duration string, e.g. "24h") — under an intentionally unbounded queue
+// (uncontrolled-overload experiments) the 5-minute default kills every
+// request whose first token is queued behind >5min of backlog, which
+// destroys the throughput measurement.
+var ReadTimeout = durationFromEnv("GATEWAY_SSE_READ_TIMEOUT", 5*time.Minute)
+
+func durationFromEnv(key string, def time.Duration) time.Duration {
+	if s := os.Getenv(key); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			klog.Infof("%s=%s (default %s)", key, d, def)
+			return d
+		}
+		klog.Warningf("invalid %s=%q, using default %s", key, os.Getenv(key), def)
+	}
+	return def
+}
 
 // TimeoutReader wraps an io.ReadCloser with a timeout mechanism
 // to prevent blocking indefinitely on read operations.

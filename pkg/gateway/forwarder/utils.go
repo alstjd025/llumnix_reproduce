@@ -17,12 +17,18 @@ import (
 )
 
 const (
-	maxIdleConns          = 1000
-	idleConnTimeout       = 5 * time.Minute
-	maxConnsPerHost       = 0 // no limit
-	responseHeaderTimeout = 15 * time.Minute
-	dialTimeout           = 3 * time.Second
+	maxIdleConns    = 1000
+	idleConnTimeout = 5 * time.Minute
+	maxConnsPerHost = 0 // no limit
+	dialTimeout     = 3 * time.Second
 )
+
+// Default 15 minutes; override with GATEWAY_RESPONSE_HEADER_TIMEOUT (Go
+// duration string). Must be raised together with GATEWAY_SSE_READ_TIMEOUT:
+// once the SSE read timeout stops killing >5min-queued requests, this
+// becomes the next binding limit if the engine defers response headers.
+var responseHeaderTimeout = durationFromEnv(
+	"GATEWAY_RESPONSE_HEADER_TIMEOUT", 15*time.Minute)
 
 // newLlmForwardClient creates a shared HTTP client optimized for forwarding LLM requests.
 func newLlmForwardClient() *http.Client {
