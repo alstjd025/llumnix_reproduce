@@ -44,6 +44,11 @@ extern int sgl_tool_parser_parse_incremental(ToolParserHandle* handle, const cha
 extern void sgl_tool_parser_free(ToolParserHandle* handle);
 extern void sgl_free_string(char* s);
 extern void sgl_free_token_ids(uint32_t* ptr, size_t count);
+extern int sgl_preprocess_chat_request_with_tokenizer(const char* request_json, void* tokenizer_handle,
+        char** prompt_text_out, uint32_t** token_ids_out, size_t* token_ids_len_out,
+        char** tool_constraints_json_out, int32_t* prompt_tokens_out, char** error_out);
+extern void sgl_preprocessed_request_free(char* prompt_text, uint32_t* token_ids,
+        size_t token_ids_len, char* tool_constraints_json);
 */
 import "C"
 
@@ -166,5 +171,50 @@ func (p *ToolParser) ParseStreamIncremental(chunk, toolsJSON string) (string, er
 	}
 	out := C.GoString(res)
 	C.sgl_free_string(res)
+	return out, nil
+}
+
+// PreprocessedChatRequest is the result of chat-request preprocessing.
+// Buffers are copied out of C and freed immediately, so Free is a no-op
+// kept for interface compatibility with the vendor SDK.
+type PreprocessedChatRequest struct {
+	PromptText          string
+	TokenIDs            []uint32
+	ToolConstraintsJSON string
+	PromptTokens        int32
+}
+
+// Free is a no-op (buffers already released); see struct comment.
+func (r *PreprocessedChatRequest) Free() {}
+
+// PreProcessChatRequest renders a chat-completion request JSON through the
+// tokenizer's chat template and returns the prompt token ids.
+func (t *Tokenizer) PreProcessChatRequest(requestJSON string) (*PreprocessedChatRequest, error) {
+	cReq := C.CString(requestJSON)
+	defer C.free(unsafe.Pointer(cReq))
+	var promptText *C.char
+	var ids *C.uint32_t
+	var n C.size_t
+	var toolJSON *C.char
+	var promptTokens C.int32_t
+	var cErr *C.char
+	rc := C.sgl_preprocess_chat_request_with_tokenizer(
+		cReq, unsafe.Pointer(t.h), &promptText, &ids, &n, &toolJSON, &promptTokens, &cErr)
+	if rc != 0 {
+		return nil, fmt.Errorf("sgl_preprocess_chat_request_with_tokenizer rc=%d: %s",
+			int(rc), takeError(&cErr))
+	}
+	out := &PreprocessedChatRequest{
+		PromptText:   C.GoString(promptText),
+		TokenIDs:     make([]uint32, int(n)),
+		PromptTokens: int32(promptTokens),
+	}
+	if toolJSON != nil {
+		out.ToolConstraintsJSON = C.GoString(toolJSON)
+	}
+	if n > 0 {
+		copy(out.TokenIDs, unsafe.Slice((*uint32)(unsafe.Pointer(ids)), int(n)))
+	}
+	C.sgl_preprocessed_request_free(promptText, ids, n, toolJSON)
 	return out, nil
 }
