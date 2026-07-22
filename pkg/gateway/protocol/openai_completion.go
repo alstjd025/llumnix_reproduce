@@ -98,6 +98,13 @@ type CompletionRequest struct {
 	N                   int                    `json:"n,omitempty"`
 	PresencePenalty     float32                `json:"presence_penalty,omitempty"`
 	Seed                *int                   `json:"seed,omitempty"`
+	// Priority is vLLM's per-request scheduling priority (lower value is
+	// scheduled first). The gateway re-marshals this struct when forwarding,
+	// so the field must be declared here or the client's value is silently
+	// dropped. Used for EDF scheduling: the client sends
+	// priority = arrival_ms + SLO_ms (an absolute deadline) and vLLM's
+	// "priority" scheduling policy serves the earliest deadline first.
+	Priority            *int                   `json:"priority,omitempty"`
 	Stop                []string               `json:"stop,omitempty"`
 	Stream              bool                   `json:"stream,omitempty"`
 	StreamOptions       *StreamOptions         `json:"stream_options,omitempty"`

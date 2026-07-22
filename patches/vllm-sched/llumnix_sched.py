@@ -80,4 +80,32 @@ class SRPFScheduler(SJFScheduler):
         return super().schedule()
 
 
-__all__ = ["SJFScheduler", "SRPFScheduler", "remaining_prefill_tokens"]
+class EDFDebugScheduler(AsyncScheduler):
+    """EDF with logging — verification aid, not an experiment policy.
+
+    Behaviourally identical to stock vLLM under ``--scheduling-policy
+    priority`` (it adds no ordering logic of its own; the priority comes from
+    the client as an absolute deadline). It only logs the first few priorities
+    it receives, which is how we prove end-to-end that the gateway actually
+    forwards the client's ``priority`` field instead of silently dropping it.
+    """
+
+    _logged = 0
+    _LOG_LIMIT = 8
+
+    def add_request(self, request: Request) -> None:
+        if EDFDebugScheduler._logged < EDFDebugScheduler._LOG_LIMIT:
+            EDFDebugScheduler._logged += 1
+            logger.info(
+                "[edf-debug] req=%s priority=%s prompt_tokens=%d",
+                request.request_id, request.priority, request.num_prompt_tokens,
+            )
+        super().add_request(request)
+
+
+__all__ = [
+    "SJFScheduler",
+    "SRPFScheduler",
+    "EDFDebugScheduler",
+    "remaining_prefill_tokens",
+]
