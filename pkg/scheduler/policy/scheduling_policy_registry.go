@@ -2,11 +2,13 @@ package policy
 
 import (
 	"fmt"
+	"time"
 
 	"k8s.io/klog/v2"
 
 	"llumnix/cmd/scheduler/app/options"
 	"llumnix/pkg/consts"
+	"llumnix/pkg/types"
 )
 
 func newDispatchPolicyInternal(c *options.SchedulerConfig) dispatchPolicyInternal {
@@ -404,6 +406,29 @@ func newLoadBalanceDispatchLiteMode(p *options.SchedulerConfig) *loadBalanceDisp
 type polyserveDispatchPolicy struct {
 	baseDispatchPolicy
 	tierPartition *tierPartition
+	repartitioner *tierRepartitioner
+}
+
+// calculateMetrics is the scheduling path's only per-request hook that sees both
+// the request and the live instance set, so the repartitioner rides along here
+// instead of running on its own goroutine -- that way the allocation is always
+// computed against the same instances the request is about to be scheduled on.
+func (p *polyserveDispatchPolicy) calculateMetrics(
+	inferType consts.InferType,
+	request *types.SchedulingRequest,
+	instanceViews map[string]*instanceViewScheduling) {
+
+	// The caller iterates every infer type present in the cluster, but this
+	// policy only defines Neutral; baseDispatchPolicy is a map of pointers, so
+	// indexing an undefined infer type would panic rather than no-op.
+	if p.baseDispatchPolicy[inferType] == nil {
+		return
+	}
+	if inferType == consts.InferTypeNeutral {
+		p.repartitioner.observe(request)
+		p.repartitioner.maybeRepartition(time.Now(), instanceViews)
+	}
+	p.baseDispatchPolicy.calculateMetrics(inferType, request, instanceViews)
 }
 
 // newPolyserveDispatchFullMode builds the policy for co-located (neutral)
@@ -417,9 +442,17 @@ func newPolyserveDispatchFullMode(p *options.SchedulerConfig) *polyserveDispatch
 	GetLatencyPredictor(p.TtftProfilingDataPath, p.TpotProfilingDataPath)
 
 	partition := newTierPartition()
+	decodeTokens, err := parseTierDecodeTokens(p.PolyserveTierDecodeTokens, p.PolyserveDecodeTokens)
+	if err != nil {
+		panic(fmt.Sprintf("invalid --polyserve-tier-decode-tokens: %v", err))
+	}
 
 	policy := &polyserveDispatchPolicy{
 		tierPartition: partition,
+		repartitioner: newTierRepartitioner(
+			decodeTokens,
+			GetLatencyPredictor(p.TtftProfilingDataPath, p.TpotProfilingDataPath),
+			partition),
 		baseDispatchPolicy: baseDispatchPolicy{
 			consts.InferTypeNeutral: {
 				metrics: map[string]func() instanceSchedulingMetric{

@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 
 	"k8s.io/klog/v2"
 
@@ -255,17 +256,26 @@ func (f *tierAffinityFilter) instanceFilteredOut(instance *instanceViewSchedulin
 func (f *tierAffinityFilter) skipWhenFallback() bool { return false }
 
 // tierPartition holds the tier -> servers assignment. The zero value assigns
-// everything to everything.
+// everything to everything, so the filter is inert until the repartitioner has
+// seen enough traffic to allocate.
 type tierPartition struct {
+	mu sync.RWMutex
 	// assignment maps a tier (TPOT SLO in ms) to the instance IDs serving it.
-	// A nil map, or a tier absent from it, means "no restriction".
+	// A nil map, or a tier absent from it, means "no restriction". Treating an
+	// unallocated tier as unrestricted rather than starved matters: a tier that
+	// has not been seen yet must not be unschedulable.
 	assignment map[int]map[string]struct{}
 }
 
 func newTierPartition() *tierPartition { return &tierPartition{} }
 
 func (p *tierPartition) allows(tier int, instanceID string) bool {
-	if p == nil || p.assignment == nil {
+	if p == nil {
+		return true
+	}
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if p.assignment == nil {
 		return true
 	}
 	servers, ok := p.assignment[tier]
@@ -274,6 +284,18 @@ func (p *tierPartition) allows(tier int, instanceID string) bool {
 	}
 	_, allowed := servers[instanceID]
 	return allowed
+}
+
+func (p *tierPartition) set(assignment map[int]map[string]struct{}) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.assignment = assignment
+}
+
+func (p *tierPartition) snapshot() map[int]map[string]struct{} {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.assignment
 }
 
 // leastBindingLatencySelector picks the least loaded survivor, measured on

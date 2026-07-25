@@ -144,8 +144,18 @@ TTFT 쪽은 이미 논문과 사실상 동등하고, **빠진 것은 TPOT 쪽 3�
 4. `leastBindingLatencySelector` — 요청의 바인딩 차원에서 predicted latency 최소 인스턴스 선택
 5. 대조군은 기존 `sloDecodeApdSelector`(bin-packing) 그대로 → **논문의 "최고부하" 주장 직접 검증 가능**
 
-### P3. 동적 재분할기 (tier → 서버)
+### P3. 동적 재분할기 (tier → 서버) — ✅ 완료
 논문에 없음(autoscaler 역할). PolyServe 스케일 규칙의 수렴점을 fleet 고정으로 재현.
+구현 `pkg/scheduler/policy/polyserve_repartition.go`.
+
+**라이브 실측으로 예측값에 수렴 확인** (하드코딩 아님, 관측 demand에서 유도):
+```
+PolyServe repartition: 25ms=2 50ms=1 100ms=1
+  (demand 25ms=0.65 50ms=0.02 100ms=0.07, 4 live servers)
+```
+demand 비율 88/3/9%가 토큰질량 비율(82.6/2.5/15%)보다 swe로 더 쏠리는데, swe의 25ms TPOT가
+배치를 작게 강제해 같은 출력이 더 많은 서버-초를 먹기 때문. 이게 "빡빡한 tier가 요청당 서버를
+더 받는다"는 메커니즘이고 테스트로 고정해둠.
 
 ```
 주기 T(예 10s)마다:
