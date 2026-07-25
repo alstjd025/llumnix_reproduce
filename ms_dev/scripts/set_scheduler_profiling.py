@@ -149,14 +149,16 @@ def main():
     for k in ("resourceVersion", "uid", "creationTimestamp", "generation"):
         d["metadata"].pop(k, None)
     d.pop("status", None)
+    # GetLatencyPredictor reads the tables once, behind a sync.Once, so a
+    # regenerated ConfigMap is invisible until the process restarts, and `apply`
+    # alone restarts nothing when the args happen to be unchanged. Stamp the
+    # restart annotation into the same apply rather than following up with
+    # `rollout restart`: two mutations would spawn two ReplicaSets, and the
+    # policy check below would then read a pod that is already being replaced.
+    tmpl = d["spec"]["template"]["metadata"].setdefault("annotations", {})
+    tmpl["llumnix.dev/restartedAt"] = str(time.time())
     kubectl("apply", "-f", "-", stdin=json.dumps(d))
     print(f"  scheduler -> --scheduling-policy {a.policy}")
-
-    # GetLatencyPredictor reads the tables once, behind a sync.Once, so a
-    # regenerated ConfigMap is invisible until the process restarts. `apply`
-    # alone does not restart anything when the args happen to be unchanged, so
-    # ask for one explicitly.
-    kubectl("rollout", "restart", f"deploy/{DEPLOY}")
 
     print("  waiting for rollout ...")
     r = subprocess.run(["kubectl", "-n", NS, "rollout", "status",
