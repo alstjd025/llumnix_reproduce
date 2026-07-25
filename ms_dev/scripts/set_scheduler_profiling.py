@@ -34,9 +34,9 @@ VOL = "profiling-data"
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 TABLE_DIR = os.path.join(REPO, "deploy", "profiling", "llama31-70b-b200-tp2")
 
-# Flags the SLO policy needs beyond the profiling paths.  Values mirror the
-# EXP-17 SLO basis so predictions are judged against the same thresholds the
-# 5-arm comparison used; the dispatch thresholds are upstream's defaults.
+# Flags the SLO-aware policies need beyond the profiling paths.  --ttft-slo and
+# --tpot-slo are only the fallback for requests that carry no SLO of their own;
+# under PolyServe every request brings its own budget via the packed priority.
 SLO_FLAGS = {
     "--ttft-slo": "5000",
     "--tpot-slo": "50",
@@ -44,6 +44,12 @@ SLO_FLAGS = {
     "--tpot-slo-dispatch-threshold": "0.9",
     "--ttft-profiling-data-path": f"{MOUNT}/ttft.json",
     "--tpot-profiling-data-path": f"{MOUNT}/tpot.json",
+}
+
+# Expected output length per tier, keyed by the tier's TPOT SLO.  Measured
+# per-class means of the mix workload: swe 728, chat 386, deepresearch 275.
+POLYSERVE_FLAGS = {
+    "--polyserve-tier-decode-tokens": "25:728,50:386,100:275",
 }
 
 
@@ -107,7 +113,7 @@ def install_configmap():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", choices=["slo", "load-balance"])
+    ap.add_argument("--policy", choices=["polyserve", "slo", "load-balance"])
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--timeout", type=int, default=180)
     a = ap.parse_args()
@@ -128,6 +134,8 @@ def main():
     # The profiling paths are inert unless an SLO policy is active, so leaving
     # them set across a revert costs nothing and keeps the diff small.
     for k, v in SLO_FLAGS.items():
+        args = set_flag(args, k, v)
+    for k, v in POLYSERVE_FLAGS.items():
         args = set_flag(args, k, v)
     c["args"] = args
 
@@ -157,7 +165,8 @@ def main():
     time.sleep(3)
     logs = kubectl("logs", f"deploy/{DEPLOY}", "--tail=400", check=False)
     hits = [l for l in logs.splitlines()
-            if "LatencyPredictor" in l or "profiling" in l.lower()]
+            if "LatencyPredictor" in l or "profiling" in l.lower()
+            or "PolyServe dispatch policy" in l or "create scheduler with policy" in l]
     fatal = [l for l in logs.splitlines() if "Failed to load" in l or "F0" == l[:2]]
     print("\n--- predictor init ---")
     for l in hits[:10]:
