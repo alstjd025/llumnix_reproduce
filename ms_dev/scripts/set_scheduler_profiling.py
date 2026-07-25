@@ -152,6 +152,12 @@ def main():
     kubectl("apply", "-f", "-", stdin=json.dumps(d))
     print(f"  scheduler -> --scheduling-policy {a.policy}")
 
+    # GetLatencyPredictor reads the tables once, behind a sync.Once, so a
+    # regenerated ConfigMap is invisible until the process restarts. `apply`
+    # alone does not restart anything when the args happen to be unchanged, so
+    # ask for one explicitly.
+    kubectl("rollout", "restart", f"deploy/{DEPLOY}")
+
     print("  waiting for rollout ...")
     r = subprocess.run(["kubectl", "-n", NS, "rollout", "status",
                         f"deploy/{DEPLOY}", f"--timeout={a.timeout}s"],
@@ -163,7 +169,15 @@ def main():
         return 1
 
     time.sleep(3)
-    logs = kubectl("logs", f"deploy/{DEPLOY}", "--tail=400", check=False)
+    # Address the pod by name: with an old replica still terminating,
+    # `logs deploy/<name>` can pick the one that is going away.
+    # Sort by creation time: list order is not age order, so without this the
+    # "newest" pod can still be the one that is shutting down.
+    pods = kubectl("get", "pods", "-l", f"app={DEPLOY}",
+                   "--sort-by=.metadata.creationTimestamp",
+                   "-o", "jsonpath={.items[-1].metadata.name}", check=False).strip()
+    target = pods or f"deploy/{DEPLOY}"
+    logs = kubectl("logs", target, "--tail=400", check=False)
     hits = [l for l in logs.splitlines()
             if "LatencyPredictor" in l or "profiling" in l.lower()
             or "PolyServe dispatch policy" in l or "create scheduler with policy" in l]

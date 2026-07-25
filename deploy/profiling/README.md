@@ -65,17 +65,51 @@ and the two tables inherit very different confidence:
 | table | basis | confidence |
 |---|---|---|
 | `tpot.json` | 377,838 decode-only steps. A long homogeneous decode phase throttles the scheduler to the forward rate, so the per-cell **median** is the true step time. 78 of 247 cells measured directly (median 2,194 samples/cell); the rest filled from `t = c0 + c_kv·(B·T) + c_nd·B` (R²=0.93) corrected by neighbouring cells' log-residuals, then isotonized so the surface is non-decreasing on both axes. | **good** |
-| `ttft.json` | **one** measured operating point. Sustained prefill-saturated windows only occur at a full chunk, because chunked prefill always fills the budget and partial chunks happen only on a request's last chunk. 123 windows / 413.8 s / 5.34 M tokens give 12,917 tok/s, cross-checked at 13,300 tok/s by an independent blocking-quantile estimate. The curve is then `t(c) = 16.43 ms + c / 13,263 tok/s`. | **provisional** |
+| `ttft.json` | **Directly measured** by `ms_dev/scripts/measure_ttft_sweep.py`: one request at a time against an idle engine, timing the first streamed token, 20 prompt lengths × 5 repetitions. Up to the engine's 8192-token budget a prompt is a single scheduler step, which is exactly what `predictTtftLatencyByChunkPrefill` sums over. Points past 8192 are linearly extrapolated and flagged `"source": "extrapolated"`; they exist only so a metadata mismatch cannot fall off the axis. | **good** |
 
-Sanity check against upstream's own table (`Qwen3-32B` on H20, which ships at
-1,412 tok/s prefill): our 13.3k tok/s for a 70B on 2×B200 is a 9.7× ratio where
-hardware and model scaling predict ~14×, the gap being our lower MFU. Upstream's
-curve also confirms the `floor + slope` shape used here.
+### The TTFT table was rebuilt (2026-07-25)
 
-**Replace `ttft.json` before any conclusion that depends on TTFT accuracy.** The
-right source is a dedicated idle-engine prompt-length sweep — that is how
-upstream built theirs (42 prompt lengths, 3 reps each). Planned before the P4
-PolyServe experiment.
+The first version was derived from the EXP-16 step dumps and could pin down only
+**one** operating point, for the reason above: prefill's only sustained regime is
+a full chunk. Everything else was a linear model through that anchor, and it was
+wrong — the anchor came from saturated windows that had ~18 decodes running
+alongside, so it charged prefill for decode work:
+
+| chunk | old model | measured | old error |
+|---|---|---|---|
+| 256 | 35.7 ms | 26.4 ms | +35% |
+| 1024 | 93.6 ms | 80.1 ms | +17% |
+| 8192 | 634 ms | 519.7 ms | +22% |
+
+The real curve is not linear either. It is flat at ~20.5 ms up to 64 tokens
+(memory-bound, same floor a decode step pays) and then steepens — the local rate
+runs 0.025 ms/token between 16 and 1024 but 0.063 ms/token above 2048, which is
+attention growing with sequence length. Upstream's own table has the same shape.
+
+Two controls make the sweep trustworthy. Every repetition draws **fresh random
+token ids**, so no two requests share a prefix and the prefix cache cannot serve
+a repeat as a few-millisecond hit. And a discarded warm-up round runs first, so
+CUDA graph capture is not folded into the first measurement.
+
+**Known limitation.** A per-chunk table indexed only by chunk size cannot see
+that later chunks attend to the KV earlier chunks left behind. Summing the table
+in 8192-token chunks therefore under-predicts a long prefill, and the sweep
+measures by how much:
+
+| prompt | measured | chunk-sum | ratio |
+|---|---|---|---|
+| 12,288 | 814.4 ms | 783.9 ms | 1.04 |
+| 16,384 | 1120.8 ms | 1039.4 ms | 1.08 |
+| 24,576 | 1769.4 ms | 1559.1 ms | 1.13 |
+
+Under 5% for two chunks, 13% at three. This is a property of the table shape
+Llumnix defines, not of the measurement, so it cannot be fixed here — it is a
+floor on TTFT-prediction accuracy for long prompts, which matters for the swe
+class (~22k input tokens).
+
+The measured values include a small fixed HTTP and tokenizer overhead (the
+~20.5 ms floor versus 17 ms for a decode step). It is left in: it is under 1% of
+a full chunk, and upstream's tables carry the same overhead.
 
 ## Verified
 

@@ -14,8 +14,8 @@
 | P2 PolyServe 정책 | `ecb5810` | 완료 (라이브 e2e) |
 | P3 동적 재분할 | `fe2c122` | 완료 (라이브 수렴 확인) |
 | P4-a 배포 + 동작 확인 | `--` | 완료 (라이브 e2e) |
-| **P4-b ttft.json 재측정** | — | **진행 중** |
-| P4-c rate sweep 3-arm | — | 대기 |
+| P4-b ttft.json 재측정 | `--` | 완료 (직접 측정) |
+| **P4-c rate sweep 3-arm** | — | **진행 중** |
 | dynamic chunking 검토 | — | 보류 (sweep 결과 본 뒤) |
 
 ## 확정된 결정 (사용자)
@@ -71,7 +71,7 @@ pod를 재시작하면 반영된다. 게이트웨이의 cgo 정적 라이브러�
 
 ### 알려진 리스크 (P4 결과 해석 시 반드시 짚을 것)
 
-1. **`ttft.json`이 잠정**(실측점 1개). P4-b에서 교체 예정.
+1. ~~`ttft.json`이 잠정~~ → **해소**. P4-b에서 직접 측정으로 교체(아래 기록). 다만 청크 합산이 긴 프롬프트를 4~13% 과소예측하는 건 Llumnix 테이블 형태의 한계라 남아 있다.
 2. **고부하에서 admission이 무력화될 가능성.** `iterMax`에 prefill 간섭항이 들어가므로
    대기 prefill이 있는 인스턴스는 iterMax≈650ms가 되어 모든 tier(25/50/100ms)에서 탈락한다.
    전부 탈락하면 fallback으로 admission이 풀려 사실상 least-load로 퇴화한다.
@@ -103,3 +103,33 @@ tier별 출력길이까지 전부 이어진다.
 **함정 기록**: `kubectl logs deploy/<name>`은 Terminating 중인 **옛 pod**을 고를 수 있다.
 롤아웃 직후 로그를 볼 때는 반드시 pod 이름을 직접 지정할 것. 이것 때문에 "요청이 스케줄러에
 안 온다"고 잠깐 오진했다.
+
+### 2026-07-25 — P4-b `ttft.json` 직접 측정
+
+`ms_dev/scripts/measure_ttft_sweep.py` 신규. 유휴 엔진 1대에 단일 요청을 보내 첫 스트리밍
+토큰까지의 시간을 재는 방식(= 업스트림이 자기 테이블을 만든 방식). 20개 길이 × 5회.
+
+**기존 잠정 모델이 전 구간 과대평가였다.** step-dump 앵커가 decode 18건이 같이 돌던 포화
+구간에서 나온 값이라 prefill에 decode 비용이 섞여 있었다.
+
+| 청크 | 기존 모델 | 실측 | 오차 |
+|---|---|---|---|
+| 256 | 35.7 ms | 26.4 ms | +35% |
+| 1024 | 93.6 ms | 80.1 ms | +17% |
+| 8192 | 634 ms | 519.7 ms | +22% |
+
+그리고 **곡선이 선형이 아니다**: 64토큰까지 ~20.5ms로 평평하다가(메모리 바운드) 기울기가
+0.025 → 0.063 ms/tok로 증가한다(attention의 길이 의존). 업스트림 테이블도 같은 모양.
+
+측정 신뢰성 장치 두 가지: 반복마다 **새 랜덤 토큰 id**를 뽑아 prefix cache 히트를 원천 차단,
+그리고 warm-up 라운드를 버려 CUDA graph capture를 측정에서 제외.
+
+**남는 한계(측정 문제가 아니라 테이블 형태의 문제)**: 청크 크기만으로 인덱싱하는 테이블은
+뒤 청크가 앞 청크의 KV에 attention한다는 걸 못 본다. 8192씩 합산하면 긴 프롬프트를
+과소예측한다 — 12k에서 4%, 16k에서 8%, 24k에서 13%. swe 클래스(입력 ~22k)에 해당하므로
+TTFT 예측 정확도의 하한으로 기록해 둔다.
+
+**함정 기록 2**: ConfigMap을 다시 만들어도 `GetLatencyPredictor`가 `sync.Once`로 한 번만
+읽으므로 프로세스 재시작 없이는 반영되지 않는다. `set_scheduler_profiling.py`에 rollout
+restart를 넣었다. 또 `kubectl get pods -o jsonpath={.items[-1]...}`는 나이순이 아니므로
+`--sort-by=.metadata.creationTimestamp`가 필요하다(안 그러면 종료 중인 pod을 고른다).
