@@ -36,9 +36,49 @@
 | ② DSLO (누적 데드라인) | **v2로 보류** (v1은 순간 threshold) |
 | ③ tier별 큐 + 서버 파티션 | tier별 서버 파티션 = 동적 재분할기. 큐는 게이트웨이 hold-and-retry로 근사 |
 | ④ 최고부하 라우팅 | **반전: 최저부하** (autoscaling 제외로 근거 소멸) |
-| admission test `wait+T_iter<TPOT` | `metricBasedFilter` 변형 — threshold를 요청별 SLO로 |
+| ⑤ §4.6 wait-time-aware | **채택** — 아래 admission test 3단 판정 |
+| ⑥ §4.5 max-KV 미래 시뮬레이션 | **채택** — 스냅샷이 아니라 요청 생애 최대 KV로 판정 |
+| ⑦ §4.7 continuous chunked prefill prediction | **채택** — prefill 간섭항 (co-location이라 필수) |
 | profiling table `(batch,KV)→iter` | Llumnix `ITLData{batch_size, tokens_per_request}` **이미 동일 축** |
 | 미래 iteration 시뮬레이션 | `predictTtftLatencyByChunkPrefill()` **이미 존재** |
+
+### 논문 재확인 결과 (2026-07-25, arXiv:2507.17769 원문)
+
+초기 분석에서 admission test를 `wait+T_iter<TPOT` 한 줄로 요약했는데, 원문을 다시 읽으니
+**세 개의 독립된 메커니즘**이었다. 셋 다 반영하기로 확정.
+
+- **§4.6 Wait-Time-Aware Scheduling** (초록의 3대 기여 중 하나). 큐잉을
+  *pending time*(대기 큐) + *wait time*(배정된 서버가 현재 iteration을 끝낼 때까지)로 분해.
+  적용 범위가 명시적으로 **첫/둘째 토큰**뿐 — 3번째부터는 정상상태라 iteration time만 본다.
+  > "profile-based batch formation ... is only effective from the second decode token.
+  > The first token, regulated by the TTFT, and the second token, regulated by TTFT + TPOT,
+  > incur queueing time."
+- **§4.5** 판정 기준이 현재 스냅샷이 아니다.
+  > "PolyServe simulates future iterations and computes the **maximum KV cache size** as
+  > requests grow in length ... Based on the largest KV cache size and current token batch
+  > size, PolyServe uses the profiling table to admit the request when the predicted
+  > iteration time is less than the TPOT."
+
+  출력 길이는 논문도 예측하지 않고 "average decode length"를 쓴다 → 우리는 실측 클래스 평균
+  (chat 386 / deepresearch 275 / swe 728) 사용.
+- **§4.7 co-location: continuous chunked prefill prediction.** PD-분리는 prefill이 decode와
+  안 섞이지만 co-location(=우리)은 섞인다.
+  > "PolyServe only admits requests if the predicted chunk size can be maintained throughout
+  > the prefill process. Otherwise, PolyServe will look for other lower-load machines."
+- **DSLO 정의**: "the i-th token must be produced before **TTFT + i·TPOT**". 누적이라 한 스텝이
+  튀어도 뒤에서 만회 가능하고, 논문의 평가 지표 자체가 DSLO attainment다. §4.5의 보수적 판정과
+  짝을 이룬다(판정은 빡세게, 채점은 누적으로). 우리는 v1에서 판정만 채택하고 채점은 EXP-17과
+  동일한 순간 기준을 유지 → 5-arm과 직접 비교 가능하게.
+
+### Llumnix 현 구현과의 정확한 차이
+
+| | 큐잉 반영 | 근거 |
+|---|---|---|
+| `PredictedTtft` | **있음, 주항** | `allPrefillsTokensNum` = 대기큐 + 진행중 prefill + inflight dispatch, 거기에 `- elapsedTimeMs` staleness 보정 + 큐 소진 분기 |
+| `PredictedTpot` | **없음** | `predictTpotLatency(decodeReqsNum, decodeTokensNum)` 단일 조회. 단 `decodeBatchSize`가 waiting-to-decode + loading + inflight를 포함하므로 *부하*는 앞당겨 보되 *대기 시간*은 지연에 더하지 않음 |
+
+즉 큐잉은 "시간"이 아니라 "남은 토큰"으로 들고 있다가 프로파일 테이블로 시간 환산하는 구조.
+TTFT 쪽은 이미 논문과 사실상 동등하고, **빠진 것은 TPOT 쪽 3개(⑤⑥⑦)**.
 
 ---
 
@@ -57,17 +97,25 @@
 
 ## 3. 구현 계획
 
-### P0. 프로파일링 데이터 생성 — **blocker**
-`GetLatencyPredictor()`는 파일 로드 실패 시 `klog.Fatalf` → 데이터 없으면 스케줄러 기동 불가. 레포에 파일 없음.
+### P0. 프로파일링 데이터 생성 — ✅ 완료 (커밋 `ed7c3a5`)
+`GetLatencyPredictor()`는 파일 로드 실패 시 `klog.Fatalf` → 데이터 없으면 스케줄러 기동 불가.
 
-생성 소스: **EXP-16 `sched_steps.jsonl`** (B200, Llama-3.1-70B TP2 실측)
+산출물 `deploy/profiling/llama31-70b-b200-tp2/{ttft,tpot}.json`.
+출처·신뢰도·함정은 **`deploy/profiling/README.md`가 정본**. 요약만:
 
-- `ttft_profiling.json` — `TtftData{results:[{tokens_num, p50, ...}]}`
-  ← prefill 스텝의 `(prefill_tokens_step → interval_ms)` 집계
-- `tpot_profiling.json` — `ITLData{results:[{batch_size, tokens_per_request, p50, ...}]}`
-  ← pure-decode 스텝의 `(n_decode, kv_tokens/n_decode → interval_ms)` 집계
+- 소스는 EXP-16 `sched_steps.jsonl` 431,440 step (13 run, stock FIFO `InstrumentedScheduler`).
+  생성기가 QoServe/deadline run은 이름으로 거부한다 — `DeadlineScheduler`는 매 스텝 청크를
+  바꾸므로 stock 엔진의 물리를 설명하지 못한다.
+- `tpot.json` 신뢰도 **양호**: decode-only 377,838 step, 247칸 중 78칸 실측.
+- `ttft.json` **잠정**: 비동기 스케줄링 때문에 `interval_ms`가 bimodal이라 스텝별 귀속 불가.
+  지속 포화 구간은 full-chunk에서만 생겨 **실측점이 1개**(12,917 tok/s, 교차검증 13,300).
+  → **P4 전에 유휴 엔진 프롬프트길이 스윕으로 교체**(업스트림도 그 방식).
+- 그리드는 **완전한 데카르트 곱**이어야 한다. `InterpolationPredictor`가 marginal 축으로
+  bounding box를 잡고 4모서리를 전부 요구하며, 범위 밖 질의는 +Inf가 되어 해당 인스턴스가
+  모든 SLO 필터에서 조용히 탈락한다.
 
-검증: 기존 `--scheduling-policy slo`로 스케줄러 기동 성공 확인.
+검증됨: `./bin/scheduler-exp07 --scheduling-policy slo` →
+`Initialized LatencyPredictor with 26 TTFT points and 247 TPOT points`, Fatalf 없음.
 
 ### P1. per-request SLO 배관
 1. `pkg/types/scheduling_request.go` `SchedulingRequest`에 `TtftSloMs`, `TpotSloMs` 추가
@@ -78,8 +126,21 @@
 
 ### P2. PolyServe 정책
 1. `consts.SchedulingPolicyPolyserve` 등록, `newDispatchPolicyInternal` 분기 추가
-2. `perRequestSloFilter` — 전역 `p.TpotSlo` 대신 `schedulingCtx`의 요청 SLO를 threshold로 (admission test)
-3. `tierAffinityFilter` — 요청 tier의 현재 배정 서버만 통과
+2. `tierAffinityFilter` — 요청 tier의 현재 배정 서버만 통과
+3. `polyserveAdmissionFilter` — **3단 판정** (§4.5~4.7 전부 반영, 사용자 확정 2026-07-25).
+   전역 `p.TtftSlo`/`p.TpotSlo` 대신 `schedulingCtx`의 요청별 SLO를 threshold로:
+
+   | 단계 | 논문 | 판정식 | 재료 |
+   |---|---|---|---|
+   | 1토큰 | TTFT | `PredictedTtft ≤ TTFT_slo` | 이미 큐잉 포함(대기+진행+inflight) — 그대로 사용 |
+   | 2토큰 | §4.6 TTFT+TPOT | `PredictedTtft + T_iter ≤ TTFT_slo + TPOT_slo` | wait 항 = `PredictedTtft`. 추가 비용 거의 없음 |
+   | 3토큰~ | §4.5 i·TPOT | `T_iter(batch, KV_max) ≤ TPOT_slo` | **스냅샷 아님**. `KV_max = KV_now + batch × 남은평균출력` |
+
+   여기서 `T_iter`는 §4.7 co-location 보정 포함:
+   `T_iter = tpot(batch, KV_max) + [대기 prefill 있으면] ttft(chunk)`.
+   우리 실측상 full-chunk 스텝이 634 ms로 decode 스텝(17~113 ms)의 6~37배라, 이 항을 빼면
+   TBT 예측이 무의미해진다. `predictTpotLatency`는 prefill 인자를 아예 받지 않으므로 신규 항.
+   남은평균출력은 논문과 같이 예측하지 않고 실측 클래스 평균(chat 386 / dr 275 / swe 728) 사용.
 4. `leastBindingLatencySelector` — 요청의 바인딩 차원에서 predicted latency 최소 인스턴스 선택
 5. 대조군은 기존 `sloDecodeApdSelector`(bin-packing) 그대로 → **논문의 "최고부하" 주장 직접 검증 가능**
 
@@ -114,7 +175,10 @@ EXP-14 mixA 동일 프로토콜(rate-sweep 480~3420 rpm, 본 5분, warmup 60s, �
 ---
 
 ## 4. 범위 밖 (v2 후보)
-- **DSLO 누적 데드라인** — 예측오차 흡수. v1은 순간 threshold.
+- **DSLO 누적 데드라인** (`i번째 토큰 < TTFT + i·TPOT`) — 예측오차 흡수. v1은 판정만 논문대로
+  가져오고 **채점은 EXP-17과 동일한 순간 기준 유지** → 5-arm과 직접 비교 가능하게 하려는 의도.
+  주의: 논문의 평가 지표가 DSLO attainment이므로, 순간 기준으로 채점하면 PolyServe가 논문보다
+  낮게 나온다. 결과 해석 시 반드시 명시할 것.
 - **pull 기반 라우터 큐 소유** — 게이트웨이 재설계 필요. v1은 hold-and-retry로 근사.
 - **autoscaling** — 지시에 따라 제외.
 - **PD-disaggregation** — 논문 이득의 상당 부분이 여기서 나오나(1.23× vs co-location 1.18×) 우리는 co-location. 상한이 낮음을 감안.
