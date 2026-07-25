@@ -133,3 +133,21 @@ TTFT 예측 정확도의 하한으로 기록해 둔다.
 읽으므로 프로세스 재시작 없이는 반영되지 않는다. `set_scheduler_profiling.py`에 rollout
 restart를 넣었다. 또 `kubectl get pods -o jsonpath={.items[-1]...}`는 나이순이 아니므로
 `--sort-by=.metadata.creationTimestamp`가 필요하다(안 그러면 종료 중인 pod을 고른다).
+
+### 2026-07-25 — P4-c EXP-21 준비
+
+- 워크로드 `workload_configs/mix_polyserve.json`: 모든 클래스가 `tbt_ms`를 **명시**한다.
+  이게 곧 PolyServe tier 키라서, swe가 `DEFAULT_TBT_MS`를 상속하면 그 기본값이 바뀔 때
+  tier가 조용히 어긋난다. 값 자체는 EXP-17 기준 그대로(swe 11800ms = 30s − 728×25ms).
+- 러너 `k8s/exp07/runner-exp21.template.yaml` + 드라이버 `run_exp21_polyserve.sh`.
+  드라이버가 시작 전에 스택을 검사한다: KV admission θ off(요청을 거절해서 PolyServe 자체
+  admission과 뒤섞임), 엔진 migration off(tier 경계를 넘어 요청을 옮김), 엔진 stock FIFO.
+  그리고 **적용된 spec이 아니라 실행 중인 스케줄러 로그에서 정책을 되읽어** 확인한다.
+- 분석 `analysis_scripts/request_level/exp21_polyserve.py`. attainment만으로는
+  "tier 격리가 아무 일도 안 했다"와 "tier 격리가 영향이 없었다"를 구분할 수 없어서,
+  클래스별 **라우팅 집중도**(0=엔진에 고르게 분산, 1=한 대에 고정)를 같이 낸다.
+  주의: 집중도는 `analysis/request_engine.csv`가 필요하므로 분석 전에 run별로
+  `build_request_engine_map.py`를 돌려야 한다.
+
+두 arm은 엔진(stock FIFO)이 같고 **스케줄러 라우팅 정책만** 다르다. EXP-17~20이 엔진
+스케줄러를 바꾸고 라우팅을 고정했던 것과 정확히 수직인 축.
