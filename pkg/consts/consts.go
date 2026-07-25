@@ -41,6 +41,11 @@ const (
 	SchedulingPolicyLoadBalance = "load-balance"
 	SchedulingPolicyFlood       = "flood"
 	SchedulingPolicySlo         = "slo"
+	// SchedulingPolicyPolyserve routes by per-request SLO tier: the request may
+	// only land on a server assigned to its tier, must pass an admission test
+	// derived from PolyServe (arXiv:2507.17769) sections 4.5 to 4.7, and among
+	// survivors goes to the least loaded rather than the most loaded.
+	SchedulingPolicyPolyserve = "polyserve"
 )
 
 const (
@@ -62,6 +67,21 @@ const (
 
 	SchedulingMetricPredictedTtft = "predicted_ttft"
 	SchedulingMetricPredictedTpot = "predicted_tpot"
+
+	// PolyServe splits the iteration-time estimate in two, because the near
+	// term and the steady state fail for different reasons and the paper checks
+	// them separately.
+	//
+	// IterNow is the very next iteration, at the KV the instance holds right
+	// now. A co-scheduled prefill chunk dominates it (a full 8192-token chunk
+	// measures 634 ms against 17-113 ms for a decode step), which is what
+	// section 4.7 guards against for co-location.
+	//
+	// IterMax is the steady state, at the largest KV the batch will reach as
+	// its requests grow to their expected output length -- section 4.5 admits
+	// on that maximum rather than on a snapshot.
+	SchedulingMetricPolyserveIterNow = "polyserve_iter_now"
+	SchedulingMetricPolyserveIterMax = "polyserve_iter_max"
 )
 
 const (
@@ -185,6 +205,12 @@ const (
 	DefaultTtftSloDispatchThreshold    = 0.85
 	DefaultTpotSloDispatchThreshold    = 0.85
 	DefaultTpotMigrateOutCeilThreshold = 0.95
+
+	// DefaultPolyserveDecodeTokens is the fallback expected output length when a
+	// request's tier is not listed in --polyserve-tier-decode-tokens. 463 is the
+	// request-weighted mean of the mix workload's measured per-class means
+	// (chat 386, deepresearch 275, swe 728) at 1:1:1.
+	DefaultPolyserveDecodeTokens = 463
 
 	// Adaptive PD defaults
 	DefaultEnableAdaptivePD             = false

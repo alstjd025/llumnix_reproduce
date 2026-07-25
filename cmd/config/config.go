@@ -259,6 +259,10 @@ type FullModeSchedulingConfig struct {
 	TpotSloDispatchThreshold    float32
 	TpotMigrateOutCeilThreshold float32
 
+	// PolyServe
+	PolyserveTierDecodeTokens string
+	PolyserveDecodeTokens     int
+
 	// Adaptive PD
 	EnableAdaptivePD             bool
 	TpotMigrateOutFloorThreshold float32
@@ -337,6 +341,15 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 	flags.Float32Var(&c.TpotSlo, "tpot-slo", consts.DefaultTpotSlo, "Llumnix tpot slo")
 	flags.Float32Var(&c.TpotSloDispatchThreshold, "tpot-slo-dispatch-threshold", consts.DefaultTpotSloDispatchThreshold, "Llumnix tpot slo dispatch threshold")
 	flags.Float32Var(&c.TpotMigrateOutCeilThreshold, "tpot-migrate-out-ceil-threshold", consts.DefaultTpotMigrateOutCeilThreshold, "Llumnix tpot migrate out ceil threshold")
+
+	flags.StringVar(&c.PolyserveTierDecodeTokens, "polyserve-tier-decode-tokens", "",
+		"PolyServe expected output length per SLO tier, as \"tpotSloMs:tokens,...\" "+
+			"(e.g. \"25:728,50:386,100:275\"). Section 4.5 admits on the largest KV a batch "+
+			"will reach, which needs an output length; the paper does not predict it either "+
+			"and uses the average decode length, so these are measured per-class means. "+
+			"Tiers not listed fall back to --polyserve-decode-tokens.")
+	flags.IntVar(&c.PolyserveDecodeTokens, "polyserve-decode-tokens", consts.DefaultPolyserveDecodeTokens,
+		"PolyServe expected output length for tiers absent from --polyserve-tier-decode-tokens")
 
 	flags.BoolVar(&c.EnableAdaptivePD, "enable-adaptive-pd", consts.DefaultEnableAdaptivePD, "Llumnix enable adaptive pd")
 	flags.Float32Var(&c.TpotMigrateOutFloorThreshold, "tpot-migrate-out-floor-threshold", consts.DefaultTpotMigrateOutFloorThreshold, "Llumnix tpot migrate out floor threshold")

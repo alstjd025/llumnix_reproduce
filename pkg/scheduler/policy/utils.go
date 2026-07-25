@@ -32,7 +32,10 @@ func verifySchedulingPolicy(c *options.SchedulerConfig) {
 	fullModeSchedulingPolicySet := sets.New[string](
 		consts.SchedulingPolicyLoadBalance,
 		consts.SchedulingPolicyFlood,
-		consts.SchedulingPolicySlo)
+		consts.SchedulingPolicySlo,
+		// PolyServe needs the CMS instance status that only full mode pulls:
+		// its admission test reads queue depth, decode batch and KV occupancy.
+		consts.SchedulingPolicyPolyserve)
 
 	policy := c.SchedulingPolicy
 	if !c.EnableFullModeScheduling {

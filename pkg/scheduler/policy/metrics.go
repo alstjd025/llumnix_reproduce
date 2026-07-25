@@ -148,6 +148,23 @@ func getSchedulingMetric(p *options.SchedulerConfig, metricName string) func() i
 				latencyPredictor: GetLatencyPredictor(p.TtftProfilingDataPath, p.TpotProfilingDataPath),
 			}
 		}
+	case consts.SchedulingMetricPolyserveIterNow, consts.SchedulingMetricPolyserveIterMax:
+		klog.V(3).Infof("Creating polyserve iteration time metric factory: %s", metricName)
+		decodeTokens, err := parseTierDecodeTokens(p.PolyserveTierDecodeTokens, p.PolyserveDecodeTokens)
+		if err != nil {
+			// Fail loudly at construction: a silently mis-parsed tier table
+			// would skew every admission decision for the whole run.
+			panic(fmt.Sprintf("invalid --polyserve-tier-decode-tokens: %v", err))
+		}
+		atMaxKV := metricName == consts.SchedulingMetricPolyserveIterMax
+		return func() instanceSchedulingMetric {
+			return &polyserveIterTime{
+				baseMetric:       baseMetric{name: metricName},
+				latencyPredictor: GetLatencyPredictor(p.TtftProfilingDataPath, p.TpotProfilingDataPath),
+				decodeTokens:     decodeTokens,
+				atMaxKV:          atMaxKV,
+			}
+		}
 	case consts.SchedulingMetricNumTokens:
 		klog.V(3).Infof("Creating NumTokens metric factory")
 		return func() instanceSchedulingMetric {

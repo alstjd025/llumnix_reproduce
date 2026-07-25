@@ -21,6 +21,8 @@ func newDispatchPolicyInternal(c *options.SchedulerConfig) dispatchPolicyInterna
 		return newFloodDispatchPolicyFullMode(c)
 	case consts.SchedulingPolicySlo:
 		return newSloDispatchFullMode(c)
+	case consts.SchedulingPolicyPolyserve:
+		return newPolyserveDispatchFullMode(c)
 	default:
 		panic(fmt.Sprintf("unsupported scheduling policy: %s", c.SchedulingPolicy))
 	}
@@ -392,6 +394,74 @@ func newLoadBalanceDispatchLiteMode(p *options.SchedulerConfig) *loadBalanceDisp
 			},
 		},
 	}
+
+	return policy
+}
+
+// polyserveDispatchPolicy routes by per-request SLO tier, following PolyServe
+// (arXiv:2507.17769). See polyserve.go for how each of the paper's mechanisms
+// maps onto Llumnix.
+type polyserveDispatchPolicy struct {
+	baseDispatchPolicy
+	tierPartition *tierPartition
+}
+
+// newPolyserveDispatchFullMode builds the policy for co-located (neutral)
+// instances. Unlike newSloDispatchFullMode, which only defines Prefill and
+// Decode, this defines InferTypeNeutral, because PolyServe here runs on a
+// co-located fleet -- and because baseDispatchPolicy is a map of pointers, a
+// missing infer type is a nil dereference rather than a graceful fallback.
+func newPolyserveDispatchFullMode(p *options.SchedulerConfig) *polyserveDispatchPolicy {
+	// Fail fast if the profiling tables are unusable: every admission decision
+	// depends on them, so starting without them would silently route blind.
+	GetLatencyPredictor(p.TtftProfilingDataPath, p.TpotProfilingDataPath)
+
+	partition := newTierPartition()
+
+	policy := &polyserveDispatchPolicy{
+		tierPartition: partition,
+		baseDispatchPolicy: baseDispatchPolicy{
+			consts.InferTypeNeutral: {
+				metrics: map[string]func() instanceSchedulingMetric{
+					consts.SchedulingMetricPredictedTtft: getSchedulingMetric(p, consts.SchedulingMetricPredictedTtft),
+					consts.SchedulingMetricPolyserveIterNow: getSchedulingMetric(
+						p, consts.SchedulingMetricPolyserveIterNow),
+					consts.SchedulingMetricPolyserveIterMax: getSchedulingMetric(
+						p, consts.SchedulingMetricPolyserveIterMax),
+				},
+				globalFilters: []globalFilter{
+					&failoverFilter{
+						failoverDomain: p.FailoverDomain,
+					},
+				},
+				singleInstanceFilters: []singleInstanceFilter{
+					&schedulabilityFilter{},
+					&stalenessFilter{
+						instanceStalenessSeconds: p.InstanceStalenessSeconds,
+					},
+					// Tier isolation holds even on the fallback pass; admission
+					// relaxes so an overloaded tier degrades to "least loaded
+					// server in my tier" instead of being rejected.
+					&tierAffinityFilter{partition: partition},
+					&polyserveAdmissionFilter{
+						globalTtftSloMs:   p.TtftSlo,
+						globalTpotSloMs:   p.TpotSlo,
+						ttftSloMultiplier: p.TtftSloDispatchThreshold,
+						tpotSloMultiplier: p.TpotSloDispatchThreshold,
+					},
+				},
+				selectors: &leastBindingLatencySelector{
+					globalTtftSloMs: p.TtftSlo,
+					globalTpotSloMs: p.TpotSlo,
+				},
+			},
+		},
+	}
+
+	klog.Infof("PolyServe dispatch policy created: ttftSlo=%.0fms tpotSlo=%.0fms "+
+		"(dispatch thresholds %.2f/%.2f), tier decode tokens %q (default %d)",
+		p.TtftSlo, p.TpotSlo, p.TtftSloDispatchThreshold, p.TpotSloDispatchThreshold,
+		p.PolyserveTierDecodeTokens, p.PolyserveDecodeTokens)
 
 	return policy
 }

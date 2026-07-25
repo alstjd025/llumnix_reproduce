@@ -279,6 +279,22 @@ func (lp *LatencyPredictor) predictTtftLatencyByChunkPrefill(
 	return totalLatency, nil
 }
 
+// predictPrefillStepLatency returns the cost of one scheduler step that
+// prefills chunkTokens tokens. predictTtftLatencyByChunkPrefill sums this over
+// a whole queue; PolyServe needs the single-step value on its own, because in
+// co-location one prefill chunk sharing a step IS that step's decode latency.
+func (lp *LatencyPredictor) predictPrefillStepLatency(chunkTokens int32) (float64, error) {
+	if chunkTokens <= 0 {
+		return 0, nil
+	}
+	latency, err := lp.ttftPredictor.Predict(float64(chunkTokens), 0)
+	if err != nil {
+		klog.Warningf("[predictPrefillStepLatency] Predict error: %v", err)
+		return math.Inf(1), err
+	}
+	return latency, nil
+}
+
 func (lp *LatencyPredictor) predictTpotLatency(
 	decodeReqsNum int32, decodeTokensNum int32) (float64, error) {
 	if decodeReqsNum <= 0 || decodeTokensNum <= 0 {
