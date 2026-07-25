@@ -84,3 +84,67 @@ kubectl -n llumnix exec neutral-0 -c vllm -- \
 ```
 Engine startup also logs vLLM's own warning `Using custom scheduler class ...`,
 which is the positive confirmation that the class was picked up.
+
+---
+
+---
+
+## DeadlineScheduler (Niyama port — phase 1: no dynamic chunking)
+
+`deadline_sched.py` ports Niyama's (Sarathi-Serve, ASPLOS'26) deadline-aware
+scheduler onto stock vLLM V1. Implemented: deadline waiting-order (unit 2),
+slack-based reorder of `running` (unit 3), eager relegation (unit 5), **dynamic
+prefill chunk sizing (unit 4)** driven by a B200-fit batch-time model (unit 6).
+SLA tiers + the TTFT/TTLT deadline model (unit 1) live **client-side** in
+`slo_tier.py`. Per-class TBT reaches the engine packed into `priority`
+(`slo_ms*1000 + tbt_ms`, phase 1.5) and drives the decode-phase slack per request.
+
+### Launch
+
+```
+vllm serve ... --scheduling-policy priority \
+               --scheduler-cls deadline_sched.DeadlineScheduler
+```
+
+### Client-driven contract (the gateway needs NO change)
+
+The Llumnix path is `/v1/completions`-only, where the gateway forwards `priority`
+and `max_tokens` verbatim. So metadata is **client-driven**: the completions
+adapter classifies each request (`slo_tier.py`, the user's rule) and sends
+
+  * `priority` = **relative first-token-equivalent SLO in ms** (via
+    `slo_tier.priority_for(ttft_slo_ms, e2e_slo_ms, output_len)`), NOT an
+    absolute deadline (that is plain EDF's contract).
+  * `max_tokens` = target output length (unchanged).
+
+The scheduler stamps engine-clock arrival in `add_request`, turns the relative
+SLO into an absolute engine-clock deadline, and overwrites `priority` with it so
+the PriorityRequestQueue gives EDF order. **Until the adapter sends
+`priority = SLO_ms`, every request falls back to `DEADLINE_DEFAULT_SLO_MS`.**
+
+Only EDF and DeadlineScheduler consume per-request priority. FIFO ignores it;
+SJF/SRPF overwrite it with the prompt length inside the engine.
+
+### Tier rule (`slo_tier.py`, client-side, pluggable)
+
+| declares | tier | importance | first-token SLO sent |
+|---|---|---|---|
+| TTFT SLO | interactive | 2 (highest) | `ttft_slo_ms` |
+| E2E SLO only | e2e (TTLT) | 1 | `e2e_slo_ms - output_len*TBT_BATCH` |
+| no SLO | besteffort | 0 (lowest) | huge (FCFS) |
+
+Fine-grained "tighter TTFT scheduled sooner" is handled automatically by the
+absolute-deadline priority, so the tier stays a coarse 3-class. Swap the rule via
+`DEADLINE_SLO_TIER` (registry name or `module:Class`).
+
+### Tunables (env; Niyama A100 defaults — MEASURE on B200)
+
+| env | default | side | meaning |
+|---|---|---|---|
+| `DEADLINE_SLO_TIER` | `declared` | client | tier classifier |
+| `DEADLINE_TBT_BATCH_S` | `0.400` | client | TBT budget for TTLT->TTFT conversion (B200: set ~0.02) |
+| `DEADLINE_BESTEFFORT_SLO_MS` | `~30d` | client | best-effort sentinel SLO |
+| `DEADLINE_TBT_S` | `0.100` | engine | global TBT for running-queue slack (unit 3) |
+| `DEADLINE_RELEGATION` | `1` | engine | unit 5 eager relegation on/off |
+| `DEADLINE_PREFILL_TPS` | `8500` | engine | initial prefill-throughput estimate (tok/s) |
+| `DEADLINE_DEFAULT_SLO_MS` | `30000` | engine | fallback SLO if adapter sent no priority |

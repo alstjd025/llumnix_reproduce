@@ -219,3 +219,8 @@ AGENTS.md
 
 # Claude Code local session settings
 .claude/
+
+# Cloned upstream repos for study (each has its own .git)
+JITServe/
+sarathi-serve-niyama/
+Agent_applications/
