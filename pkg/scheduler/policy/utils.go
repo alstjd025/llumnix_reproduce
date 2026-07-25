@@ -10,6 +10,7 @@ import (
 	"llumnix/pkg/cms"
 	"llumnix/pkg/consts"
 	"llumnix/pkg/lrs"
+	"llumnix/pkg/types"
 )
 
 func getKeySliceFromMap[M ~map[K]V, K comparable, V any](m M) []K {
@@ -174,6 +175,21 @@ func toClusterViewScheduling(cv clusterView) clusterViewScheduling {
 		clusterSchedulingCtx: clusterSchedulingCtx{},
 	}
 	return result
+}
+
+// setRequestSlo stamps the request's SLO budgets onto every instance view, so
+// that filters and selectors -- which are handed an instance view and no
+// request -- can judge against the budget of the request actually being
+// scheduled instead of a global config value. instanceViews holds the same
+// pointers as groupedInstanceViews, so one pass covers both.
+func (cv *clusterViewScheduling) setRequestSlo(request *types.SchedulingRequest) {
+	if request == nil {
+		return
+	}
+	for _, view := range cv.instanceViews {
+		view.schedulingCtx.requestTtftSloMs = request.TtftSloMs
+		view.schedulingCtx.requestTpotSloMs = request.TpotSloMs
+	}
 }
 
 func getRemainingInstanceIds(

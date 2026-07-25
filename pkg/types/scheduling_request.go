@@ -48,8 +48,48 @@ type SchedulingRequest struct {
 	PromptNumTokens int      `json:"prompt_num_tokens,omitempty"`
 	PromptTokenIds  []uint32 `json:"prompt_token_ids"`
 
+	// Per-request SLO in milliseconds, decoded by the gateway from the client's
+	// packed "priority" field (see DecodePackedSlo). Zero means unspecified, in
+	// which case an SLO-aware policy falls back to its global --ttft-slo /
+	// --tpot-slo. Only PolyServe reads these; every other policy ignores them,
+	// so populating them is inert for the existing arms.
+	TtftSloMs int `json:"ttft_slo_ms,omitempty"`
+	TpotSloMs int `json:"tpot_slo_ms,omitempty"`
+
 	// scheduling result
 	SchedulingResult SchedulingResult `json:"scheduling_result,omitempty"`
+}
+
+const (
+	// sloPriorityScale is the packing radix shared with the client and with the
+	// engine-side scheduler (patches/vllm-sched/slo_tier.py, deadline_sched.py).
+	sloPriorityScale = 1000
+	// maxPlausibleTtftSloMs bounds a decoded TTFT SLO at one hour. It exists to
+	// reject the OTHER encoding that occupies the same field: the EDF arm sends
+	// priority = arrival_ms + slo_ms, an absolute epoch deadline (~1.8e12), which
+	// would otherwise decode to a nonsense multi-week TTFT. A best-effort tier
+	// (30 days) is rejected by the same bound and correctly falls back to the
+	// global SLO, i.e. "no special treatment".
+	maxPlausibleTtftSloMs = 3600 * 1000
+)
+
+// DecodePackedSlo unpacks a per-request SLO from the single integer channel the
+// OpenAI API gives us. The client packs ttft_slo_ms*1000 + tpot_slo_ms, so one
+// "priority" value carries both budgets; vLLM reads the same number as a plain
+// priority (lower first), which conveniently makes it an EDF order too.
+//
+// ok is false when the value cannot be a packed SLO, in which case the caller
+// must leave both budgets unset rather than trust a garbage decode.
+func DecodePackedSlo(priority int) (ttftSloMs int, tpotSloMs int, ok bool) {
+	if priority <= 0 {
+		return 0, 0, false
+	}
+	ttftSloMs = priority / sloPriorityScale
+	tpotSloMs = priority % sloPriorityScale
+	if ttftSloMs <= 0 || ttftSloMs > maxPlausibleTtftSloMs {
+		return 0, 0, false
+	}
+	return ttftSloMs, tpotSloMs, true
 }
 
 func (req *SchedulingRequest) String() string {
@@ -92,6 +132,14 @@ func (req *SchedulingRequest) String() string {
 			str += " "
 		}
 		str += fmt.Sprintf("tokens:%d", req.PromptNumTokens)
+	}
+
+	// Add per-request SLO so a dispatch log line shows which budget was applied
+	if req.TtftSloMs > 0 || req.TpotSloMs > 0 {
+		if len(str) > 0 {
+			str += " "
+		}
+		str += fmt.Sprintf("slo:%dms/%dms", req.TtftSloMs, req.TpotSloMs)
 	}
 
 	// Add scheduling result if present

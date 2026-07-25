@@ -66,6 +66,20 @@ func (cb *SchedulerClient) createSchedulingRequest(req *types.RequestContext) *t
 	} else {
 		klog.Warningf("scheduling request %s prompt string and token ids are empty or not support: %v", req.Id, req.LLMRequest.CompletionRequest.Prompt)
 	}
+
+	// Carry the client's per-request SLO through to the scheduler. The OpenAI
+	// API gives us one integer channel, so the client packs both budgets into
+	// "priority"; the same number still works as a vLLM priority downstream.
+	// Policies that do not consume the SLO simply ignore these fields.
+	if cr := req.LLMRequest.CompletionRequest; cr != nil && cr.Priority != nil {
+		if ttftMs, tpotMs, ok := types.DecodePackedSlo(*cr.Priority); ok {
+			schRequest.TtftSloMs = ttftMs
+			schRequest.TpotSloMs = tpotMs
+		} else {
+			klog.V(4).Infof("request %s: priority %d is not a packed SLO, leaving budgets unset",
+				req.Id, *cr.Priority)
+		}
+	}
 	// record the borrow gateway
 	req.SchedulingCtx.GatewayId = localEndpoint.String()
 	return schRequest

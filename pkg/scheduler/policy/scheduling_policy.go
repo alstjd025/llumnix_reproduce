@@ -41,6 +41,16 @@ type schedulingCtx struct {
 	prefixHitRatio                    float32
 	prefixMissTokens                  int
 	numComputedPrefillTokensPredicted int32
+
+	// Per-request SLO budgets in milliseconds, copied onto every instance view
+	// at the top of Schedule(). Filters and selectors receive only an instance
+	// view -- their signatures take no request -- so this is how a per-request
+	// value reaches them without changing those interfaces. It is race-free
+	// because toClusterViewScheduling() allocates fresh views per request.
+	// Zero means unspecified; an SLO-aware policy then falls back to its global
+	// --ttft-slo / --tpot-slo.
+	requestTtftSloMs int
+	requestTpotSloMs int
 }
 
 type clusterViewScheduling struct {
@@ -235,6 +245,7 @@ func (p *DispatchPolicy) Schedule(request *types.SchedulingRequest) error {
 		p.clusterView.groupedInstanceViews = toInstanceViewInterfaceMap(p.lrsClient.GetGroupedInstanceViews())
 	}
 	clusterViewScheduling := toClusterViewScheduling(p.clusterView)
+	clusterViewScheduling.setRequestSlo(request)
 	klog.V(4).Infof("Retrieved cluster instances, count: %d", len(clusterViewScheduling.instanceViews))
 
 	selectedInstances := p.schedule(request, clusterViewScheduling)

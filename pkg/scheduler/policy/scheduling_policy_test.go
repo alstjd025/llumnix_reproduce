@@ -100,7 +100,7 @@ func newDispatchPolicy(t *testing.T, config *options.SchedulerConfig, inferType 
 	cmsReadClient, _ := cms.NewCMSReadClient(
 		getRedisClient(t), config.CmsPullStatusIntervalMs, config.CmsPullMetadataIntervalMs,
 		false, config.EnableInstanceStatusLocalAccount, config.EnableCacheAwareScheduling,
-		config.RequestLocalAccountStalenessSeconds, -1, false,
+		config.RequestLocalAccountStalenessSeconds, false,
 		config.NumPredictorWarmupSamples, false)
 
 	var kvsClient kvs.KVSClientInterface
