@@ -605,7 +605,13 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	} else if room < -1 {
 		room = -1
 	}
-	c.score = room - p.cfg.alphaExternality*(c.harm+fsMismatchWeight*c.mismatch)
+	// Best fit among instances that can take it, most room among those that
+	// cannot. See the note on packing above harmToIncumbents.
+	fit := room
+	if c.feasible {
+		fit = 1 - room
+	}
+	c.score = fit - p.cfg.alphaExternality*(c.harm+fsMismatchWeight*c.mismatch)
 	return c
 }
 

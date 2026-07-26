@@ -70,7 +70,16 @@ func fsRequest(id string, tier, ttftSloMs, prompt int) *types.SchedulingRequest 
 	}
 }
 
-func TestRoutesToTheInstanceWithMoreHeadroom(t *testing.T) {
+func TestPacksIntoTheInstanceItFillsBest(t *testing.T) {
+	// Among instances that can take the request within its budget, the fuller
+	// one wins. Spreading a class over every instance leaves each holding the
+	// same mixture, and then nothing distinguishes them: the run that did that
+	// ended with all four instances held to the same budget and no separation
+	// between classes at all. Packing frees whole instances for other classes.
+	//
+	// The cost of packing -- a fuller instance absorbs a burst less well -- is
+	// bounded by checking feasibility first and with a margin, so a request is
+	// only packed where it still meets its budget.
 	p := fsPolicy(t, "25:e2e:16000,50:decode", nil)
 	views := map[string]*instanceViewScheduling{
 		"busy": fsView(fsViewOpts{id: "busy", decodeReqs: 60, decodeTokens: 900000,
@@ -80,7 +89,27 @@ func TestRoutesToTheInstanceWithMoreHeadroom(t *testing.T) {
 	}
 	got := decide(p, fsRequest("r1", 50, 5000, 1000), views)
 	require.NotNil(t, got)
-	assert.Equal(t, "quiet", got.GetInstanceId())
+	assert.Equal(t, "busy", got.GetInstanceId())
+}
+
+func TestFallsBackToMostRoomWhenNothingFits(t *testing.T) {
+	// Once no instance can take the request within its budget the question is
+	// no longer where it fits but where it does least damage, so the preference
+	// inverts back to the emptiest.
+	p := fsPolicy(t, "25:e2e:16000,50:decode", func(c *fluidserveConfig) {
+		c.enablePend = false
+	})
+	views := map[string]*instanceViewScheduling{
+		"full": fsView(fsViewOpts{id: "full", decodeReqs: 300,
+			decodeTokens: 6_000_000, pendingPre: 300_000, usedGpu: 570_000,
+			stepID: 9000}),
+		"lessfull": fsView(fsViewOpts{id: "lessfull", decodeReqs: 200,
+			decodeTokens: 4_000_000, pendingPre: 300_000, usedGpu: 500_000,
+			stepID: 9000}),
+	}
+	got := decide(p, fsRequest("r1", 50, 5000, 1000), views)
+	require.NotNil(t, got)
+	assert.Equal(t, "lessfull", got.GetInstanceId())
 }
 
 func TestQueuedPrefillPushesRequestsElsewhere(t *testing.T) {
