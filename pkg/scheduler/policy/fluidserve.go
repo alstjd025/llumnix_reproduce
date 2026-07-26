@@ -53,17 +53,31 @@ const (
 	// before it stops accepting new work. Leaves room for the requests already
 	// there to absorb a burst without immediately violating.
 	fsAllowanceUtilisation = 0.90
+	// Ceiling on how much one incumbent can contribute to the harm score. A
+	// request whose remaining slack is nearly zero would otherwise divide by
+	// almost nothing and let a single incumbent dominate the ranking.
+	fsHarmCap = 10.0
+	// Placing a request is preferred to holding it unless doing so would eat
+	// this much of some incumbent's remaining slack. Holding only helps when
+	// the reason not to place is that it damages others; if the request simply
+	// cannot meet its own budget anywhere, waiting makes that worse rather than
+	// better.
+	fsPendHarmThreshold = 0.5
+	// A request's budget has to be at least this much tighter than the instance's
+	// current constraint before it is charged for binding the instance to it.
+	fsBindingMargin = 0.9
 )
 
 type fluidserveConfig struct {
-	horizonSteps      int
-	zSafety           float64
-	alphaExternality  float64
-	enablePend        bool
-	enableExternality bool
-	enableFlux        bool
-	pendGraceMs       float64
-	ttftSafetyMs      float64
+	horizonSteps            int
+	zSafety                 float64
+	alphaExternality        float64
+	enablePend              bool
+	enableExternality       bool
+	enableFlux              bool
+	enableOnlineCalibration bool
+	pendGraceMs             float64
+	ttftSafetyMs            float64
 }
 
 // fluidserveRequest is the per-request context the selector needs. Filters and
@@ -281,10 +295,19 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	}
 	measured := elapsed / float64(steps)
 
-	// Feed the decode law only from intervals that carried no prefill work.
-	// An interval that included a chunk mixes the prefill cost in, and charging
-	// that to the decode law would inflate the predicted cost of every instance.
-	if prev.pending == 0 && cur.pending == 0 && prev.nDecode >= 1 {
+	// Feeding this back into the decode law is off unless asked for. The test
+	// available here -- no prefill queued at either end of the interval -- does
+	// not certify that no prefill ran DURING it: statuses arrive every 500 ms
+	// and the engine executes around 25 iterations in between, so a queue that
+	// formed and drained inside the interval is invisible. Measured live, that
+	// misattribution drove the correction to 1.73, which in turn drove the
+	// safety factor to its ceiling and cut throughput by half. The offline law
+	// is fitted over a far wider range than one run visits (377,838 iterations,
+	// cross-checked against an independent fit) and read 0.9998 against an idle
+	// engine, so the seed is the better estimate until a signal exists that can
+	// separate the two costs within an interval.
+	if p.cfg.enableOnlineCalibration &&
+		prev.pending == 0 && cur.pending == 0 && prev.nDecode >= 1 {
 		p.capacity.observe(prev.kvLogical, prev.nDecode, 0, measured)
 	}
 	return measured
@@ -369,13 +392,21 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 
 	// Physical capacity, converted into the logical units everything else is in.
 	// The ratio is measured rather than assumed because prefix-cache sharing
-	// makes it workload dependent.
+	// makes it workload dependent: EXP-16 saw 7.0M logical tokens on a fleet
+	// whose physical pool is about 0.6M, a ratio near 0.09.
+	//
+	// The floor matters. An instance that has just drained reports zero physical
+	// tokens while its logical decode accounting is still catching up, giving a
+	// ratio near zero and, once divided through, a memory capacity three orders
+	// of magnitude too large. The floor is set an order of magnitude below the
+	// lowest ratio ever measured, so it bounds nonsense without interfering with
+	// a real reading.
 	ratio := 1.0
-	if f.kvLogical > 1000 && f.kvPhysical > 0 {
+	if f.kvLogical > 1000 && f.kvPhysical > 1000 {
 		ratio = f.kvPhysical / f.kvLogical
 	}
-	if ratio < 1e-3 {
-		ratio = 1e-3
+	if ratio < 0.01 {
+		ratio = 0.01
 	}
 	f.capMem = f.kvCapacity * fsMemorySafety / ratio
 
@@ -427,7 +458,9 @@ type candidate struct {
 	view          *instanceViewScheduling
 	feasible      bool
 	score         float64
-	externality   float64
+	harm          float64
+	bindingLoss   float64
+	meanBefore    float64
 	meanAfter     float64
 	allowAfter    float64
 	headroomAfter float64
@@ -486,13 +519,14 @@ func (s *fluidserveSelector) selectInstance(
 	// while the request can still afford it. What it cannot afford is to wait
 	// past the point where even an immediate placement would miss the
 	// time-to-first-token budget.
-	if p.cfg.enablePend && p.canWait(best, req) {
+	if p.cfg.enablePend && best.harm > fsPendHarmThreshold && p.canWait(best, req) {
 		metrics.Counter("scheduler_fluidserve_decisions_total",
 			metrics.Labels{{Name: "decision", Value: "pend"}}).Inc()
 		klog.V(3).Infof("FluidServe pends request %s (tier %dms, waited %dms): "+
-			"best instance %s headroom %.0f needs %.0f",
+			"best instance %s headroom %.0f needs %.0f, placing it would consume "+
+			"%.1f of the slack its requests have left",
 			req.id, req.tier, req.nowMs-req.arrivedMs, best.flux.id,
-			best.flux.headroom, s.policy.costOf(req))
+			best.flux.headroom, s.policy.costOf(req), best.harm)
 		return nil
 	}
 
@@ -540,27 +574,103 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		!math.IsInf(c.meanAfter, 0) &&
 		c.meanAfter <= c.allowAfter*fsAllowanceUtilisation
 
-	// Externality: the capacity this instance permanently gives up by taking on
-	// a request whose budget is tighter than anything already there. The
-	// instance's admissible occupancy is set by its tightest live budget, so
-	// binding a loosely loaded instance to a tight budget removes occupancy it
-	// could otherwise have sold to the classes it is already serving. Charging
-	// for that is what makes tight requests collect on the instances already
-	// serving tight requests, without any of them being reserved in advance.
-	if p.cfg.enableExternality && req.allowanceMs < f.tightestAllowance {
-		before := p.capacity.maxKvForAllowance(
-			f.tightestAllowance*fsAllowanceUtilisation, f.nDecode,
-			f.pendingPrefill, f.chunk, p.cfg.horizonSteps)
-		after := p.capacity.maxKvForAllowance(
-			req.allowanceMs*fsAllowanceUtilisation, f.nDecode,
-			f.pendingPrefill, f.chunk, p.cfg.horizonSteps)
-		if !math.IsInf(before, 0) && !math.IsInf(after, 0) && before > after {
-			c.externality = before - after
-		}
+	c.meanBefore = f.meanStep
+	if p.cfg.enableExternality {
+		c.harm = p.harmToIncumbents(f, c.meanBefore, c.meanAfter)
+		c.bindingLoss = p.bindingLoss(f, req)
 	}
 
-	c.score = c.headroomAfter - p.cfg.alphaExternality*c.externality
+	// The terms are put on one scale by expressing each as a fraction of the
+	// instance's physical capacity, so the weight means the same thing
+	// regardless of instance size. The memory capacity is used as the scale
+	// rather than the binding limit because the binding limit goes negative
+	// once the latency budget cannot be met at any occupancy, and dividing by a
+	// quantity that changes sign makes the ranking meaningless exactly where it
+	// matters most.
+	scale := math.Max(f.capMem, 1)
+	room := c.headroomAfter / scale
+	if room > 1 {
+		room = 1
+	} else if room < -1 {
+		room = -1
+	}
+	c.score = room - p.cfg.alphaExternality*(c.harm+c.bindingLoss/scale)
 	return c
+}
+
+// harmToIncumbents prices what placing this request does to the requests
+// already on the instance.
+//
+// This is where the separation between classes comes from, and it is a
+// statement about the WORK a request brings, not about the budget it declares.
+// A long prompt makes several of the next iterations carry a prefill chunk, and
+// every request decoding on that instance waits through them, so admitting one
+// alongside requests that are close to their budget is what breaks them. The
+// earlier formulation charged only for binding an instance to a tighter budget,
+// which never fired in the case that matters: an agent request with a 22k-token
+// prompt has a LOOSER per-token budget than an interactive one, so it was
+// charged nothing for landing on an instance full of interactive requests and
+// pushing all of them past their limit.
+//
+// Requests whose budget is already spent contribute nothing. They are going to
+// miss whatever happens next, so further delay is not an additional loss, and
+// counting it would make the instance that has already absorbed the heavy work
+// look expensive -- which is exactly the instance that should keep absorbing
+// it. That asymmetry is what makes the heavy class collect on a few instances
+// while the rest stay clean, with none of them reserved in advance.
+func (p *fluidserveDispatchPolicy) harmToIncumbents(
+	f *instanceFlux, meanBefore, meanAfter float64) float64 {
+
+	delta := meanAfter - meanBefore
+	if delta <= 0 || math.IsInf(delta, 0) {
+		return 0
+	}
+	harm := 0.0
+	for _, r := range f.live {
+		if r.unachievable {
+			continue
+		}
+		slack := r.allowanceMs - meanBefore
+		if slack <= 0 {
+			continue // already past its budget; nothing more to lose here
+		}
+		h := delta / slack
+		if h > fsHarmCap {
+			h = fsHarmCap
+		}
+		harm += h
+	}
+	return harm
+}
+
+// bindingLoss is the capacity an instance gives up by taking a request whose
+// budget is tighter than anything already on it: its admissible occupancy is
+// set by the tightest budget in force, so this removes occupancy it could
+// otherwise have used for the classes it is already serving. Kept alongside the
+// harm term because the two cover different cases -- this one fires when a
+// tight request lands on a loose instance, the other when heavy work lands on
+// an instance whose requests have little slack left.
+func (p *fluidserveDispatchPolicy) bindingLoss(
+	f *instanceFlux, req *fluidserveRequest) float64 {
+
+	// Only a materially tighter budget counts. Two requests of the same class
+	// differ by a millisecond or two simply because one is further along, and
+	// charging for that would make an instance expensive for the very class it
+	// is already serving.
+	if math.IsInf(f.tightestAllowance, 0) ||
+		req.allowanceMs >= f.tightestAllowance*fsBindingMargin {
+		return 0
+	}
+	before := p.capacity.maxKvForAllowance(
+		f.tightestAllowance*fsAllowanceUtilisation, f.nDecode,
+		f.pendingPrefill, f.chunk, p.cfg.horizonSteps)
+	after := p.capacity.maxKvForAllowance(
+		req.allowanceMs*fsAllowanceUtilisation, f.nDecode,
+		f.pendingPrefill, f.chunk, p.cfg.horizonSteps)
+	if math.IsInf(before, 0) || math.IsInf(after, 0) || before <= after {
+		return 0
+	}
+	return before - after
 }
 
 // canWait decides whether the request still has room to be held at the gateway.
@@ -613,15 +723,16 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 		metrics.Labels{{Name: "decision", Value: kind}}).Inc()
 	metrics.Histogram("scheduler_fluidserve_headroom_at_dispatch",
 		metrics.Labels{}).Observe(c.headroomAfter)
-	metrics.Histogram("scheduler_fluidserve_externality",
-		metrics.Labels{}).Observe(c.externality)
+	metrics.Histogram("scheduler_fluidserve_harm", metrics.Labels{}).Observe(c.harm)
+	metrics.Histogram("scheduler_fluidserve_binding_loss",
+		metrics.Labels{}).Observe(c.bindingLoss)
 
 	klog.V(3).Infof("FluidServe %s request %s (tier %dms, prompt %d) -> %s: "+
 		"headroom %.0f->%.0f cap(kv %.0f mem %.0f) proj %.0f meanStep %.1f->%.1fms "+
-		"allowance %.1fms externality %.0f live %d (%d unachievable)",
+		"allowance %.1fms harm %.2f bindingLoss %.0f live %d (%d unachievable)",
 		kind, req.id, req.tier, req.promptTokens, c.flux.id,
 		c.flux.headroom, c.headroomAfter, c.flux.capKv, c.flux.capMem, c.flux.proj,
-		c.flux.meanStep, c.meanAfter, c.allowAfter, c.externality,
+		c.flux.meanStep, c.meanAfter, c.allowAfter, c.harm, c.bindingLoss,
 		len(c.flux.live), c.flux.unachievable)
 }
 
@@ -630,16 +741,22 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 // that model keeps, and a slow or wrong adjustment costs utilisation rather
 // than correctness.
 //
-// The signal is the engine's own reported iteration time against the tightest
-// budget the instance was being held to. That is a direct measurement of
-// whether the promise the capacity model made was kept, and unlike attainment
-// it is observable immediately instead of only once a request completes.
+// The signal is the measured iteration time against what the capacity model
+// PREDICTED for the same interval, not against the budget in force. The
+// difference matters: under sustained overload every instance runs past the
+// budget no matter what is routed where, so a budget-based trigger fires
+// continuously and drives the margin to its ceiling, which throttles the fleet
+// without making any request meet its SLO. Measured live, that is exactly what
+// happened -- the overshoot rate sat at 1.0 and the safety factor pinned at its
+// maximum. What the margin should respond to is the estimate being optimistic,
+// which is the model residual.
 //
 // The response is deliberately asymmetric. Margin is given back slowly and only
 // after several consecutive quiet windows, but taken immediately on the first
-// window that overshoots, because occupancy that runs past what the instance
-// can hold ends in preemption, and recovering from preemption costs far more
-// than the utilisation given up by backing off early.
+// window where the estimate was substantially optimistic, because occupancy
+// that runs past what the instance can hold ends in preemption, and recovering
+// from preemption costs far more than the utilisation given up by backing off
+// early.
 type safetyTuner struct {
 	cfg *fluidserveConfig
 
@@ -657,22 +774,29 @@ func newSafetyTuner(cfg *fluidserveConfig) *safetyTuner {
 }
 
 const (
-	fsOvershootTrigger = 0.10 // fraction of samples above budget that forces a back-off
-	fsZBackoffFactor   = 1.5
-	fsZStep            = 0.05
-	fsZMin             = 0.5
-	fsZMax             = 3.0
-	fsQuietWindows     = 3
+	// Fraction of intervals in which the engine was substantially slower than
+	// predicted before the margin is widened.
+	fsOvershootTrigger = 0.10
+	// How much slower than predicted counts as substantially. Below this the
+	// difference is within the spread the offline fit already reports
+	// (6% median, 21% at the 90th percentile).
+	fsResidualTrigger = 1.5
+	fsZBackoffFactor  = 1.5
+	fsZStep           = 0.05
+	fsZMin            = 0.5
+	fsZMax            = 3.0
+	fsQuietWindows    = 3
 )
 
 func (t *safetyTuner) tick(nowMs int64, views map[string]*instanceViewScheduling) {
 	for _, v := range views {
 		f := v.schedulingCtx.fluidserveFlux
-		if f == nil || f.observedStep <= 0 || math.IsInf(f.tightestAllowance, 0) {
+		if f == nil || f.observedStep <= 0 || f.meanStep <= 0 ||
+			math.IsInf(f.meanStep, 0) {
 			continue
 		}
 		t.samples++
-		if f.observedStep > f.tightestAllowance {
+		if f.observedStep > f.meanStep*fsResidualTrigger {
 			t.overshoots++
 		}
 	}
@@ -726,14 +850,15 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	}
 
 	cfg := fluidserveConfig{
-		horizonSteps:      p.FluidserveHorizonSteps,
-		zSafety:           p.FluidserveZSafety,
-		alphaExternality:  p.FluidserveAlphaExternality,
-		enablePend:        p.FluidserveEnablePend,
-		enableExternality: p.FluidserveEnableExternality,
-		enableFlux:        p.FluidserveEnableFlux,
-		pendGraceMs:       float64(p.FluidservePendGraceMs),
-		ttftSafetyMs:      float64(p.FluidserveTtftSafetyMs),
+		horizonSteps:            p.FluidserveHorizonSteps,
+		zSafety:                 p.FluidserveZSafety,
+		alphaExternality:        p.FluidserveAlphaExternality,
+		enablePend:              p.FluidserveEnablePend,
+		enableExternality:       p.FluidserveEnableExternality,
+		enableFlux:              p.FluidserveEnableFlux,
+		enableOnlineCalibration: p.FluidserveEnableOnlineCalibration,
+		pendGraceMs:             float64(p.FluidservePendGraceMs),
+		ttftSafetyMs:            float64(p.FluidserveTtftSafetyMs),
 	}
 	if cfg.horizonSteps <= 0 {
 		panic("--fluidserve-horizon-steps must be positive")

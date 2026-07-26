@@ -264,23 +264,24 @@ type FullModeSchedulingConfig struct {
 	PolyserveDecodeTokens     int
 
 	// FluidServe
-	FluidserveProfilePath      string
-	FluidserveClassBudgets     string
-	FluidserveHorizonSteps     int
-	FluidserveZSafety          float64
-	FluidserveAlphaExternality float64
-	FluidservePendGraceMs      int
-	FluidserveTtftSafetyMs     int
-	FluidserveEnablePend       bool
-	FluidserveEnableExternality bool
-	FluidserveEnableFlux       bool
+	FluidserveProfilePath             string
+	FluidserveClassBudgets            string
+	FluidserveHorizonSteps            int
+	FluidserveZSafety                 float64
+	FluidserveAlphaExternality        float64
+	FluidservePendGraceMs             int
+	FluidserveTtftSafetyMs            int
+	FluidserveEnablePend              bool
+	FluidserveEnableExternality       bool
+	FluidserveEnableFlux              bool
+	FluidserveEnableOnlineCalibration bool
 
 	// Adaptive PD
 	EnableAdaptivePD             bool
 	TpotMigrateOutFloorThreshold float32
 
 	// filter
-	FailoverDomain            string
+	FailoverDomain           string
 	InstanceStalenessSeconds int64
 
 	// rescheduling
@@ -402,6 +403,13 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"isolates what deferring the binding is worth.")
 	flags.BoolVar(&c.FluidserveEnableExternality, "fluidserve-enable-externality", true,
 		"Charge for lost instance capacity when routing. Ablation switch.")
+	flags.BoolVar(&c.FluidserveEnableOnlineCalibration,
+		"fluidserve-enable-online-calibration", false,
+		"Adjust the decode step law from measured intervals. Off by default: the "+
+			"only test available for whether an interval carried prefill work looks "+
+			"at its endpoints, and statuses are 500ms apart, so a queue that formed "+
+			"and drained in between is invisible and its cost is charged to the "+
+			"decode law.")
 	flags.BoolVar(&c.FluidserveEnableFlux, "fluidserve-enable-flux", true,
 		"Project occupancy over the horizon. Disabling it judges instances on their "+
 			"current occupancy alone, which is the level-based baseline.")

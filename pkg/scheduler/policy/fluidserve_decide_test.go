@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -19,14 +20,15 @@ func fsPolicy(t *testing.T, budgets string, mutate func(*fluidserveConfig)) *flu
 	require.NoError(t, err)
 
 	cfg := fluidserveConfig{
-		horizonSteps:      100,
-		zSafety:           1.65,
-		alphaExternality:  1.0,
-		enablePend:        true,
-		enableExternality: true,
-		enableFlux:        true,
-		pendGraceMs:       200,
-		ttftSafetyMs:      300,
+		horizonSteps:            100,
+		zSafety:                 1.65,
+		alphaExternality:        1.0,
+		enablePend:              true,
+		enableExternality:       true,
+		enableFlux:              true,
+		enableOnlineCalibration: true,
+		pendGraceMs:             200,
+		ttftSafetyMs:            300,
 	}
 	if mutate != nil {
 		mutate(&cfg)
@@ -152,26 +154,53 @@ func TestTightRequestsCollectWhereTightRequestsAlreadyAre(t *testing.T) {
 	require.NotNil(t, req)
 	withTerm := fsPolicy(t, "25:e2e:16000,50:decode", nil)
 	loose := views2["looseOnly"]
-	assert.Zero(t, p2.evaluate(loose.schedulingCtx.fluidserveFlux, loose, req).externality,
-		"the ablation must charge nothing for binding a loose instance to a tight budget")
-	assert.Greater(t, withTerm.evaluate(loose.schedulingCtx.fluidserveFlux, loose, req).externality,
-		0.0, "with the term on, that same placement is charged")
+	off := p2.evaluate(loose.schedulingCtx.fluidserveFlux, loose, req)
+	assert.Zero(t, off.harm+off.bindingLoss,
+		"the ablation must charge nothing for placing a request on this instance")
+	on := withTerm.evaluate(loose.schedulingCtx.fluidserveFlux, loose, req)
+	assert.Greater(t, on.harm+on.bindingLoss, 0.0,
+		"with the terms on, that same placement is charged")
 }
 
-func TestRequestIsHeldWhenNothingCanTakeIt(t *testing.T) {
-	// Both instances are far past what they can hold, so there is no placement
-	// that meets the budget. Holding the request at the gateway costs nothing
-	// and keeps every option open, which is preferable to committing it to an
-	// engine whose queue it can no longer be taken out of.
-	p := fsPolicy(t, "25:e2e:16000,50:decode", nil)
+func TestRequestIsHeldWhenPlacingItWouldBreakOthers(t *testing.T) {
+	// Holding is worth doing when the reason not to place the request is that
+	// doing so damages requests that can still make their budget. Holding costs
+	// nothing and keeps every option open, whereas committing it to an engine
+	// puts it in a queue it cannot be taken out of and takes the incumbents
+	// down with it.
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	now := nowMillis()
 	views := map[string]*instanceViewScheduling{
-		"a": fsView(fsViewOpts{id: "a", decodeReqs: 300, decodeTokens: 5000000,
-			pendingPre: 200000, usedGpu: 570000, stepID: 9000}),
-		"b": fsView(fsViewOpts{id: "b", decodeReqs: 300, decodeTokens: 5000000,
-			pendingPre: 200000, usedGpu: 570000, stepID: 9000}),
+		"a": fsView(fsViewOpts{id: "a", decodeReqs: 30, decodeTokens: 2_400_000,
+			usedGpu: 300_000, stepID: 9000}),
+		"b": fsView(fsViewOpts{id: "b", decodeReqs: 30, decodeTokens: 2_400_000,
+			usedGpu: 300_000, stepID: 9000}),
+	}
+	for _, inst := range []string{"a", "b"} {
+		for i := 0; i < 30; i++ {
+			id := fmt.Sprintf("%s-chat-%d", inst, i)
+			p.registry.noteArrival(id, now)
+			p.registry.onDispatch(inst, id, 50, 1000, 8192, 8990, now)
+		}
+	}
+	// A long prompt would make several of the next iterations carry a chunk,
+	// which is what the incumbents cannot absorb.
+	got := decide(p, fsRequest("heavy", 25, 11800, 40000), views)
+	assert.Nil(t, got, "placing this would break requests that can still make it")
+}
+
+func TestRequestIsPlacedWhenWaitingCannotHelp(t *testing.T) {
+	// The complement, and the reason the rule is not simply "hold whenever the
+	// request does not fit". If nothing on the instance can still make its
+	// budget, holding does not protect anyone and only spends the held
+	// request's own time-to-first-token budget.
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	views := map[string]*instanceViewScheduling{
+		"a": fsView(fsViewOpts{id: "a", decodeReqs: 300, decodeTokens: 5_000_000,
+			pendingPre: 200_000, usedGpu: 570_000, stepID: 9000}),
 	}
 	got := decide(p, fsRequest("r1", 50, 5000, 1000), views)
-	assert.Nil(t, got, "an unplaceable request should wait, not be committed")
+	require.NotNil(t, got)
 }
 
 func TestHoldingStopsOnceTheFirstTokenBudgetIsSpent(t *testing.T) {
@@ -300,4 +329,60 @@ func TestIdleInstancesReportNoIterationTime(t *testing.T) {
 	v.cmsView.Status.StepId = 1002
 	v.cmsView.Status.TimestampMs = 1_003_000
 	assert.Equal(t, -1.0, p.observeInstance(v))
+}
+
+func TestHeavyWorkAvoidsInstancesWhoseRequestsHaveLittleSlack(t *testing.T) {
+	// The property the earlier formulation lacked, and the reason the first
+	// measured run spread the damage evenly across classes instead of confining
+	// it. An agent request carries a 22k-token prompt, which makes several of
+	// the next iterations carry a prefill chunk and delays every request already
+	// decoding on that instance. Its own per-token budget is LOOSER than an
+	// interactive request's, so a rule that prices only the budget a request
+	// declares charges it nothing for landing among interactive requests and
+	// pushing all of them past their limit.
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	now := nowMillis()
+
+	views := map[string]*instanceViewScheduling{
+		// Serving interactive requests, close to but inside their budget.
+		"interactive": fsView(fsViewOpts{id: "interactive", decodeReqs: 20,
+			decodeTokens: 1_600_000, usedGpu: 200_000, stepID: 5000}),
+		// Already past what its requests can absorb.
+		"loaded": fsView(fsViewOpts{id: "loaded", decodeReqs: 20,
+			decodeTokens: 1_600_000, pendingPre: 200_000, usedGpu: 200_000,
+			stepID: 5000}),
+	}
+	for i := 0; i < 20; i++ {
+		id := fmt.Sprintf("chat-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("interactive", id, 50, 1000, 8192, 4990, now)
+		id = fmt.Sprintf("swe-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("loaded", id, 25, 20000, 8192, 4990, now)
+	}
+
+	got := decide(p, fsRequest("swe-new", 25, 11800, 22000), views)
+	require.NotNil(t, got)
+	assert.Equal(t, "loaded", got.GetInstanceId(),
+		"heavy work belongs where it can no longer make anything worse")
+}
+
+func TestRequestsAlreadyPastTheirBudgetDoNotMakeAnInstanceExpensive(t *testing.T) {
+	// The asymmetry that produces the separation: an instance whose requests
+	// are going to miss regardless is the cheap place for more heavy work, so
+	// once one instance has absorbed it, it keeps absorbing it and the others
+	// stay clean. Counting further delay to an already-lost request as a cost
+	// would push the heavy work back out across the fleet.
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	f := &instanceFlux{
+		meanStep: 200,
+		live: []liveRequest{
+			{allowanceMs: 50},  // 200ms per token already; nothing left to lose
+			{allowanceMs: 300}, // still has room
+		},
+	}
+	harm := p.harmToIncumbents(f, 200, 260)
+	// Only the second request contributes: 60ms of extra delay against the
+	// 100ms of slack it had.
+	assert.InDelta(t, 0.6, harm, 1e-9)
 }
