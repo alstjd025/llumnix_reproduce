@@ -526,3 +526,46 @@ func TestDrainedInstanceStillAttractsItsOwnClass(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "wasChat", got.GetInstanceId())
 }
+
+func TestClassShareBreaksTheUniformMixture(t *testing.T) {
+	// Every other term is symmetric in the instances, so a fleet where all of
+	// them hold the same mixture is a fixed point: each looks identical to
+	// every request and nothing pushes any class anywhere. Seven measured
+	// configurations sat at exactly that point. This term is asymmetric on
+	// purpose -- an instance already holding more of a class is more attractive
+	// to it -- which makes the uniform mixture unstable.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", nil)
+	now := nowMillis()
+	views := map[string]*instanceViewScheduling{
+		"mostlyChat": fsView(fsViewOpts{id: "mostlyChat", decodeReqs: 10,
+			decodeTokens: 200_000, usedGpu: 40_000, stepID: 5000}),
+		"mixed": fsView(fsViewOpts{id: "mixed", decodeReqs: 10,
+			decodeTokens: 200_000, usedGpu: 40_000, stepID: 5000}),
+	}
+	for i := 0; i < 10; i++ {
+		id := fmt.Sprintf("a-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("mostlyChat", id, 50, 1000, 8192, 4990, now)
+		id = fmt.Sprintf("b-%d", i)
+		p.registry.noteArrival(id, now)
+		tier := 50
+		if i%2 == 1 {
+			tier = 100
+		}
+		p.registry.onDispatch("mixed", id, tier, 1000, 8192, 4990, now)
+	}
+	got := decide(p, fsRequest("chat-new", 50, 5000, 1000), views)
+	require.NotNil(t, got)
+	assert.Equal(t, "mostlyChat", got.GetInstanceId())
+}
+
+func TestClassShareIsZeroOnAnEmptyInstance(t *testing.T) {
+	// An instance holding nothing belongs to no class, so it neither attracts
+	// nor repels; the other terms decide, which is what lets a fresh instance
+	// be claimed at all.
+	assert.Zero(t, classShare(&instanceFlux{}, 50))
+	f := &instanceFlux{live: []liveRequest{{tier: 50}, {tier: 50}, {tier: 25}}}
+	assert.InDelta(t, 2.0/3.0, classShare(f, 50), 1e-9)
+	assert.InDelta(t, 1.0/3.0, classShare(f, 25), 1e-9)
+	assert.Zero(t, classShare(f, 100))
+}

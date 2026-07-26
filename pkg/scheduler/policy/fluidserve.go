@@ -73,6 +73,11 @@ const (
 	// Largest share of its time-to-first-token budget a request may spend
 	// waiting for a placement.
 	fsMaxPendFraction = 0.25
+	// Weight on the share of an instance already belonging to the request's own
+	// class. Set to the full range of the free-space term so that an instance
+	// wholly given over to a class outweighs any difference in how full the
+	// instances are, which is what makes the uniform mixture unstable.
+	fsShareWeight = 1.0
 )
 
 type fluidserveConfig struct {
@@ -476,6 +481,7 @@ type candidate struct {
 	score         float64
 	harm          float64
 	mismatch      float64
+	share         float64
 	meanBefore    float64
 	meanAfter     float64
 	allowAfter    float64
@@ -591,6 +597,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		c.meanAfter <= c.allowAfter*fsAllowanceUtilisation
 
 	c.meanBefore = f.meanStep
+	c.share = classShare(f, req.tier)
 	if p.cfg.enableExternality {
 		c.harm = p.harmToIncumbents(f, c.meanBefore, c.meanAfter)
 		// Matched against what the instance has been serving rather than what
@@ -613,7 +620,8 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	} else if room < -1 {
 		room = -1
 	}
-	c.score = room - p.cfg.alphaExternality*(c.harm+fsMismatchWeight*c.mismatch)
+	c.score = room + fsShareWeight*c.share -
+		p.cfg.alphaExternality*(c.harm+fsMismatchWeight*c.mismatch)
 	return c
 }
 
@@ -660,6 +668,36 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 		harm += h
 	}
 	return harm
+}
+
+// classShare is the fraction of the requests on an instance that belong to the
+// same tier as the one being placed.
+//
+// Every other term here is symmetric in the instances, which means a fleet
+// where all instances hold the same mixture is a fixed point: each instance
+// looks identical to every request, so nothing pushes any class towards any
+// instance, and the mixture stays uniform. Seven configurations were measured
+// and all of them sat at that fixed point, with the interactive class spread
+// almost perfectly evenly (concentration 0.05 to 0.11 against PolyServe's 1.00).
+//
+// This term is deliberately not symmetric. An instance that already holds
+// slightly more of a class becomes slightly more attractive to it, which makes
+// the uniform mixture unstable and lets a separation grow from whatever
+// imbalance the arrivals happen to produce. It is the same positive feedback
+// that an explicit assignment provides, without the assignment: the instance a
+// class collects on is decided by traffic rather than by configuration, and it
+// dissolves on its own when that class stops arriving.
+func classShare(f *instanceFlux, tier int) float64 {
+	if len(f.live) == 0 {
+		return 0
+	}
+	same := 0
+	for _, r := range f.live {
+		if r.tier == tier {
+			same++
+		}
+	}
+	return float64(same) / float64(len(f.live))
 }
 
 // Ordering budget affinity ahead of free space was tried and measured worse:
@@ -767,13 +805,15 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 	metrics.Histogram("scheduler_fluidserve_harm", metrics.Labels{}).Observe(c.harm)
 	metrics.Histogram("scheduler_fluidserve_budget_mismatch",
 		metrics.Labels{}).Observe(c.mismatch)
+	metrics.Histogram("scheduler_fluidserve_class_share",
+		metrics.Labels{}).Observe(c.share)
 
 	klog.V(3).Infof("FluidServe %s request %s (tier %dms, prompt %d) -> %s: "+
 		"headroom %.0f->%.0f cap(kv %.0f mem %.0f) proj %.0f meanStep %.1f->%.1fms "+
-		"allowance %.1fms harm %.2f bindingLoss %.0f live %d (%d unachievable)",
+		"allowance %.1fms harm %.2f mismatch %.2f share %.2f live %d (%d unachievable)",
 		kind, req.id, req.tier, req.promptTokens, c.flux.id,
 		c.flux.headroom, c.headroomAfter, c.flux.capKv, c.flux.capMem, c.flux.proj,
-		c.flux.meanStep, c.meanAfter, c.allowAfter, c.harm, c.mismatch,
+		c.flux.meanStep, c.meanAfter, c.allowAfter, c.harm, c.mismatch, c.share,
 		len(c.flux.live), c.flux.unachievable)
 }
 
