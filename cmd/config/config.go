@@ -263,6 +263,18 @@ type FullModeSchedulingConfig struct {
 	PolyserveTierDecodeTokens string
 	PolyserveDecodeTokens     int
 
+	// FluidServe
+	FluidserveProfilePath      string
+	FluidserveClassBudgets     string
+	FluidserveHorizonSteps     int
+	FluidserveZSafety          float64
+	FluidserveAlphaExternality float64
+	FluidservePendGraceMs      int
+	FluidserveTtftSafetyMs     int
+	FluidserveEnablePend       bool
+	FluidserveEnableExternality bool
+	FluidserveEnableFlux       bool
+
 	// Adaptive PD
 	EnableAdaptivePD             bool
 	TpotMigrateOutFloorThreshold float32
@@ -350,6 +362,49 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"Tiers not listed fall back to --polyserve-decode-tokens.")
 	flags.IntVar(&c.PolyserveDecodeTokens, "polyserve-decode-tokens", consts.DefaultPolyserveDecodeTokens,
 		"PolyServe expected output length for tiers absent from --polyserve-tier-decode-tokens")
+
+	flags.StringVar(&c.FluidserveProfilePath, "fluidserve-profile-path", "",
+		"FluidServe offline profile (decode step law + per-class output-length "+
+			"survival), produced by ms_dev/scripts/gen_fluidserve_profile.py")
+	flags.StringVar(&c.FluidserveClassBudgets, "fluidserve-class-budgets", "",
+		"How each SLO tier's latency budget is defined, as \"tier:mode[:budgetMs],...\" "+
+			"(e.g. \"25:e2e:30000,50:decode,100:decode\"). e2e means the whole request "+
+			"must finish within the given wall-clock budget measured from arrival; decode "+
+			"means its mean time between output tokens must stay within the tier key. "+
+			"Both are cumulative, which is how the requests are actually scored, so a "+
+			"request that has been faster than its budget carries the credit forward.")
+	flags.IntVar(&c.FluidserveHorizonSteps, "fluidserve-horizon-steps",
+		consts.DefaultFluidserveHorizonSteps,
+		"Planning horizon in engine iterations. Counted in iterations rather than "+
+			"seconds because decode growth is then exactly one token per request per "+
+			"iteration, and because iteration time is itself a function of the occupancy "+
+			"being controlled.")
+	flags.Float64Var(&c.FluidserveZSafety, "fluidserve-z-safety",
+		consts.DefaultFluidserveZSafety,
+		"Standard deviations subtracted from the expected KV release. Larger values "+
+			"admit less and leave more headroom.")
+	flags.Float64Var(&c.FluidserveAlphaExternality, "fluidserve-alpha-externality",
+		consts.DefaultFluidserveAlphaExternality,
+		"Weight on the capacity an instance gives up by accepting a request whose "+
+			"budget is tighter than anything already on it. Zero reduces the policy to "+
+			"plain most-headroom routing.")
+	flags.IntVar(&c.FluidservePendGraceMs, "fluidserve-pend-grace-ms",
+		consts.DefaultFluidservePendGraceMs,
+		"Minimum time a request may be held at the gateway even when its "+
+			"time-to-first-token budget is already spent")
+	flags.IntVar(&c.FluidserveTtftSafetyMs, "fluidserve-ttft-safety-ms",
+		consts.DefaultFluidserveTtftSafetyMs,
+		"Margin subtracted from the time-to-first-token budget when deciding how long "+
+			"a request may keep waiting")
+	flags.BoolVar(&c.FluidserveEnablePend, "fluidserve-enable-pend", true,
+		"Hold a request at the gateway when no instance can take it within budget. "+
+			"Disabling it forces an immediate placement, which is the ablation that "+
+			"isolates what deferring the binding is worth.")
+	flags.BoolVar(&c.FluidserveEnableExternality, "fluidserve-enable-externality", true,
+		"Charge for lost instance capacity when routing. Ablation switch.")
+	flags.BoolVar(&c.FluidserveEnableFlux, "fluidserve-enable-flux", true,
+		"Project occupancy over the horizon. Disabling it judges instances on their "+
+			"current occupancy alone, which is the level-based baseline.")
 
 	flags.BoolVar(&c.EnableAdaptivePD, "enable-adaptive-pd", consts.DefaultEnableAdaptivePD, "Llumnix enable adaptive pd")
 	flags.Float32Var(&c.TpotMigrateOutFloorThreshold, "tpot-migrate-out-floor-threshold", consts.DefaultTpotMigrateOutFloorThreshold, "Llumnix tpot migrate out floor threshold")

@@ -35,7 +35,10 @@ func verifySchedulingPolicy(c *options.SchedulerConfig) {
 		consts.SchedulingPolicySlo,
 		// PolyServe needs the CMS instance status that only full mode pulls:
 		// its admission test reads queue depth, decode batch and KV occupancy.
-		consts.SchedulingPolicyPolyserve)
+		consts.SchedulingPolicyPolyserve,
+		// FluidServe reads the same CMS instance status, plus the engine's step
+		// counter and last iteration duration, none of which lite mode pulls.
+		consts.SchedulingPolicyFluidserve)
 
 	policy := c.SchedulingPolicy
 	if !c.EnableFullModeScheduling {

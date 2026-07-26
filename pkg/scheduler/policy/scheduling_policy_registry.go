@@ -25,6 +25,8 @@ func newDispatchPolicyInternal(c *options.SchedulerConfig) dispatchPolicyInterna
 		return newSloDispatchFullMode(c)
 	case consts.SchedulingPolicyPolyserve:
 		return newPolyserveDispatchFullMode(c)
+	case consts.SchedulingPolicyFluidserve:
+		return newFluidserveDispatchFullMode(c)
 	default:
 		panic(fmt.Sprintf("unsupported scheduling policy: %s", c.SchedulingPolicy))
 	}

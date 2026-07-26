@@ -46,6 +46,14 @@ const (
 	// derived from PolyServe (arXiv:2507.17769) sections 4.5 to 4.7, and among
 	// survivors goes to the least loaded rather than the most loaded.
 	SchedulingPolicyPolyserve = "polyserve"
+
+	// SchedulingPolicyFluidserve decides routing and admission from a single
+	// quantity: how much more KV an instance can take over a planning horizon
+	// while still meeting the latency budgets of the requests already on it.
+	// When no instance has enough, the request is held at the gateway instead of
+	// being committed to an engine, which keeps the placement decision open at
+	// no cost. See ms_dev/notes/fluidserve-implementation.md.
+	SchedulingPolicyFluidserve = "fluidserve"
 )
 
 const (
@@ -211,6 +219,19 @@ const (
 	// request-weighted mean of the mix workload's measured per-class means
 	// (chat 386, deepresearch 275, swe 728) at 1:1:1.
 	DefaultPolyserveDecodeTokens = 463
+
+	// FluidServe defaults. The horizon is long enough that a request admitted
+	// now is judged against how the instance will look once its current batch
+	// has grown, and short enough that the completion estimate over it is not
+	// dominated by the spread of the output-length distribution.
+	DefaultFluidserveHorizonSteps = 100
+	// One-sided 95% bound on the KV expected to be released.
+	DefaultFluidserveZSafety = 1.65
+	// Capacity given up and capacity gained are both in KV tokens, so the
+	// default weights them equally.
+	DefaultFluidserveAlphaExternality = 1.0
+	DefaultFluidservePendGraceMs      = 200
+	DefaultFluidserveTtftSafetyMs     = 300
 
 	// Adaptive PD defaults
 	DefaultEnableAdaptivePD             = false

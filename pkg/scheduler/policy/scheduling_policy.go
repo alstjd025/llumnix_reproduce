@@ -51,6 +51,15 @@ type schedulingCtx struct {
 	// --ttft-slo / --tpot-slo.
 	requestTtftSloMs int
 	requestTpotSloMs int
+
+	// FluidServe stashes its whole per-request decision context here for the
+	// same reason: its selector needs the request, the instance's projected
+	// state, and every other instance's projected state at once, and the
+	// selector signature carries only instance views. Both pointers are written
+	// once per request by the policy's calculateMetrics hook, before any filter
+	// or selector runs.
+	fluidserveRequest *fluidserveRequest
+	fluidserveFlux    *instanceFlux
 }
 
 type clusterViewScheduling struct {
