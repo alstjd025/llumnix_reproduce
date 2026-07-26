@@ -162,12 +162,6 @@ const (
 	// It has to outlive the gateway's hold-and-retry window so that a request
 	// retried near the end of that window is still known to have been waiting.
 	fsArrivalTTLMs = 5 * 60 * 1000
-	// Weight of one dispatch in an instance's smoothed budget preference. Small
-	// enough that a handful of requests of another class does not move it, and
-	// large enough that a sustained change of workload does within a few
-	// hundred requests, which at these rates is tens of seconds -- the same
-	// order as the interval PolyServe's allocation takes to react.
-	fsPreferenceAlpha = 0.02
 )
 
 type requestRegistry struct {
@@ -183,25 +177,6 @@ type requestRegistry struct {
 	arrivedMs map[string]int64
 	lastGCMs  int64
 
-	// preference[instanceID] is a smoothed log of the budgets that instance has
-	// been given, and it is what requests are matched against rather than the
-	// budget currently in force there.
-	//
-	// The difference is memory. The budget in force is the minimum over the
-	// requests present right now, so it vanishes the moment an instance drains
-	// and reappears as whatever arrives next. Measured, that made the
-	// assignment churn: every time an instance emptied it attracted whichever
-	// class asked first, and no class ever settled anywhere. A smoothed
-	// preference survives the gap, so an instance that has been serving one
-	// class keeps attracting it across the lulls, and only sustained traffic of
-	// another kind moves it.
-	//
-	// This is the same stabilisation PolyServe gets from requiring an
-	// allocation to be computed twice before it is applied, expressed as a
-	// continuous quantity rather than a discrete assignment: it sharpens under
-	// load and relaxes when load falls, and no instance is ever reserved.
-	preference map[string]float64
-
 	// Counters exported for telemetry.
 	retiredByCount    int64
 	retiredBySurvival int64
@@ -214,7 +189,6 @@ func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestReg
 		budgets:    budgets,
 		byInstance: map[string]map[string]*dispatchRecord{},
 		arrivedMs:  map[string]int64{},
-		preference: map[string]float64{},
 	}
 }
 
@@ -266,14 +240,6 @@ func (r *requestRegistry) onDispatch(
 	arrived := r.arrivedMs[requestID]
 	if arrived == 0 {
 		arrived = nowMs
-	}
-	if nominal := r.nominalAllowanceLocked(tier); nominal > 0 {
-		if prev, ok := r.preference[instanceID]; ok {
-			r.preference[instanceID] = prev +
-				fsPreferenceAlpha*(math.Log(nominal)-prev)
-		} else {
-			r.preference[instanceID] = math.Log(nominal)
-		}
 	}
 	m[requestID] = &dispatchRecord{
 		id:             requestID,
@@ -421,42 +387,34 @@ func (r *requestRegistry) NominalAllowance(tier int) float64 {
 	return r.nominalAllowanceLocked(tier)
 }
 
-// newRequestAllowance is the allowance a request would start with, used when
-// judging whether an instance can take it. It is evaluated at zero produced
-// tokens and with whatever time has already been spent waiting.
-func (r *requestRegistry) newRequestAllowance(
-	tier, promptTokens int, arrivedMs, nowMs int64) (allowanceMs, expectedTokens float64) {
+// requestBudget describes what an arriving request of this tier is promised:
+// the per-token pace, how many tokens it is expected to produce, and -- when the
+// class is judged end to end -- the whole budget it has to fit inside.
+//
+// None of these depend on how long the request has already waited. The elapsed
+// time is applied where the decision needs it, so that one quantity does not
+// silently mean two different things.
+func (r *requestRegistry) requestBudget(tier int) (
+	nominalMs, expectedTokens float64, isE2E bool, budgetMs float64) {
 
-	prof := r.lengths.forTier(tier)
 	expectedTokens = 1
-	if prof != nil {
+	if prof := r.lengths.forTier(tier); prof != nil {
 		expectedTokens = prof.expectedRemaining(0)
 	}
 	spec := r.budgets.forTier(tier)
-	switch spec.mode {
-	case budgetE2E:
-		elapsed := float64(nowMs - arrivedMs)
-		allowanceMs = (spec.totalMs - elapsed) / expectedTokens
-	default:
-		allowanceMs = spec.perTokMs
+	if spec.mode == budgetE2E {
+		return spec.totalMs / expectedTokens, expectedTokens, true, spec.totalMs
 	}
-	if allowanceMs < 0 {
-		allowanceMs = 0
-	}
-	return allowanceMs, expectedTokens
+	return spec.perTokMs, expectedTokens, false, 0
 }
 
-// preferredBudgetMs is the budget an instance has been serving, smoothed over
-// its recent dispatches, or zero when it has not served anything yet. Zero is
-// read by the caller as "no preference", which leaves a fresh instance open to
-// whatever arrives.
-func (r *requestRegistry) preferredBudgetMs(instanceID string) float64 {
+// forget drops any record of a request. It is called when the request is
+// rejected, so that a request the gateway asked about many times while it was
+// held does not leave an arrival entry behind for its whole time-to-live.
+func (r *requestRegistry) forget(requestID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if v, ok := r.preference[instanceID]; ok {
-		return math.Exp(v)
-	}
-	return 0
+	delete(r.arrivedMs, requestID)
 }
 
 func (r *requestRegistry) instanceCount(instanceID string) int {

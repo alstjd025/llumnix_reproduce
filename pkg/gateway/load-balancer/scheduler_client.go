@@ -142,6 +142,13 @@ func (cb *SchedulerClient) doSchedule(req *types.RequestContext) (types.Scheduli
 	case http.StatusOK:
 		return cb.handleResponse(body)
 	case http.StatusTooManyRequests:
+		// The scheduler uses one status for two answers. "no available endpoint"
+		// means not yet, and the caller may keep holding the request; "admission
+		// rejected" means the scheduler has decided it will not be served, and
+		// holding it any longer only delays the client's error.
+		if bytes.Contains(body, []byte(consts.ErrorAdmissionRejected.Error())) {
+			return nil, consts.ErrorAdmissionRejected
+		}
 		return nil, consts.ErrorNoAvailableEndpoint
 	case http.StatusNotFound:
 		return nil, consts.ErrorEndpointNotFound
@@ -175,6 +182,15 @@ func (cb *SchedulerClient) Get(req *types.RequestContext) (types.SchedulingResul
 		// if err == consts.ErrorEndpointNotFound {
 		// 	return nil, err
 		// }
+
+		// The scheduler has decided this request will not be served. Returning
+		// now is the whole point of the decision: the capacity it would have
+		// used goes to the requests that can still meet their budgets, and the
+		// client learns immediately rather than after the hold expires.
+		if errors.Is(err, consts.ErrorAdmissionRejected) {
+			metrics.Counter("gateway_scheduling_rejected_total", metrics.Labels{}).Inc()
+			return nil, err
+		}
 
 		// all service endpoints are busy, wait a period for next try
 		if errors.Is(err, consts.ErrorNoAvailableEndpoint) {

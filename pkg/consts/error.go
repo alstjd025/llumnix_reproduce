@@ -7,8 +7,13 @@ import (
 )
 
 var (
-	ErrorNoAvailableEndpoint    = errors.New("no available endpoint") // the backend instances exist, but it cannot be obtained as the load is too high
-	ErrorEndpointNotFound       = errors.New("endpoint not found")    // there is no endpoints for the backend service
+	ErrorNoAvailableEndpoint = errors.New("no available endpoint") // the backend instances exist, but it cannot be obtained as the load is too high
+	// ErrorAdmissionRejected means the scheduler decided this request will not
+	// be served, as opposed to not being placeable yet. The distinction matters
+	// to the gateway: "not yet" is retried while the request can still afford to
+	// wait, "will not be" is returned to the client immediately.
+	ErrorAdmissionRejected      = errors.New("admission rejected")
+	ErrorEndpointNotFound       = errors.New("endpoint not found") // there is no endpoints for the backend service
 	ErrorBackendServiceNoFound  = errors.New("backend service not found")
 	ErrorSchedulerNotReady      = errors.New("scheduler not ready")
 	ErrorMayNetworkBroken       = errors.New("may network broken")

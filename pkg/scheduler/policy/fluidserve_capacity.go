@@ -3,8 +3,6 @@ package policy
 import (
 	"math"
 	"sync"
-
-	"k8s.io/klog/v2"
 )
 
 // C3, the capacity model. It answers two questions for one instance:
@@ -37,44 +35,32 @@ import (
 type capacityModel struct {
 	mu sync.RWMutex
 
-	c0    float64 // fixed per-step cost, ms
-	cKv   float64 // ms per KV token held
-	cN    float64 // ms per decoding request
-	seedC float64 // c0 as loaded, kept so online updates can be bounded
+	c0  float64 // fixed per-step cost, ms
+	cKv float64 // ms per KV token held
+	cN  float64 // ms per decoding request
 
 	predictor *LatencyPredictor
-
-	// Online calibration state. Rather than refit the whole law online, which
-	// would need well-conditioned samples across the whole occupancy range, a
-	// single multiplicative correction is tracked. That is enough to follow
-	// drift in hardware or engine configuration while leaving the shape of the
-	// law, which is measured over a far wider range than any single run visits,
-	// alone.
-	correction  float64 // multiplies the predicted decode step time
-	corrSamples int
-	residualSum float64
 }
 
-const (
-	// Bounds on the online correction. A factor outside this range means the
-	// law no longer describes the engine at all, which is a condition to report
-	// rather than to silently absorb.
-	fsCorrectionMin = 0.5
-	fsCorrectionMax = 3.0
-	// Weight of one new sample in the correction. Deliberately small: the
-	// samples arrive at the CMS polling rate, so hundreds accumulate per minute,
-	// and a fast filter would track transient bursts instead of drift.
-	fsCorrectionAlpha = 0.002
-)
+// An online correction of the decode law was implemented and removed. The only
+// test available without an engine change -- no prefill queued at either end of
+// a status interval -- cannot certify that no prefill ran DURING it: statuses
+// arrive every 500 ms and the engine executes around 25 iterations in between,
+// so a queue that formed and drained inside the interval is invisible. Measured
+// live, that misattribution drove the correction to 1.73, which in turn drove
+// the safety factor to its ceiling and cut throughput by half. The offline law
+// is fitted over a far wider range than one run visits (377,838 iterations,
+// cross-checked against an independent fit) and read 0.9998 against an idle
+// engine, so it is used as loaded and the three constants the correction needed
+// are gone. Reinstating it requires a per-step prefill-token signal from the
+// engine, not another filter on the same data.
 
 func newCapacityModel(p *fluidserveProfile, predictor *LatencyPredictor) *capacityModel {
 	return &capacityModel{
-		c0:         p.DecodeStepLaw.C0Ms,
-		cKv:        p.DecodeStepLaw.CKvMsPerToken,
-		cN:         p.DecodeStepLaw.CNMsPerRequest,
-		seedC:      p.DecodeStepLaw.C0Ms,
-		predictor:  predictor,
-		correction: 1.0,
+		c0:        p.DecodeStepLaw.C0Ms,
+		cKv:       p.DecodeStepLaw.CKvMsPerToken,
+		cN:        p.DecodeStepLaw.CNMsPerRequest,
+		predictor: predictor,
 	}
 }
 
@@ -92,7 +78,7 @@ func (m *capacityModel) decodeStepLocked(kvTokens, nDecode float64) float64 {
 	if nDecode < 0 {
 		nDecode = 0
 	}
-	return (m.c0 + m.cKv*kvTokens + m.cN*nDecode) * m.correction
+	return m.c0 + m.cKv*kvTokens + m.cN*nDecode
 }
 
 // prefillStepMs is the cost of one iteration that carries a chunk of this size,
@@ -137,7 +123,7 @@ func (m *capacityModel) meanStepMs(kvTokens, nDecode, pendingPrefill, chunk floa
 	}
 	m.mu.RLock()
 	dec := m.decodeStepLocked(kvTokens, nDecode)
-	c0 := m.c0 * m.correction
+	c0 := m.c0
 	m.mu.RUnlock()
 
 	sp := prefillSteps(pendingPrefill, chunk)
@@ -163,7 +149,7 @@ func (m *capacityModel) meanStepMs(kvTokens, nDecode, pendingPrefill, chunk floa
 // iteration, prefill-carrying or not. Writing f for the fraction of iterations
 // that carry a chunk:
 //
-//	mean = c0*corr + c_kv*corr*kv + c_n*corr*n + f*(t_pre - c0*corr)
+//	mean = c0 + c_kv*kv + c_n*n + f*(t_pre - c0)
 //
 // A negative result means the instance cannot meet the allowance even with an
 // empty cache, which the caller reports rather than clamping to zero, because
@@ -175,9 +161,7 @@ func (m *capacityModel) maxKvForAllowance(
 		horizon = 1
 	}
 	m.mu.RLock()
-	c0 := m.c0 * m.correction
-	cKv := m.cKv * m.correction
-	cN := m.cN * m.correction
+	c0, cKv, cN := m.c0, m.cKv, m.cN
 	m.mu.RUnlock()
 
 	if cKv <= 0 {
@@ -198,57 +182,11 @@ func (m *capacityModel) maxKvForAllowance(
 	return (allowanceMs - overhead) / cKv
 }
 
-// observe feeds one measured iteration back into the model. Only decode-only
-// steps are used: a step that carried a chunk mixes in the prefill cost, and
-// attributing that to the decode law would inflate it for every instance.
-func (m *capacityModel) observe(kvTokens, nDecode, prefillTokens, measuredMs float64) {
-	if prefillTokens > 0 || measuredMs <= 0 || nDecode < 1 || kvTokens <= 0 {
-		return
-	}
-	// Reject implausible samples outright. The engine reports the duration of
-	// its last step, and a status published while the engine was idle or just
-	// restarted can carry a value that has nothing to do with the load it
-	// reports alongside.
-	if measuredMs > 10000 {
-		return
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	predicted := m.decodeStepLocked(kvTokens, nDecode)
-	if predicted <= 0 {
-		return
-	}
-	ratio := measuredMs / predicted
-	if ratio < 0.2 || ratio > 5 {
-		return
-	}
-	m.correction *= 1 + fsCorrectionAlpha*(ratio-1)
-	if m.correction < fsCorrectionMin {
-		m.correction = fsCorrectionMin
-	}
-	if m.correction > fsCorrectionMax {
-		m.correction = fsCorrectionMax
-	}
-	m.corrSamples++
-	m.residualSum += ratio - 1
-	if m.corrSamples%2000 == 0 {
-		klog.V(2).Infof("FluidServe capacity model: correction %.3f after %d samples "+
-			"(mean residual %.3f)", m.correction, m.corrSamples,
-			m.residualSum/float64(m.corrSamples))
-	}
-}
-
-func (m *capacityModel) correctionFactor() float64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.correction
-}
-
 // floorStepMs is the cost of an iteration on an otherwise empty instance. An
 // allowance below this cannot be met by any placement decision, which is the
 // test used to identify a request whose SLO is not physically achievable.
 func (m *capacityModel) floorStepMs() float64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.c0 * m.correction
+	return m.c0
 }

@@ -151,6 +151,11 @@ func (lgs *LlmGatewayService) convertErrorResponse(msg *types.ResponseMsg) (int,
 	switch msg.Err {
 	case consts.ErrorNoAvailableEndpoint:
 		return http.StatusServiceUnavailable, []byte(`{"error": {"code": 503, "message": "no available inference worker"}}`)
+	case consts.ErrorAdmissionRejected:
+		// The phrase the load generator already recognises as a rejection is
+		// kept, with the cause appended, so an existing client records this as
+		// a rejection rather than as an unexplained error.
+		return http.StatusServiceUnavailable, []byte(`{"error": {"code": 503, "message": "no available inference worker (admission rejected: predicted to miss its own budget)"}}`)
 	case consts.ErrorEndpointNotFound:
 		return http.StatusNotFound, []byte(`{"error": {"code": 404, "message": "no inference instance found"}}`)
 	case consts.ErrorRateLimitExceeded:

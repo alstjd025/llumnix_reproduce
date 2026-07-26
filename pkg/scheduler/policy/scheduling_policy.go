@@ -259,6 +259,17 @@ func (p *DispatchPolicy) Schedule(request *types.SchedulingRequest) error {
 
 	selectedInstances := p.schedule(request, clusterViewScheduling)
 	if len(selectedInstances) == 0 {
+		// An empty result means one of two different things, and the gateway has
+		// to be told which. A policy that holds a request answers "no endpoint"
+		// on every retry while it waits, and the gateway keeps holding. A policy
+		// that has decided the request will not be served says so through this
+		// interface, and the gateway returns it to the client at once instead of
+		// holding a request nobody intends to place.
+		if rej, ok := p.policyInternal.(admissionRejecter); ok &&
+			rej.admissionRejected(request.Id) {
+			klog.V(3).Infof("request %s rejected by admission control", request.Id)
+			return consts.ErrorAdmissionRejected
+		}
 		klog.Warningf("No instances selected, return ErrorNoAvailableEndpoint")
 		return consts.ErrorNoAvailableEndpoint
 	}
@@ -470,6 +481,13 @@ func (p *DispatchPolicy) executeSchedule(
 	return selected
 }
 
+// admissionRejecter is implemented by policies that can decide a request will
+// not be served at all. Reporting is one-shot: the flag is cleared as it is
+// read, so it describes the scheduling call that just ran and nothing else.
+type admissionRejecter interface {
+	admissionRejected(requestID string) bool
+}
+
 type dispatchPolicyInternal interface {
 	calculateMetrics(
 		inferType consts.InferType,
@@ -538,7 +556,7 @@ func (p baseDispatchPolicy) selectInstance(
 // to record computed scheduling metrics during CMS status refresh.
 func recordCMSInstanceSchedulingMetrics(view *cms.InstanceView, labels metrics.Labels) {
 	iv := &instanceViewScheduling{
-		cmsView:              view,
+		cmsView:               view,
 		InstanceViewInterface: view,
 	}
 	metricsToRecord := []struct {

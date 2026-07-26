@@ -139,6 +139,12 @@ func (ss *SchedulerService) handleSchedule(w http.ResponseWriter, r *http.Reques
 	if errors.Is(err, consts.ErrorEndpointNotFound) {
 		klog.Errorf("%vms| gateway(%s) request failed: no endpoint exits", time.Since(tStart).Milliseconds(), schReq.GatewayId)
 		statusCode = http.StatusNotFound
+	} else if errors.Is(err, consts.ErrorAdmissionRejected) {
+		// Same status as "too many requests", distinguished by the body: the
+		// gateway reads it to decide between retrying and returning.
+		statusCode = http.StatusTooManyRequests
+		klog.V(3).Infof("%s %vms| gateway(%s) request rejected by admission control",
+			schReq.Id, time.Since(tStart).Milliseconds(), schReq.GatewayId)
 	} else if err != nil {
 		if errors.Is(err, consts.ErrorNoAvailableEndpoint) {
 			statusCode = http.StatusTooManyRequests

@@ -220,9 +220,8 @@ func TestParseClassBudgets(t *testing.T) {
 func testCapacity(t *testing.T) *capacityModel {
 	t.Helper()
 	return &capacityModel{
-		c0: 16.0, cKv: 1e-5, cN: 0.08, seedC: 16.0,
-		correction: 1.0,
-		predictor:  fixedPrefillPredictor(),
+		c0: 16.0, cKv: 1e-5, cN: 0.08,
+		predictor: fixedPrefillPredictor(),
 	}
 }
 
@@ -293,32 +292,6 @@ func TestAllowanceBelowFloorIsUnreachable(t *testing.T) {
 	// different decisions.
 	assert.Less(t, m.maxKvForAllowance(10, 1, 0, 8192, 100), 0.0)
 	assert.Equal(t, 16.0, m.floorStepMs())
-}
-
-func TestOnlineCalibrationTracksDriftAndIgnoresPrefillSteps(t *testing.T) {
-	m := testCapacity(t)
-	base := m.decodeStepMs(200000, 20)
-
-	// A step that carried a chunk must not be attributed to the decode law.
-	for i := 0; i < 500; i++ {
-		m.observe(200000, 20, 8192, 500)
-	}
-	assert.InDelta(t, 1.0, m.correctionFactor(), 1e-9)
-
-	// Sustained evidence that iterations cost 30% more than predicted moves the
-	// correction towards it.
-	for i := 0; i < 3000; i++ {
-		m.observe(200000, 20, 0, base*1.3)
-	}
-	assert.Greater(t, m.correctionFactor(), 1.15)
-	assert.Less(t, m.correctionFactor(), 1.35)
-
-	// Implausible samples are rejected rather than absorbed.
-	before := m.correctionFactor()
-	for i := 0; i < 100; i++ {
-		m.observe(200000, 20, 0, 60000)
-	}
-	assert.InDelta(t, before, m.correctionFactor(), 1e-9)
 }
 
 // ---------------------------------------------------------------------------
@@ -446,17 +419,26 @@ func TestEndToEndBudgetCountsQueueingTime(t *testing.T) {
 		"a request that has been waiting has less time left per remaining token")
 }
 
-func TestNewRequestAllowanceShrinksWithWaiting(t *testing.T) {
+func TestRequestBudgetDescribesTheClassNotTheWait(t *testing.T) {
+	// What an arriving request is promised does not depend on how long it has
+	// already waited. Applying the wait is the decision's job, and keeping it
+	// out of this quantity is what stops one number meaning two things: the
+	// promised pace is what an instance is held to, the wait is what decides
+	// whether this particular request can still be met.
 	r := testRegistry(t)
-	now := int64(1_000_000)
-	fresh, tokens := r.newRequestAllowance(25, 20000, now, now)
-	waited, _ := r.newRequestAllowance(25, 20000, now, now+10000)
-	assert.Greater(t, tokens, 1.0)
-	assert.Greater(t, fresh, waited)
 
-	// A decode-mode tier is judged on its per-token budget, which queueing does
-	// not consume; that is what the separate time-to-first-token budget covers.
-	a, _ := r.newRequestAllowance(50, 1000, now, now)
-	b, _ := r.newRequestAllowance(50, 1000, now, now+10000)
-	assert.Equal(t, a, b)
+	// End-to-end tier: the promised pace is the whole budget spread over the
+	// output the class is expected to produce.
+	nominal, tokens, isE2E, budget := r.requestBudget(25)
+	assert.True(t, isE2E)
+	assert.InDelta(t, 30000.0, budget, 1e-9)
+	assert.Greater(t, tokens, 1.0)
+	assert.InDelta(t, budget/tokens, nominal, 1e-9)
+
+	// Per-token tier: the promised pace is the tier key itself, and there is no
+	// end-to-end budget to fit inside.
+	nominal, _, isE2E, budget = r.requestBudget(50)
+	assert.False(t, isE2E)
+	assert.Zero(t, budget)
+	assert.InDelta(t, 50.0, nominal, 1e-9)
 }

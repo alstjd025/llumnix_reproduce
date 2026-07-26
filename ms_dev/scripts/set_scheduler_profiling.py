@@ -67,25 +67,29 @@ FLUIDSERVE_FLAGS = {
     "--fluidserve-class-budgets": "25:e2e:30000,50:decode,100:decode",
     "--fluidserve-horizon-steps": "100",
     "--fluidserve-z-safety": "1.65",
-    "--fluidserve-alpha-externality": "1.0",
     "--fluidserve-enable-pend": "true",
-    "--fluidserve-enable-externality": "true",
+    "--fluidserve-enable-shed": "true",
+    "--fluidserve-enable-affinity": "true",
     "--fluidserve-enable-flux": "true",
 }
 
 # Ablation switches, set from the environment so an arm can turn one mechanism
 # off without editing this file:
-#   FS_PEND=false          place immediately instead of holding
-#   FS_EXTERNALITY=false   ignore what a placement costs the requests already there
-#   FS_FLUX=false          judge instances on current occupancy instead of projecting
+#   FS_PEND=false      place immediately instead of holding
+#   FS_SHED=false      place a request that is already certain to miss instead of
+#                      rejecting it, so the same requests are lost either way and
+#                      the difference is what their capacity cost the others
+#   FS_AFFINITY=false  among the instances that can take a request, ignore which
+#                      class each is already holding and route on free space
+#   FS_FLUX=false      judge instances on current occupancy instead of projecting
 # The point of each is to attribute a result to a mechanism rather than to the
-# policy as a whole; with holding off, for instance, FluidServe is pure routing
-# and therefore directly comparable with PolyServe, which never refuses either.
+# policy as a whole.  FS_PEND=false FS_SHED=false is FluidServe as pure routing,
+# which is directly comparable with PolyServe.
 FLUIDSERVE_ABLATIONS = {
     "FS_PEND": "--fluidserve-enable-pend",
-    "FS_EXTERNALITY": "--fluidserve-enable-externality",
+    "FS_SHED": "--fluidserve-enable-shed",
+    "FS_AFFINITY": "--fluidserve-enable-affinity",
     "FS_FLUX": "--fluidserve-enable-flux",
-    "FS_ALPHA": "--fluidserve-alpha-externality",
     "FS_HORIZON": "--fluidserve-horizon-steps",
     "FS_Z": "--fluidserve-z-safety",
 }
@@ -94,13 +98,16 @@ FLUIDSERVE_ABLATIONS = {
 # take it, so its retry interval is FluidServe's re-decision period.  The stock
 # 1000 ms is far coarser than the timescale the decision moves on: at 20 ms per
 # iteration an instance's state turns over completely between two retries.  The
-# window is widened to cover the largest time-to-first-token budget in the
-# workload (11.8 s for the agent class) so that holding is bounded by the
-# request's own budget rather than by the gateway giving up first.
+# window has to be wider than any deadline the scheduler itself computes, so
+# that a hold ends because the scheduler decided it should and not because the
+# gateway lost patience.  The longest such deadline is the agent class's
+# end-to-end budget of 30 s, so the ceiling is set above it; every shorter hold
+# ends in a placement or a rejection well before this fires, and reaching it at
+# all means the scheduler stopped answering.
 GATEWAY_FLAGS_BY_POLICY = {
     "fluidserve": {
         "--wait-scheduling-retry-interval": "100ms",
-        "--wait-scheduling-timeout": "12000ms",
+        "--wait-scheduling-timeout": "35000ms",
     },
 }
 GATEWAY_DEFAULTS = {

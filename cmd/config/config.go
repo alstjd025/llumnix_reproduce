@@ -264,17 +264,15 @@ type FullModeSchedulingConfig struct {
 	PolyserveDecodeTokens     int
 
 	// FluidServe
-	FluidserveProfilePath             string
-	FluidserveClassBudgets            string
-	FluidserveHorizonSteps            int
-	FluidserveZSafety                 float64
-	FluidserveAlphaExternality        float64
-	FluidservePendGraceMs             int
-	FluidserveTtftSafetyMs            int
-	FluidserveEnablePend              bool
-	FluidserveEnableExternality       bool
-	FluidserveEnableFlux              bool
-	FluidserveEnableOnlineCalibration bool
+	FluidserveProfilePath    string
+	FluidserveClassBudgets   string
+	FluidserveHorizonSteps   int
+	FluidserveZSafety        float64
+	FluidserveTtftSafetyMs   int
+	FluidserveEnablePend     bool
+	FluidserveEnableShed     bool
+	FluidserveEnableAffinity bool
+	FluidserveEnableFlux     bool
 
 	// Adaptive PD
 	EnableAdaptivePD             bool
@@ -384,15 +382,6 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 		consts.DefaultFluidserveZSafety,
 		"Standard deviations subtracted from the expected KV release. Larger values "+
 			"admit less and leave more headroom.")
-	flags.Float64Var(&c.FluidserveAlphaExternality, "fluidserve-alpha-externality",
-		consts.DefaultFluidserveAlphaExternality,
-		"Weight on the capacity an instance gives up by accepting a request whose "+
-			"budget is tighter than anything already on it. Zero reduces the policy to "+
-			"plain most-headroom routing.")
-	flags.IntVar(&c.FluidservePendGraceMs, "fluidserve-pend-grace-ms",
-		consts.DefaultFluidservePendGraceMs,
-		"Minimum time a request may be held at the gateway even when its "+
-			"time-to-first-token budget is already spent")
 	flags.IntVar(&c.FluidserveTtftSafetyMs, "fluidserve-ttft-safety-ms",
 		consts.DefaultFluidserveTtftSafetyMs,
 		"Margin subtracted from the time-to-first-token budget when deciding how long "+
@@ -401,15 +390,18 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 		"Hold a request at the gateway when no instance can take it within budget. "+
 			"Disabling it forces an immediate placement, which is the ablation that "+
 			"isolates what deferring the binding is worth.")
-	flags.BoolVar(&c.FluidserveEnableExternality, "fluidserve-enable-externality", true,
-		"Charge for lost instance capacity when routing. Ablation switch.")
-	flags.BoolVar(&c.FluidserveEnableOnlineCalibration,
-		"fluidserve-enable-online-calibration", false,
-		"Adjust the decode step law from measured intervals. Off by default: the "+
-			"only test available for whether an interval carried prefill work looks "+
-			"at its endpoints, and statuses are 500ms apart, so a queue that formed "+
-			"and drained in between is invisible and its cost is charged to the "+
-			"decode law.")
+	flags.BoolVar(&c.FluidserveEnableShed, "fluidserve-enable-shed", true,
+		"Reject a request once no instance can serve it within its own budget and "+
+			"it can no longer afford to wait. Disabling it places such requests "+
+			"anyway, which is the ablation that isolates what informed rejection is "+
+			"worth: the same requests are lost either way, and the question is "+
+			"whether the capacity they would have consumed saves the ones around "+
+			"them.")
+	flags.BoolVar(&c.FluidserveEnableAffinity, "fluidserve-enable-affinity", true,
+		"Among the instances that can take a request, prefer the one already "+
+			"holding the most of its class. Disabling it routes purely by free "+
+			"space, which is the ablation that isolates where the class separation "+
+			"comes from.")
 	flags.BoolVar(&c.FluidserveEnableFlux, "fluidserve-enable-flux", true,
 		"Project occupancy over the horizon. Disabling it judges instances on their "+
 			"current occupancy alone, which is the level-based baseline.")

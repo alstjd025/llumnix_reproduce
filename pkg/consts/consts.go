@@ -227,18 +227,16 @@ const (
 	DefaultFluidserveHorizonSteps = 100
 	// One-sided 95% bound on the KV expected to be released.
 	DefaultFluidserveZSafety = 1.65
-	// Capacity given up and capacity gained are both in KV tokens, so the
-	// default weights them equally.
-	DefaultFluidserveAlphaExternality = 1.0
-	DefaultFluidservePendGraceMs      = 200
-	DefaultFluidserveTtftSafetyMs     = 300
+	// Margin left in front of a wait deadline, covering one status interval of
+	// staleness in the instance state the deadline was computed from.
+	DefaultFluidserveTtftSafetyMs = 300
 
 	// Adaptive PD defaults
 	DefaultEnableAdaptivePD             = false
 	DefaultTpotMigrateOutFloorThreshold = 0.60
 
 	// Filter defaults
-	DefaultFailoverDomain             = FailoverDomainInstanceUnit
+	DefaultFailoverDomain           = FailoverDomainInstanceUnit
 	DefaultInstanceStalenessSeconds = 60
 
 	// Rescheduling defaults
