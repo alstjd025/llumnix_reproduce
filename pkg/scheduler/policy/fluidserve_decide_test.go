@@ -70,16 +70,17 @@ func fsRequest(id string, tier, ttftSloMs, prompt int) *types.SchedulingRequest 
 	}
 }
 
-func TestPacksIntoTheInstanceItFillsBest(t *testing.T) {
-	// Among instances that can take the request within its budget, the fuller
-	// one wins. Spreading a class over every instance leaves each holding the
-	// same mixture, and then nothing distinguishes them: the run that did that
-	// ended with all four instances held to the same budget and no separation
-	// between classes at all. Packing frees whole instances for other classes.
+func TestRoutesToTheInstanceWithMoreRoomWithinItsOwnBudgetGroup(t *testing.T) {
+	// Within a group of instances held to the same budget, free space decides,
+	// and more of it is better: a fuller instance absorbs a burst less well and
+	// queues longer.
 	//
-	// The cost of packing -- a fuller instance absorbs a burst less well -- is
-	// bounded by checking feasibility first and with a margin, so a request is
-	// only packed where it still meets its budget.
+	// Packing into the fullest instead was tried and measured worse (35.7
+	// against 43.2 equal-weight, with the routing concentration of every class
+	// falling). The reason is that the fullest instance is usually the one
+	// holding the heavy class, so packing pulled the interactive class onto it
+	// and undid the separation. Which budget an instance is held to is now
+	// decided before free space rather than weighed against it.
 	p := fsPolicy(t, "25:e2e:16000,50:decode", nil)
 	views := map[string]*instanceViewScheduling{
 		"busy": fsView(fsViewOpts{id: "busy", decodeReqs: 60, decodeTokens: 900000,
@@ -89,7 +90,7 @@ func TestPacksIntoTheInstanceItFillsBest(t *testing.T) {
 	}
 	got := decide(p, fsRequest("r1", 50, 5000, 1000), views)
 	require.NotNil(t, got)
-	assert.Equal(t, "busy", got.GetInstanceId())
+	assert.Equal(t, "quiet", got.GetInstanceId())
 }
 
 func TestFallsBackToMostRoomWhenNothingFits(t *testing.T) {

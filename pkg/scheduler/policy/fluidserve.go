@@ -70,6 +70,9 @@ const (
 	// outweighs any difference in free space between two instances, which the
 	// room term bounds to 1.
 	fsMismatchWeight = 3.0
+	// Largest share of its time-to-first-token budget a request may spend
+	// waiting for a placement.
+	fsMaxPendFraction = 0.25
 )
 
 type fluidserveConfig struct {
@@ -513,6 +516,14 @@ func (s *fluidserveSelector) selectInstance(
 		if cands[a].feasible != cands[b].feasible {
 			return cands[a].feasible
 		}
+		// Budget affinity is decided before free space rather than weighed
+		// against it: an instance already held to a budget close to this
+		// request's own comes first, and free space only orders instances
+		// within that group.
+		ba, bb := affinityBand(cands[a].mismatch), affinityBand(cands[b].mismatch)
+		if ba != bb {
+			return ba < bb
+		}
 		if cands[a].score != cands[b].score {
 			return cands[a].score > cands[b].score
 		}
@@ -605,13 +616,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	} else if room < -1 {
 		room = -1
 	}
-	// Best fit among instances that can take it, most room among those that
-	// cannot. See the note on packing above harmToIncumbents.
-	fit := room
-	if c.feasible {
-		fit = 1 - room
-	}
-	c.score = fit - p.cfg.alphaExternality*(c.harm+fsMismatchWeight*c.mismatch)
+	c.score = room - p.cfg.alphaExternality*(c.harm+fsMismatchWeight*c.mismatch)
 	return c
 }
 
@@ -660,6 +665,23 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 	return harm
 }
 
+// affinityBand collapses the mismatch into a small number of ordered groups, so
+// that instances holding what is effectively the same budget are treated as
+// interchangeable and only meaningfully different budgets separate them. The
+// first boundary sits below the gap between the interactive and the agent
+// budget (a log-ratio of 0.14) and the second below the gap to the batch budget
+// (0.69).
+func affinityBand(mismatch float64) int {
+	switch {
+	case mismatch < 0.10:
+		return 0
+	case mismatch < 0.40:
+		return 1
+	default:
+		return 2
+	}
+}
+
 // budgetMismatch measures how far a request's latency budget is from the budget
 // the instance is currently held to, as the log of the ratio: zero when they
 // match, growing symmetrically in either direction.
@@ -704,6 +726,15 @@ func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveReques
 	waited := float64(req.nowMs - req.arrivedMs)
 	prefillMs := p.prefillEstimateMs(req, best.flux)
 	deadline := req.ttftSloMs - prefillMs - p.cfg.ttftSafetyMs
+	// Never spend more than a fraction of the budget waiting. The condition
+	// above only asks whether a placement made at the last possible moment
+	// could still produce a first token in time, which for an interactive
+	// request works out at over 90% of its budget: by the time the hold ends,
+	// the request is scored as a miss whatever happens next, so the hold
+	// protected the incumbents at the cost of certainly losing this request.
+	if cap := req.ttftSloMs * fsMaxPendFraction; deadline > cap {
+		deadline = cap
+	}
 	if deadline < p.cfg.pendGraceMs {
 		deadline = p.cfg.pendGraceMs
 	}
