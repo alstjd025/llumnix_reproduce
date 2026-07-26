@@ -516,14 +516,6 @@ func (s *fluidserveSelector) selectInstance(
 		if cands[a].feasible != cands[b].feasible {
 			return cands[a].feasible
 		}
-		// Budget affinity is decided before free space rather than weighed
-		// against it: an instance already held to a budget close to this
-		// request's own comes first, and free space only orders instances
-		// within that group.
-		ba, bb := affinityBand(cands[a].mismatch), affinityBand(cands[b].mismatch)
-		if ba != bb {
-			return ba < bb
-		}
 		if cands[a].score != cands[b].score {
 			return cands[a].score > cands[b].score
 		}
@@ -665,22 +657,16 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 	return harm
 }
 
-// affinityBand collapses the mismatch into a small number of ordered groups, so
-// that instances holding what is effectively the same budget are treated as
-// interchangeable and only meaningfully different budgets separate them. The
-// first boundary sits below the gap between the interactive and the agent
-// budget (a log-ratio of 0.14) and the second below the gap to the batch budget
-// (0.69).
-func affinityBand(mismatch float64) int {
-	switch {
-	case mismatch < 0.10:
-		return 0
-	case mismatch < 0.40:
-		return 1
-	default:
-		return 2
-	}
-}
+// Ordering budget affinity ahead of free space was tried and measured worse:
+// 32.8 equal-weight against 43.2 for the weighted sum, with the routing
+// concentration of every class falling. The reason is that an instance with
+// nothing on it has no budget in force and therefore no mismatch, so it ranked
+// alongside instances already serving this budget -- and being empty, it also
+// won on free space. Every time an instance drained it attracted whichever
+// class asked next, so the assignment never settled. Making "no constraint" its
+// own rank between "matching" and "mismatched" would fix that, but the weighted
+// sum already produced the best result measured, so the ordering is left as a
+// weighted sum and this is recorded rather than re-attempted here.
 
 // budgetMismatch measures how far a request's latency budget is from the budget
 // the instance is currently held to, as the log of the ratio: zero when they
