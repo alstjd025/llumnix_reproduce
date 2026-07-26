@@ -116,7 +116,8 @@ type instanceFlux struct {
 
 	live              []liveRequest
 	tightestAllowance float64 // over requests whose budget is still achievable
-	tightestNominal   float64 // the class identity of what the instance serves
+	tightestNominal   float64 // the budget in force right now
+	preferredBudget   float64 // the budget this instance has been serving
 	achievable        int
 	unachievable      int
 
@@ -363,6 +364,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 
 	f.live = p.registry.reconcile(f.id, int(st.SchedulerRunningToDecodeRequestsNum),
 		f.stepID, nowMs)
+	f.preferredBudget = p.registry.preferredBudgetMs(f.id)
 
 	floor := p.capacity.floorStepMs()
 	f.tightestAllowance = math.Inf(1)
@@ -591,7 +593,10 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	c.meanBefore = f.meanStep
 	if p.cfg.enableExternality {
 		c.harm = p.harmToIncumbents(f, c.meanBefore, c.meanAfter)
-		c.mismatch = budgetMismatch(f.tightestNominal, req.nominalMs)
+		// Matched against what the instance has been serving rather than what
+		// is on it at this instant, so that an instance which happens to be
+		// empty still attracts the class it has been handling.
+		c.mismatch = budgetMismatch(f.preferredBudget, req.nominalMs)
 	}
 
 	// The terms are put on one scale by expressing each as a fraction of the
@@ -687,6 +692,8 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 // [-1, 1], so it never affected which instance was chosen: all four instances
 // ended a run held to the same budget, which is the absence of any separation.
 func budgetMismatch(instanceAllowanceMs, requestAllowanceMs float64) float64 {
+	// A zero or infinite instance budget means the instance has no preference
+	// yet, which leaves it open to whatever arrives.
 	if math.IsInf(instanceAllowanceMs, 0) ||
 		instanceAllowanceMs <= 0 || requestAllowanceMs <= 0 {
 		return 0

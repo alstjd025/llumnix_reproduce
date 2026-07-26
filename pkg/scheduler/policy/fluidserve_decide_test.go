@@ -461,3 +461,68 @@ func TestRequestsPreferInstancesHoldingTheirOwnBudget(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "interactive", got.GetInstanceId())
 }
+
+func TestInstancePreferenceSurvivesDraining(t *testing.T) {
+	// The budget in force on an instance is the minimum over the requests
+	// present right now, so it disappears the moment the instance drains and
+	// reappears as whatever arrives next. Measured, that made the assignment
+	// churn: an instance that emptied attracted whichever class asked first and
+	// no class settled anywhere. The preference is smoothed over dispatches and
+	// therefore survives the gap.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", nil)
+	now := nowMillis()
+
+	assert.Zero(t, p.registry.preferredBudgetMs("a"),
+		"an instance that has served nothing has no preference")
+
+	for i := 0; i < 200; i++ {
+		id := fmt.Sprintf("chat-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("a", id, 50, 1000, 8192, int64(5000+i), now)
+	}
+	assert.InDelta(t, 50.0, p.registry.preferredBudgetMs("a"), 6.0)
+
+	// Draining the instance does not erase what it has been serving.
+	p.registry.reconcile("a", 0, 99999, now+1000)
+	assert.InDelta(t, 50.0, p.registry.preferredBudgetMs("a"), 6.0)
+
+	// A handful of requests of another class does not move it either.
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("dr-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("a", id, 100, 4000, 8192, 99999, now)
+	}
+	assert.Less(t, p.registry.preferredBudgetMs("a"), 60.0)
+
+	// Sustained traffic of another class does.
+	for i := 0; i < 400; i++ {
+		id := fmt.Sprintf("dr-more-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("a", id, 100, 4000, 8192, 99999, now)
+	}
+	assert.InDelta(t, 100.0, p.registry.preferredBudgetMs("a"), 12.0)
+}
+
+func TestDrainedInstanceStillAttractsItsOwnClass(t *testing.T) {
+	// The behaviour the preference exists for: two instances with identical
+	// free space, one of which has been serving the interactive class and has
+	// just emptied. An interactive request belongs there rather than on the one
+	// that has been serving the batch class.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", nil)
+	now := nowMillis()
+	for i := 0; i < 200; i++ {
+		id := fmt.Sprintf("chat-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("wasChat", id, 50, 1000, 8192, int64(5000+i), now)
+		id = fmt.Sprintf("dr-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("wasBatch", id, 100, 4000, 8192, int64(5000+i), now)
+	}
+	views := map[string]*instanceViewScheduling{
+		"wasChat":  fsView(fsViewOpts{id: "wasChat", stepID: 99999}),
+		"wasBatch": fsView(fsViewOpts{id: "wasBatch", stepID: 99999}),
+	}
+	got := decide(p, fsRequest("chat-new", 50, 5000, 1000), views)
+	require.NotNil(t, got)
+	assert.Equal(t, "wasChat", got.GetInstanceId())
+}

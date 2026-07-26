@@ -162,6 +162,12 @@ const (
 	// It has to outlive the gateway's hold-and-retry window so that a request
 	// retried near the end of that window is still known to have been waiting.
 	fsArrivalTTLMs = 5 * 60 * 1000
+	// Weight of one dispatch in an instance's smoothed budget preference. Small
+	// enough that a handful of requests of another class does not move it, and
+	// large enough that a sustained change of workload does within a few
+	// hundred requests, which at these rates is tens of seconds -- the same
+	// order as the interval PolyServe's allocation takes to react.
+	fsPreferenceAlpha = 0.02
 )
 
 type requestRegistry struct {
@@ -177,6 +183,25 @@ type requestRegistry struct {
 	arrivedMs map[string]int64
 	lastGCMs  int64
 
+	// preference[instanceID] is a smoothed log of the budgets that instance has
+	// been given, and it is what requests are matched against rather than the
+	// budget currently in force there.
+	//
+	// The difference is memory. The budget in force is the minimum over the
+	// requests present right now, so it vanishes the moment an instance drains
+	// and reappears as whatever arrives next. Measured, that made the
+	// assignment churn: every time an instance emptied it attracted whichever
+	// class asked first, and no class ever settled anywhere. A smoothed
+	// preference survives the gap, so an instance that has been serving one
+	// class keeps attracting it across the lulls, and only sustained traffic of
+	// another kind moves it.
+	//
+	// This is the same stabilisation PolyServe gets from requiring an
+	// allocation to be computed twice before it is applied, expressed as a
+	// continuous quantity rather than a discrete assignment: it sharpens under
+	// load and relaxes when load falls, and no instance is ever reserved.
+	preference map[string]float64
+
 	// Counters exported for telemetry.
 	retiredByCount    int64
 	retiredBySurvival int64
@@ -189,6 +214,7 @@ func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestReg
 		budgets:    budgets,
 		byInstance: map[string]map[string]*dispatchRecord{},
 		arrivedMs:  map[string]int64{},
+		preference: map[string]float64{},
 	}
 }
 
@@ -240,6 +266,14 @@ func (r *requestRegistry) onDispatch(
 	arrived := r.arrivedMs[requestID]
 	if arrived == 0 {
 		arrived = nowMs
+	}
+	if nominal := r.nominalAllowanceLocked(tier); nominal > 0 {
+		if prev, ok := r.preference[instanceID]; ok {
+			r.preference[instanceID] = prev +
+				fsPreferenceAlpha*(math.Log(nominal)-prev)
+		} else {
+			r.preference[instanceID] = math.Log(nominal)
+		}
 	}
 	m[requestID] = &dispatchRecord{
 		id:             requestID,
@@ -410,6 +444,19 @@ func (r *requestRegistry) newRequestAllowance(
 		allowanceMs = 0
 	}
 	return allowanceMs, expectedTokens
+}
+
+// preferredBudgetMs is the budget an instance has been serving, smoothed over
+// its recent dispatches, or zero when it has not served anything yet. Zero is
+// read by the caller as "no preference", which leaves a fresh instance open to
+// whatever arrives.
+func (r *requestRegistry) preferredBudgetMs(instanceID string) float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if v, ok := r.preference[instanceID]; ok {
+		return math.Exp(v)
+	}
+	return 0
 }
 
 func (r *requestRegistry) instanceCount(instanceID string) int {
