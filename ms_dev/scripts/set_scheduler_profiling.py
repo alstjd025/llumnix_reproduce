@@ -68,6 +68,26 @@ FLUIDSERVE_FLAGS = {
     "--fluidserve-horizon-steps": "100",
     "--fluidserve-z-safety": "1.65",
     "--fluidserve-alpha-externality": "1.0",
+    "--fluidserve-enable-pend": "true",
+    "--fluidserve-enable-externality": "true",
+    "--fluidserve-enable-flux": "true",
+}
+
+# Ablation switches, set from the environment so an arm can turn one mechanism
+# off without editing this file:
+#   FS_PEND=false          place immediately instead of holding
+#   FS_EXTERNALITY=false   ignore what a placement costs the requests already there
+#   FS_FLUX=false          judge instances on current occupancy instead of projecting
+# The point of each is to attribute a result to a mechanism rather than to the
+# policy as a whole; with holding off, for instance, FluidServe is pure routing
+# and therefore directly comparable with PolyServe, which never refuses either.
+FLUIDSERVE_ABLATIONS = {
+    "FS_PEND": "--fluidserve-enable-pend",
+    "FS_EXTERNALITY": "--fluidserve-enable-externality",
+    "FS_FLUX": "--fluidserve-enable-flux",
+    "FS_ALPHA": "--fluidserve-alpha-externality",
+    "FS_HORIZON": "--fluidserve-horizon-steps",
+    "FS_Z": "--fluidserve-z-safety",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -186,6 +206,11 @@ def main():
         args = set_flag(args, k, v)
     for k, v in FLUIDSERVE_FLAGS.items():
         args = set_flag(args, k, v)
+    for env_key, flag in FLUIDSERVE_ABLATIONS.items():
+        val = os.environ.get(env_key)
+        if val:
+            args = set_flag(args, flag, val)
+            print(f"  ablation: {flag}={val}")
     c["args"] = args
 
     vols = spec.setdefault("volumes", [])
