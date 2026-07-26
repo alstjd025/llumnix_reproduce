@@ -62,6 +62,10 @@ go build -buildvcs=false \
   보유-재시도)에서는 **동시 보유 요청이 5건으로 제한**되고 나머지는 큐에서 수십 초를
   기다린다. `gateway_pending_requests`가 515에 고정되면 이 상태다. 4096/16384로 올린다
   (`set_scheduler_profiling.py`가 모든 정책에 적용).
+- **실험이 도는 동안 `bin/`의 바이너리를 덮어쓰지 말 것.** `--restart-per-condition`이
+  조건마다 `rollout restart scheduler,gateway`를 하므로, sweep 중간에 새 바이너리를
+  넣으면 **조건마다 다른 코드**로 측정된다. 소스는 고쳐도 되지만 빌드 산출물은
+  실험이 끝난 뒤에 교체한다(급하면 다른 경로로 빌드).
 - **실행 중인 셸 스크립트를 편집하지 말 것.** bash는 파일 오프셋을 기억한 채 이어
   읽으므로, 실행 도중 앞부분에 줄을 넣으면 엉뚱한 블록으로 점프한다. 실제로
   `run_exp22_fluidserve.sh`에 case 하나를 추가했다가 실행 중이던 smoke가 sweep 블록으로
