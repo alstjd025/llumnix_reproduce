@@ -187,6 +187,14 @@ type requestRegistry struct {
 	// instance since the last time the measurement read it, which is what the
 	// prefill-fraction estimate is measured against.
 	promptTokensSince map[string]float64
+	// dispatchRate[instanceID] is the same quantity smoothed and expressed per
+	// millisecond. It is what says how much prefill work will ARRIVE at an
+	// instance over a planning horizon, as opposed to how much is queued there
+	// now, and the two are different by a large factor: a queue drains within one
+	// status interval, so the queued figure read at a sampling instant is
+	// usually near zero while the engine spends a real share of every interval
+	// on prefill.
+	dispatchRate map[string]float64
 
 	// Counters exported for telemetry.
 	retiredByCount    int64
@@ -202,6 +210,7 @@ func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestReg
 		arrivedMs:         map[string]int64{},
 		dispatchVersion:   map[string]uint64{},
 		promptTokensSince: map[string]float64{},
+		dispatchRate:      map[string]float64{},
 	}
 }
 
@@ -440,6 +449,38 @@ func (r *requestRegistry) takePromptTokens(instanceID string) float64 {
 	v := r.promptTokensSince[instanceID]
 	r.promptTokensSince[instanceID] = 0
 	return v
+}
+
+const (
+	// Weight of one interval in the dispatch rate. The intervals are status
+	// pulls, so a couple a second per instance; this settles over roughly ten
+	// seconds, which is the timescale the offered rate actually moves on and
+	// short enough that an instance which has just started receiving work is
+	// charged for it before the horizon it was admitted against has elapsed.
+	fsDispatchRateAlpha = 0.05
+)
+
+// noteDispatchRate folds one interval's arrivals into the smoothed rate.
+func (r *requestRegistry) noteDispatchRate(instanceID string, tokensPerMs float64) {
+	if tokensPerMs < 0 || math.IsInf(tokensPerMs, 0) || math.IsNaN(tokensPerMs) {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	prev, seen := r.dispatchRate[instanceID]
+	if !seen {
+		r.dispatchRate[instanceID] = tokensPerMs
+		return
+	}
+	r.dispatchRate[instanceID] = prev + fsDispatchRateAlpha*(tokensPerMs-prev)
+}
+
+// dispatchRateOf reports the prompt tokens per millisecond this instance is
+// being sent.
+func (r *requestRegistry) dispatchRateOf(instanceID string) float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dispatchRate[instanceID]
 }
 
 // version reports how many placements this instance has received.

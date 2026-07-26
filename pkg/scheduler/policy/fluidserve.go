@@ -140,8 +140,17 @@ type instanceFlux struct {
 	sharing        float64
 	nDecode        float64
 	pendingPrefill float64
-	chunk          float64
-	stepID         int64
+	// arrivingPrefill is the prefill work expected to REACH this instance over
+	// the horizon, from the rate it is being sent prompts and the measured share
+	// of a prompt the engine actually computes. Adding it is what makes the
+	// prediction describe the interval the engine will run rather than the
+	// instant the status was sampled.
+	arrivingPrefill float64
+	// effectivePrefill is the sum of the two, which is what the capacity model
+	// is queried with everywhere.
+	effectivePrefill float64
+	chunk            float64
+	stepID           int64
 
 	live []liveRequest
 	// gateAllowance sets what this instance may take on: the tightest NOMINAL
@@ -351,6 +360,10 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 					Set(finiteOrMinusOne(f.tightestAllowance))
 				metrics.Gauge("scheduler_fluidserve_gate_allowance_ms", lbl).
 					Set(finiteOrMinusOne(f.gateAllowance))
+				metrics.Gauge("scheduler_fluidserve_arriving_prefill_tokens", lbl).
+					Set(f.arrivingPrefill)
+				metrics.Gauge("scheduler_fluidserve_queued_prefill_tokens", lbl).
+					Set(f.pendingPrefill)
 			}
 		}
 		view.schedulingCtx.fluidserveFlux = f
@@ -367,6 +380,11 @@ type stepObservation struct {
 	kvLogical   float64
 	nDecode     float64
 	pending     float64
+	// meanMs is the mean iteration time measured over the interval that ENDED
+	// at this observation, or 0 before one has been measured. It is kept so the
+	// planning horizon, which is counted in iterations, can be converted into
+	// the milliseconds over which arrivals accumulate.
+	meanMs float64
 }
 
 // observeInstance measures how long the engine's iterations actually took since
@@ -443,11 +461,38 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	if view.cmsView.Metadata != nil && view.cmsView.Metadata.MaxNumBatchedTokens > 0 {
 		chunk = float64(view.cmsView.Metadata.MaxNumBatchedTokens)
 	}
+	dispatched := p.registry.takePromptTokens(id)
 	p.capacity.notePrefill(measured,
 		p.capacity.decodeStepMs(prev.kvLogical, prev.nDecode),
-		float64(steps), chunk, p.registry.takePromptTokens(id))
+		float64(steps), chunk, dispatched)
+	// The same interval says how fast prompt work is arriving here, which is
+	// what the projection needs and what the engine's own queued figure cannot
+	// give: that queue drains inside one status interval, so read at a sampling
+	// instant it is usually near zero.
+	p.registry.noteDispatchRate(id, dispatched/elapsed)
+
+	p.obsMu.Lock()
+	if o, ok := p.lastObs[id]; ok && o.stepID == cur.stepID {
+		o.meanMs = measured
+		p.lastObs[id] = o
+	}
+	p.obsMu.Unlock()
 
 	return measured
+}
+
+// paceMs is the iteration time to convert the planning horizon into a duration.
+// The measured one is preferred; before anything has been measured the decode
+// law stands in, which understates the duration and therefore the arrivals, so
+// a fresh process starts by admitting more rather than less.
+func (p *fluidserveDispatchPolicy) paceMs(id string, kvLogical, nDecode float64) float64 {
+	p.obsMu.Lock()
+	o, ok := p.lastObs[id]
+	p.obsMu.Unlock()
+	if ok && o.meanMs > 0 {
+		return o.meanMs
+	}
+	return p.capacity.decodeStepMs(kvLogical, nDecode)
 }
 
 func (p *fluidserveDispatchPolicy) buildFlux(
@@ -491,11 +536,35 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	f.live = p.registry.reconcile(f.id, int(st.SchedulerRunningToDecodeRequestsNum),
 		f.stepID, nowMs)
 
+	// Prefill that will arrive over the horizon, not just what is queued now.
+	//
+	// This is the difference between describing an instant and describing an
+	// interval. The engine drains its prefill queue well inside one status pull,
+	// so the queued figure read at a sampling instant is usually near zero,
+	// while over the horizon the engine spends a real share of every iteration
+	// on prompts that arrived in between. Leaving it out does not merely make
+	// the prediction low: the measured-against-predicted correction then absorbs
+	// the whole difference as a multiplier on the mean, which scales the KV and
+	// batch-size terms with it and shrinks the admissible occupancy far more
+	// than the missing prefill would. Measured at 600 rpm, that correction
+	// climbed to 1.48 on a fleet whose interactive classes were at 100%, and the
+	// rejections followed it.
+	//
+	// The horizon is counted in iterations, so it becomes a duration at the pace
+	// the instance is delivering. The result is not clamped here because the
+	// capacity model already caps the prefill-carrying share of the horizon at
+	// one: an engine cannot absorb more than one chunk per iteration however
+	// much arrives.
+	horizonMs := float64(p.cfg.horizonSteps) * p.paceMs(f.id, f.kvLogical, f.nDecode)
+	f.arrivingPrefill = p.registry.dispatchRateOf(f.id) * horizonMs *
+		p.capacity.prefillFractionOf()
+	f.effectivePrefill = f.pendingPrefill + f.arrivingPrefill
+
 	// The pace the instance is delivering right now. It is needed before the
 	// loop because a request the instance is ALREADY failing cannot be made to
 	// fail by admitting another one, and should therefore not be able to close
 	// the instance to everything else.
-	f.meanStep = p.capacity.meanStepMs(f.kvLogical, f.nDecode, f.pendingPrefill,
+	f.meanStep = p.capacity.meanStepMs(f.kvLogical, f.nDecode, f.effectivePrefill,
 		f.chunk, p.cfg.horizonSteps)
 
 	floor := p.capacity.floorStepMs()
@@ -548,7 +617,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 
 	f.capKv = p.capacity.maxKvForAllowance(
 		f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
-		f.pendingPrefill, f.chunk, p.cfg.horizonSteps)
+		f.effectivePrefill, f.chunk, p.cfg.horizonSteps)
 
 	// Physical capacity, converted into the logical units everything else is in.
 	// The ratio is measured rather than assumed because prefix-cache sharing
@@ -807,7 +876,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	//
 	// The KV footprint below is NOT discounted, because the latency model counts
 	// logical tokens and a shared block is charged to every request holding it.
-	newPending := f.pendingPrefill +
+	newPending := f.effectivePrefill +
 		float64(req.promptTokens)*p.capacity.prefillFractionOf()
 	newN := f.nDecode + 1
 	newKv := f.proj + cost
@@ -1027,7 +1096,7 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 	}
 	queued := 0.0
 	if f != nil {
-		queued = prefillSteps(f.pendingPrefill, chunk) * per
+		queued = prefillSteps(f.effectivePrefill, chunk) * per
 	}
 	return steps*per + queued
 }

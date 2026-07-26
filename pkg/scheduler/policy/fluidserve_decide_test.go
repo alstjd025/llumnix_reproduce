@@ -269,6 +269,53 @@ func TestHeavyWorkCannotJoinRequestsThatAreUsingTheirSlack(t *testing.T) {
 		"the instance is not simply closed")
 }
 
+func TestTheProjectionCountsPrefillThatHasNotArrivedYet(t *testing.T) {
+	// The engine drains its prefill queue well inside one status pull, so what
+	// it reports queued at a sampling instant is usually near zero while it
+	// spends a real share of every iteration over the horizon on prompts that
+	// arrive in between. Predicting from the instant rather than the interval
+	// does not merely read low: the correction then absorbs the difference as a
+	// multiplier on the whole mean, which scales the KV and batch terms with it
+	// and shrinks the admissible occupancy far more than the missing prefill
+	// would.
+	p := fsPolicy(t, "25:e2e:16000,50:decode", nil)
+	views := map[string]*instanceViewScheduling{
+		"a": fsView(fsViewOpts{id: "a", decodeReqs: 20, decodeTokens: 400_000,
+			usedGpu: 120_000, stepID: 5000}),
+	}
+	probe := fsRequest("probe", 50, 5000, 1000)
+	// Requests on the instance, so that it is held to a budget at all and its
+	// admissible occupancy is a finite number.
+	fill(p, "a", 50, 1000, 20, 4990, nowMillis())
+
+	// Nothing has been sent here yet, so nothing is projected and the
+	// prediction is the decode-only cost.
+	p.calculateMetrics(consts.InferTypeNeutral, probe, views)
+	quiet := views["a"].schedulingCtx.fluidserveFlux
+	require.NotNil(t, quiet)
+	assert.Zero(t, quiet.arrivingPrefill)
+	quietStep, quietCap := quiet.meanStep, quiet.capKv
+
+	// Now say prompts are arriving at 400 tokens per millisecond. Over a
+	// hundred iterations of roughly 25 ms that is a million tokens of prompt,
+	// and at the fixture's fraction of one, a million tokens of prefill.
+	p.registry.noteDispatchRate("a", 400)
+	// Force a rebuild: the view is cached against the engine's status and the
+	// placements made since, and neither has moved.
+	v := views["a"]
+	v.cmsView.Status.StepId = 5100
+	p.calculateMetrics(consts.InferTypeNeutral, probe, views)
+	busy := views["a"].schedulingCtx.fluidserveFlux
+	require.NotNil(t, busy)
+
+	assert.Greater(t, busy.arrivingPrefill, 100_000.0,
+		"a large arrival rate has to show up as prefill work over the horizon")
+	assert.Greater(t, busy.meanStep, quietStep,
+		"and the predicted iteration has to reflect it")
+	assert.Less(t, busy.capKv, quietCap,
+		"so the instance may hold less while still meeting the same budget")
+}
+
 func TestUnachievableRequestsDoNotPinInstanceCapacity(t *testing.T) {
 	// A request whose remaining budget per token has fallen below the cost of
 	// an iteration on an empty instance cannot be met by any placement. If it
