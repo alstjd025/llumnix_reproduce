@@ -15,8 +15,8 @@
 | P3 동적 재분할 | `fe2c122` | 완료 (라이브 수렴 확인) |
 | P4-a 배포 + 동작 확인 | `--` | 완료 (라이브 e2e) |
 | P4-b ttft.json 재측정 | `--` | 완료 (직접 측정) |
-| **P4-c rate sweep 3-arm** | — | **진행 중** |
-| dynamic chunking 검토 | — | 보류 (sweep 결과 본 뒤) |
+| P4-c rate sweep 2-arm | `bd9b774` | 완료 |
+| dynamic chunking 검토 | — | **우선순위 낮음으로 판명** (아래 근거) |
 
 ## 확정된 결정 (사용자)
 
@@ -177,3 +177,35 @@ admission 거부는 148건 전부 이유가 **"steady state"**(`iterMax > tpotSl
 **함정 기록 4**: `set_scheduler_profiling.py`가 `apply` 후 별도 `rollout restart`를 하면
 ReplicaSet이 두 번 생기고, 정책 되읽기가 곧 교체될 pod을 읽는다. restart 어노테이션을
 같은 apply에 넣도록 수정했다.
+
+### 2026-07-26 — EXP-21 결과
+
+정본은 `Agent_applications/agent_motivation_experiment/experiments/EXP-21_polyserve-routing.md`.
+여기엔 결론만.
+
+**PolyServe(라우팅)가 엔진 스케줄러 5종을 전부 압도한다.**
+등가중 SLO attainment 30 req/s: FIFO 22.5 / EDF 22.5 / SJF 18.3 / SRPF 20.8 /
+QoServe 46.1 / **PolyServe 69.5**. chat·deepresearch는 전 rate에서 **100%**.
+
+goodput output tok/s가 더 결정적 — 엔진 스케줄러 5종은 전부 ~14 req/s에서 꺾여
+붕괴하는데 **PolyServe만 단조 증가**한다(30 req/s에서 FIFO 5.2배, QoServe 4.1배;
+50 req/s에서 11,658 tok/s). 총 처리량도 서버 카운터로 교차확인됨.
+
+**틀린 예측 2개를 기록해 둔다**: (a) swe가 엔진 2대로 줄어 나빠질 것이라 봤으나
+모든 rate에서 오히려 loadbalance 이상이었다. (b) fleet이 상쇄되어 애매할 것이라
+봤으나 그렇지 않았다. 이유는 이득의 원천이 **용량이 아니라 간섭 제거**이기 때문 —
+600 rpm(포화 전, KV p90 0.09~0.125)에서도 세 클래스 모두 개선됐다.
+
+**지표 함정**: fleet attainment는 쓰면 안 된다. served 요청의 클래스 구성이
+arm마다 달라서(3000rpm에서 swe 비중 LB 29.7% vs PS 10.1%) polyserve가 부풀려진다
+(90.1 → 등가중 67.2). 워크로드가 1:1:1이므로 등가중이 맞는 비교.
+
+**dynamic chunking 우선순위가 낮아졌다.** admission 거부 사유가 전부
+"steady state"였다 — `iterMax`의 prefill 간섭항 때문에 대기 prefill이 있으면
+모든 tier에서 탈락하고, 전부 탈락하면 fallback으로 풀린다. 즉 **admission은
+고부하에서 사실상 무력화된 상태였는데도** 위 결과가 나왔다. 이득의 출처는
+tier 파티션이다. dynamic chunking은 admission을 되살리는 작업이므로 후순위.
+
+**부수 성과 — 스택 재현성**: EXP-21 loadbalance가 EXP-14 mixA(= EXP-17 fifo arm)를
+1800 rpm에서 모든 클래스 0.2%p 이내로 재현했다(5일 간격 + 바이너리 전면 재빌드).
+두 실험을 한 그래프에 올릴 근거.
