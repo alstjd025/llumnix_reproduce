@@ -607,6 +607,17 @@ func (p *fluidserveDispatchPolicy) expectedOutflow(live []liveRequest, horizon i
 	return out
 }
 
+// The per-decision log lines below are V(5), not V(3), and that is a
+// performance decision rather than a taste one. The scheduler is deployed at
+// -v 4, one line is emitted per scheduling call, and a held request re-enters
+// the path at every retry, so at 3000 rpm the rate is around 400 lines a second
+// through a mutex-protected writer. Measured, the whole call cost 4.0 ms
+// against 0.109 ms for a policy that does not hold, and the scheduling path is
+// serialised under the cluster-view lock, so that is 1.6 s of work offered per
+// second and the requests queue in front of it. What the run is analysed from
+// is the metric series, which the CLAUDE.md note already says; the lines are
+// for reading one decision by hand at -v 5.
+//
 // fluidserveSelector holds the whole decision. Everything is done here rather
 // than split across filters because the choice is not "which instances are
 // acceptable" followed by "which is best" -- waiting and rejecting are also
@@ -682,7 +693,7 @@ func (s *fluidserveSelector) selectInstance(
 	if p.cfg.enablePend && p.canWait(best, req) {
 		metrics.Counter("scheduler_fluidserve_decisions_total",
 			metrics.Labels{{Name: "decision", Value: "pend"}}).Inc()
-		klog.V(3).Infof("FluidServe pends request %s (tier %dms, waited %dms): best "+
+		klog.V(5).Infof("FluidServe pends request %s (tier %dms, waited %dms): best "+
 			"instance %s would run at %.1fms per token against a gate of %.1fms",
 			req.id, req.tier, req.nowMs-req.arrivedMs, best.flux.id,
 			best.meanAfter, best.gateAfter)
@@ -707,7 +718,7 @@ func (s *fluidserveSelector) selectInstance(
 		metrics.Counter("scheduler_fluidserve_decisions_total",
 			metrics.Labels{{Name: "decision", Value: "shed"}}).Inc()
 		p.noteShed(req.id)
-		klog.V(3).Infof("FluidServe sheds request %s (tier %dms, waited %dms): "+
+		klog.V(5).Infof("FluidServe sheds request %s (tier %dms, waited %dms): "+
 			"placing it on %s would give %.1fms per token and %.0fms to first "+
 			"token, and its budget no longer allows either",
 			req.id, req.tier, req.nowMs-req.arrivedMs, best.flux.id,
@@ -1021,7 +1032,7 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 	metrics.Histogram("scheduler_fluidserve_class_share",
 		metrics.Labels{}).Observe(c.share)
 
-	klog.V(3).Infof("FluidServe %s request %s (tier %dms, prompt %d) -> %s: "+
+	klog.V(5).Infof("FluidServe %s request %s (tier %dms, prompt %d) -> %s: "+
 		"headroom %.0f->%.0f cap(kv %.0f mem %.0f) proj %.0f meanStep %.1f->%.1fms "+
 		"gate %.1fms harm %.2f share %.2f live %d (%d unachievable)",
 		kind, req.id, req.tier, req.promptTokens, c.flux.id,
