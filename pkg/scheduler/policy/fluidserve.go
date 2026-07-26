@@ -897,10 +897,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"alpha=%.2f, pend=%v (grace %dms, ttft margin %dms), externality=%v, flux=%v, "+
-		"budgets %q",
+		"onlineCalibration=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, cfg.alphaExternality, cfg.enablePend,
 		p.FluidservePendGraceMs, p.FluidserveTtftSafetyMs, cfg.enableExternality,
-		cfg.enableFlux, p.FluidserveClassBudgets)
+		cfg.enableFlux, cfg.enableOnlineCalibration, p.FluidserveClassBudgets)
 
 	go policy.reportLoop()
 	return policy
