@@ -78,6 +78,10 @@ const (
 	// wholly given over to a class outweighs any difference in how full the
 	// instances are, which is what makes the uniform mixture unstable.
 	fsShareWeight = 1.0
+	// How far past its capacity an instance is allowed to register on the
+	// free-space term before the term saturates. Set far above the weight of
+	// every other term combined.
+	fsRoomFloor = 50.0
 )
 
 type fluidserveConfig struct {
@@ -617,8 +621,18 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	room := c.headroomAfter / scale
 	if room > 1 {
 		room = 1
-	} else if room < -1 {
-		room = -1
+	} else if room < -fsRoomFloor {
+		// Clamping the negative side at -1, as this did, made an instance that
+		// was hundreds of times past its capacity look no worse than one only
+		// slightly past it. Combined with the two terms that go quiet on a
+		// failed instance -- nothing is harmed by delaying requests that have
+		// already lost their budget, and an instance holding one class attracts
+		// more of it -- that produced a runaway: one instance was measured
+		// holding a projected 69 million KV tokens against a capacity of 1.9
+		// million, running iterations of 2.0 seconds, and still being chosen.
+		// The floor is left far below the healthy range so that an instance in
+		// that state can never win on any other term.
+		room = -fsRoomFloor
 	}
 	c.score = room + fsShareWeight*c.share -
 		p.cfg.alphaExternality*(c.harm+fsMismatchWeight*c.mismatch)

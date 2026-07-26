@@ -569,3 +569,32 @@ func TestClassShareIsZeroOnAnEmptyInstance(t *testing.T) {
 	assert.InDelta(t, 1.0/3.0, classShare(f, 25), 1e-9)
 	assert.Zero(t, classShare(f, 100))
 }
+
+func TestACollapsedInstanceIsNeverChosen(t *testing.T) {
+	// Two terms go quiet on an instance whose requests have already lost their
+	// budget: nothing is harmed by delaying them further, and an instance
+	// holding one class attracts more of it. If the free-space term saturates
+	// as well, such an instance looks no worse than a healthy one and keeps
+	// taking work. Measured on the dynamic trace, one instance reached a
+	// projected 69 million KV tokens against a capacity of 1.9 million and was
+	// running two-second iterations while still being selected.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", nil)
+	now := nowMillis()
+	views := map[string]*instanceViewScheduling{
+		"collapsed": fsView(fsViewOpts{id: "collapsed", decodeReqs: 200,
+			decodeTokens: 60_000_000, pendingPre: 500_000, usedGpu: 570_000,
+			stepID: 9000}),
+		"healthy": fsView(fsViewOpts{id: "healthy", decodeReqs: 5,
+			decodeTokens: 100_000, usedGpu: 20_000, stepID: 9000}),
+	}
+	// Give the collapsed instance the whole of the class being placed, so the
+	// share term is pulling as hard as it can toward it.
+	for i := 0; i < 200; i++ {
+		id := fmt.Sprintf("chat-%d", i)
+		p.registry.noteArrival(id, now-60_000)
+		p.registry.onDispatch("collapsed", id, 50, 1000, 8192, 8000, now-60_000)
+	}
+	got := decide(p, fsRequest("chat-new", 50, 5000, 1000), views)
+	require.NotNil(t, got)
+	assert.Equal(t, "healthy", got.GetInstanceId())
+}
