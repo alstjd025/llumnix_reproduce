@@ -610,6 +610,14 @@ func (s *fluidserveSelector) selectInstance(
 	// doing so pushes that instance past the pace it was holding; or it cannot,
 	// in which case it is going to be a violation whatever happens next and the
 	// only remaining question is whether it takes other requests down with it.
+	// The test is against the placement that would actually be made, which is
+	// the least damaging one, not against the best outcome available anywhere.
+	// Another instance can sometimes still serve this request, and the reason
+	// not to use it is the reason it was not chosen: doing so would push
+	// requests that can still meet their budgets past them. Trading several
+	// incumbents that are on track for one arrival is a losing trade under a
+	// per-request rule, so if the placement we are willing to make would miss,
+	// the placement is not worth making at all.
 	if p.cfg.enableShed && best.missesOwnBudget {
 		p.registry.forget(req.id)
 		metrics.Counter("scheduler_fluidserve_decisions_total",
