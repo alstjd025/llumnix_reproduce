@@ -307,8 +307,11 @@ func TestTheMeanStepCorrectionFollowsTheMeasurement(t *testing.T) {
 	assert.InDelta(t, 1.0, m.correctionFactor(), 1e-9)
 
 	base := m.meanStepMs(200000, 20, 0, 8192, 100)
-	// Sustained evidence that iterations take 30% longer than predicted.
-	for i := 0; i < 2000; i++ {
+	// Sustained evidence that iterations take 30% longer than predicted. The
+	// filter is deliberately slow -- it follows drift between the offline law
+	// and the engine, not the offered rate -- so convergence takes thousands of
+	// samples, which at the rate they arrive is about a minute.
+	for i := 0; i < 20000; i++ {
 		m.noteResidual(m.meanStepMs(200000, 20, 0, 8192, 100), base*1.3)
 	}
 	assert.InDelta(t, 1.3, m.correctionFactor(), 0.05)

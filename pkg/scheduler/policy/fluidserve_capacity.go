@@ -50,11 +50,23 @@ type capacityModel struct {
 }
 
 const (
-	// Weight of one interval in the correction. The samples arrive at the status
-	// polling rate, so a few per second per instance; this converges over about
-	// twenty seconds, which is fast enough to follow a change of offered rate
-	// and slow enough not to chase one burst.
-	fsCorrectionAlpha = 0.02
+	// Weight of one interval in the correction. Deliberately small.
+	//
+	// The correction sits inside a loop: a larger correction tightens the gates,
+	// which admits less, which makes the engine faster, which makes the
+	// measurement fall below the prediction, which shrinks the correction again.
+	// The loop has real delay in it -- an admission changes the engine's pace
+	// only once the request is running -- so a filter fast enough to track load
+	// oscillates instead of settling. Measured at 3000 rpm with a weight of
+	// 0.02, which is a time constant of about six seconds at the rate these
+	// samples arrive, it swung between 1.2 and 2.4 for the whole run and took
+	// the admission decisions with it.
+	//
+	// At 0.002 the time constant is around a minute, which is far slower than
+	// the loop and therefore stable, and still fast enough for what this is for:
+	// following drift between the offline law and the engine in front of it,
+	// not following the offered rate.
+	fsCorrectionAlpha = 0.002
 	// Bounds. Outside this range the offline law no longer describes the engine
 	// at all, which is a condition to report rather than to absorb silently.
 	fsCorrectionMin = 0.5
