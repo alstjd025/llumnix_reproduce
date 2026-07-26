@@ -964,12 +964,20 @@ func classShare(f *instanceFlux, tier int) float64 {
 // milliseconds each, so waiting past the point where prefill no longer fits
 // converts a request that could have been served late into one certain to miss.
 //
-// The pace assumed after the wait is the cost of an iteration on an EMPTY
-// instance, which is the fastest the engine can physically go. That is the right
-// assumption for a wait decision specifically: the question being asked is
-// whether success is still possible at all, not whether it is likely. Assuming
-// the current pace instead would refuse to wait in exactly the situation waiting
-// is for, which is a fleet that is momentarily full.
+// The pace assumed after the wait is the one the best available instance would
+// deliver if the request were placed on it now. An earlier version assumed the
+// cost of an iteration on an EMPTY instance instead, on the grounds that the
+// question is whether success is possible at all rather than whether it is
+// likely. That is the wrong question once the offered load is a multiple of the
+// capacity: the fleet is not going to empty, so the wait is spent and the
+// request is rejected at the end of it anyway, having occupied a client slot
+// throughout and re-entered the scheduling path at every retry. Measured at
+// 3000 rpm, agent requests held for around sixteen seconds before being
+// rejected, and the resulting call rate was what saturated the scheduler.
+//
+// Using the delivered pace also makes this test and the rejection test agree:
+// one asks whether a placement made later could succeed, the other whether one
+// made now would, and they should differ only in the time still available.
 //
 // An earlier version also capped the wait at a quarter of the time-to-first-token
 // budget, on the grounds that a request held longer was a miss whatever happened
@@ -984,8 +992,12 @@ func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveReques
 	}
 	var deadline float64
 	if req.isE2E {
+		pace := best.meanAfter
+		if math.IsInf(pace, 0) || pace <= 0 {
+			return false
+		}
 		deadline = req.budgetMs - prefillMs -
-			req.expectedToks*p.capacity.floorStepMs() - p.cfg.ttftSafetyMs
+			req.expectedToks*pace - p.cfg.ttftSafetyMs
 	} else {
 		if req.ttftSloMs <= 0 {
 			return false
