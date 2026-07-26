@@ -140,6 +140,29 @@ def set_flag(args, name, value):
     return out + [name, value]
 
 
+def drop_flags(args, keep, prefix):
+    """Remove every --prefix* flag that is not in `keep`.
+
+    A flag the scheduler no longer defines is a start-up failure, not a warning:
+    the process exits with "unknown flag" and the pod crash-loops. Applying the
+    current flag set on top of an older one therefore has to remove what it does
+    not set, which happened when the parameter count was cut from twenty to
+    seven and the deployment kept the removed flags.
+    """
+    out, i, dropped = [], 0, []
+    while i < len(args):
+        name = args[i]
+        if name.startswith(prefix) and name not in keep:
+            dropped.append(name)
+            i += 2 if i + 1 < len(args) and not args[i + 1].startswith("--") else 1
+            continue
+        out.append(name)
+        i += 1
+    if dropped:
+        print("  dropping flags no longer defined: " + " ".join(dropped))
+    return out
+
+
 def show():
     d = get_deploy()
     c = d["spec"]["template"]["spec"]["containers"][0]
@@ -211,6 +234,8 @@ def main():
         args = set_flag(args, k, v)
     for k, v in POLYSERVE_FLAGS.items():
         args = set_flag(args, k, v)
+    args = drop_flags(args, set(FLUIDSERVE_FLAGS) | set(FLUIDSERVE_ABLATIONS.values()),
+                      "--fluidserve-")
     for k, v in FLUIDSERVE_FLAGS.items():
         args = set_flag(args, k, v)
     for env_key, flag in FLUIDSERVE_ABLATIONS.items():

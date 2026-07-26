@@ -217,6 +217,58 @@ func TestTheGateIsSetByTheClassPaceNotByHowLateTheInstanceIs(t *testing.T) {
 		"while the remaining budget has indeed shrunk, and is reported separately")
 }
 
+func TestHeavyWorkCannotJoinRequestsThatAreUsingTheirSlack(t *testing.T) {
+	// The condition that keeps a class out of an instance serving another one.
+	// An agent request carries a 22k-token prompt, which makes three of the next
+	// hundred iterations carry a prefill chunk and raises the mean iteration by
+	// about 15 ms. That is comfortably inside the 45 ms an interactive class is
+	// PROMISED, so the nominal gate on its own admits it; it is outside the
+	// slack those requests still have once they have been running behind for a
+	// while. Judging the placement against what the incumbents have left, rather
+	// than against what they were promised, is what refuses it.
+	//
+	// The instance is built directly rather than driven through the registry
+	// because what matters here is a state the registry only reaches after
+	// several polling intervals of real time: requests that have already spent
+	// part of their budget.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", nil)
+	behind := &instanceFlux{
+		id: "chatty", chunk: 8192, kvLogical: 1_000_000, nDecode: 20,
+		kvPhysical: 150_000, kvCapacity: 600_000,
+		gateAllowance: 50, // the interactive class was promised 50 ms per token
+		// but each of its requests has 35 ms left per remaining token, because
+		// the instance has been running slower than the budget.
+		tightestAllowance: 35,
+		capKv:             2_000_000, capMem: 4_000_000, proj: 1_000_000,
+		achievable: 20,
+	}
+	for i := 0; i < 20; i++ {
+		behind.live = append(behind.live, liveRequest{tier: 50, allowanceMs: 35, nominalMs: 50})
+	}
+	behind.meanStep = p.capacity.meanStepMs(behind.kvLogical, behind.nDecode, 0,
+		behind.chunk, p.cfg.horizonSteps)
+
+	nominal, expected, isE2E, budget := p.registry.requestBudget(25)
+	heavy := &fluidserveRequest{id: "swe-new", tier: 25, ttftSloMs: 11800,
+		promptTokens: 22000, arrivedMs: 1000, nowMs: 1000, expectedToks: expected,
+		nominalMs: nominal, isE2E: isE2E, budgetMs: budget}
+
+	c := p.evaluate(behind, nil, heavy)
+	assert.Less(t, c.meanAfter, c.gateAfter,
+		"the promised pace on its own would admit this placement")
+	assert.Greater(t, c.meanAfter, behind.tightestAllowance,
+		"but it costs more than the incumbents have left")
+	assert.False(t, c.feasible)
+
+	// The same instance still takes another request of the class it is serving,
+	// which costs a single chunk rather than three.
+	light := &fluidserveRequest{id: "chat-new", tier: 50, ttftSloMs: 5000,
+		promptTokens: 1000, arrivedMs: 1000, nowMs: 1000, expectedToks: 200,
+		nominalMs: 50}
+	assert.True(t, p.evaluate(behind, nil, light).feasible,
+		"the instance is not simply closed")
+}
+
 func TestUnachievableRequestsDoNotPinInstanceCapacity(t *testing.T) {
 	// A request whose remaining budget per token has fallen below the cost of
 	// an iteration on an empty instance cannot be met by any placement. If it

@@ -686,11 +686,27 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	c.headroomAfter = math.Min(f.capKv, f.capMem) - newKv
 	c.prefillMs = p.prefillEstimateMs(req, f)
 
-	// The gate is the tightest pace promised to anything that would then be on
-	// the instance, including the arriving request itself.
+	// Two separate conditions, because they protect two different things.
+	//
+	// The gate is the tightest pace PROMISED to anything that would then be on
+	// the instance, including the arriving request itself. It is built from
+	// nominal budgets, which are properties of the classes rather than of how
+	// this instance has fared, so it does not move as the instance ages.
+	//
+	// The second condition protects the requests that are actually at risk
+	// right now: no request that can still meet its budget may be pushed past
+	// it by this placement. That one has to use the REMAINING budget, because
+	// what is at stake is what each incumbent has left, not what it was
+	// promised. It is the condition that keeps a class out of an instance
+	// serving another class -- a 22k-token prompt raises the mean iteration by
+	// about 15 ms, which is inside the 45 ms an interactive class is promised
+	// but outside the slack its requests still have once they are running.
+	// Requests already past saving are excluded from it, so a broken instance
+	// does not become permanently unusable.
 	c.gateAfter = math.Min(f.gateAllowance, req.nominalMs) * fsAllowanceUtilisation
 	c.feasible = !math.IsInf(c.meanAfter, 0) &&
 		c.meanAfter <= c.gateAfter &&
+		c.meanAfter <= f.tightestAllowance &&
 		newKv <= f.capMem
 
 	c.missesOwnBudget = p.missesOwnBudget(req, c)
