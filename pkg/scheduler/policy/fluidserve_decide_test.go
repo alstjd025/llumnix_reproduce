@@ -453,6 +453,34 @@ func TestRequestsAlreadyPastTheirBudgetDoNotMakeAnInstanceExpensive(t *testing.T
 // Bookkeeping
 // ---------------------------------------------------------------------------
 
+func TestTheInstanceViewIsRebuiltWheneverItCouldHaveChanged(t *testing.T) {
+	// The view is reused between scheduling calls, which is what keeps the cost
+	// of holding a request from growing with the retry rate. What it must never
+	// do is reuse a view across a placement: two requests arriving between two
+	// engine statuses would then each be judged against a state that does not
+	// include the other, and the same capacity would be handed out twice.
+	p := fsPolicy(t, "25:e2e:16000,50:decode", nil)
+	v := fsView(fsViewOpts{id: "a", decodeReqs: 4, decodeTokens: 40000,
+		usedGpu: 30000, stepID: 5000})
+	views := map[string]*instanceViewScheduling{"a": v}
+	now := nowMillis()
+
+	first := p.flux(v, now)
+	require.NotNil(t, first)
+	assert.Same(t, first, p.flux(v, now), "nothing changed, so nothing is rebuilt")
+
+	// A placement changes what the instance holds even though the engine has
+	// not reported anything new.
+	require.NotNil(t, decide(p, fsRequest("r1", 50, 5000, 1000), views))
+	after := p.flux(v, now)
+	assert.NotSame(t, first, after, "a placement has to invalidate the view")
+	assert.Len(t, after.live, 1)
+
+	// So does a new engine status.
+	v.cmsView.Status.StepId = 5100
+	assert.NotSame(t, after, p.flux(v, now), "a new status has to invalidate it too")
+}
+
 func TestDispatchIsRecordedForTheNextDecision(t *testing.T) {
 	// A request placed now does not appear in the engine's reported state for
 	// up to a polling interval. Without recording it, several requests sent

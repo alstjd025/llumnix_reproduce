@@ -177,6 +177,13 @@ type requestRegistry struct {
 	arrivedMs map[string]int64
 	lastGCMs  int64
 
+	// dispatchVersion[instanceID] increments on every placement. It is what lets
+	// a cached view of an instance be invalidated by something other than the
+	// engine's own status: between two status pulls the scheduler may itself
+	// have added requests, and a view that did not know about them would let the
+	// same capacity be handed out twice.
+	dispatchVersion map[string]uint64
+
 	// Counters exported for telemetry.
 	retiredByCount    int64
 	retiredBySurvival int64
@@ -185,10 +192,11 @@ type requestRegistry struct {
 
 func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestRegistry {
 	return &requestRegistry{
-		lengths:    lengths,
-		budgets:    budgets,
-		byInstance: map[string]map[string]*dispatchRecord{},
-		arrivedMs:  map[string]int64{},
+		lengths:         lengths,
+		budgets:         budgets,
+		byInstance:      map[string]map[string]*dispatchRecord{},
+		arrivedMs:       map[string]int64{},
+		dispatchVersion: map[string]uint64{},
 	}
 }
 
@@ -241,6 +249,7 @@ func (r *requestRegistry) onDispatch(
 	if arrived == 0 {
 		arrived = nowMs
 	}
+	r.dispatchVersion[instanceID]++
 	m[requestID] = &dispatchRecord{
 		id:             requestID,
 		tier:           tier,
@@ -415,6 +424,13 @@ func (r *requestRegistry) forget(requestID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.arrivedMs, requestID)
+}
+
+// version reports how many placements this instance has received.
+func (r *requestRegistry) version(instanceID string) uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dispatchVersion[instanceID]
 }
 
 func (r *requestRegistry) instanceCount(instanceID string) int {

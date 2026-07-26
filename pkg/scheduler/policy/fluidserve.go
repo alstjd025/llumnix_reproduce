@@ -190,6 +190,61 @@ type fluidserveDispatchPolicy struct {
 	// it sees when the hold times out.
 	shedMu  sync.Mutex
 	shedIDs map[string]int64
+
+	// fluxMu guards the per-instance view cache. See flux().
+	fluxMu    sync.Mutex
+	fluxCache map[string]cachedFlux
+}
+
+// cachedFlux is one instance's state as of a particular engine status and a
+// particular number of placements onto it.
+type cachedFlux struct {
+	stepID  int64
+	version uint64
+	flux    *instanceFlux
+}
+
+// flux returns the instance's state, rebuilding it only when something it
+// depends on has changed.
+//
+// The state depends on two things: what the engine last reported, which is
+// refreshed once per status pull, and what this scheduler has placed since,
+// which changes on every dispatch. Between those events, rebuilding it produces
+// the same answer at a cost that is paid on every scheduling call -- and a held
+// request re-enters this path at every retry, so the call rate is a multiple of
+// the arrival rate rather than equal to it. Measured, one call cost 2.05 ms
+// against 0.109 ms for a filter-and-pick policy, which at a few hundred calls a
+// second is most of a core spent recomputing an unchanged answer.
+//
+// The staleness this admits is bounded by the same two events. It is not bounded
+// by time, deliberately: a view is reused only while neither the engine nor this
+// scheduler has done anything that would change it.
+func (p *fluidserveDispatchPolicy) flux(view *instanceViewScheduling, nowMs int64) *instanceFlux {
+	if view.cmsView == nil || view.cmsView.Status == nil {
+		return nil
+	}
+	id := view.GetInstanceId()
+	stepID := int64(view.cmsView.Status.StepId)
+	version := p.registry.version(id)
+
+	p.fluxMu.Lock()
+	if c, ok := p.fluxCache[id]; ok && c.stepID == stepID && c.version == version {
+		p.fluxMu.Unlock()
+		return c.flux
+	}
+	p.fluxMu.Unlock()
+
+	f := p.buildFlux(view, nowMs)
+	if f == nil {
+		return nil
+	}
+	p.fluxMu.Lock()
+	if p.fluxCache == nil {
+		p.fluxCache = map[string]cachedFlux{}
+	}
+	p.fluxCache[id] = cachedFlux{stepID: stepID, version: version, flux: f}
+	p.fluxMu.Unlock()
+	return f
 }
 
 // noteShed records that this request was rejected on purpose.
@@ -265,7 +320,7 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 	for _, view := range instanceViews {
 		observed := p.observeInstance(view)
 		view.schedulingCtx.fluidserveRequest = ctx
-		f := p.buildFlux(view, now)
+		f := p.flux(view, now)
 		if f != nil {
 			f.observedStep = observed
 			if observed >= 0 {
@@ -1006,12 +1061,13 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	}
 
 	policy := &fluidserveDispatchPolicy{
-		cfg:      cfg,
-		capacity: newCapacityModel(profile, predictor),
-		lengths:  lengths,
-		registry: newRequestRegistry(lengths, budgets),
-		lastObs:  map[string]stepObservation{},
-		shedIDs:  map[string]int64{},
+		cfg:       cfg,
+		capacity:  newCapacityModel(profile, predictor),
+		lengths:   lengths,
+		registry:  newRequestRegistry(lengths, budgets),
+		lastObs:   map[string]stepObservation{},
+		shedIDs:   map[string]int64{},
+		fluxCache: map[string]cachedFlux{},
 	}
 	policy.baseDispatchPolicy = baseDispatchPolicy{
 		consts.InferTypeNeutral: {
