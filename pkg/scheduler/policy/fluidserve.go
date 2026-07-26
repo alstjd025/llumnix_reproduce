@@ -424,6 +424,13 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	f.live = p.registry.reconcile(f.id, int(st.SchedulerRunningToDecodeRequestsNum),
 		f.stepID, nowMs)
 
+	// The pace the instance is delivering right now. It is needed before the
+	// loop because a request the instance is ALREADY failing cannot be made to
+	// fail by admitting another one, and should therefore not be able to close
+	// the instance to everything else.
+	f.meanStep = p.capacity.meanStepMs(f.kvLogical, f.nDecode, f.pendingPrefill,
+		f.chunk, p.cfg.horizonSteps)
+
 	floor := p.capacity.floorStepMs()
 	f.tightestAllowance = math.Inf(1)
 	f.gateAllowance = math.Inf(1)
@@ -440,11 +447,23 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 			continue
 		}
 		f.achievable++
-		if f.live[i].allowanceMs < f.tightestAllowance {
-			f.tightestAllowance = f.live[i].allowanceMs
-		}
 		if f.live[i].nominalMs > 0 && f.live[i].nominalMs < f.gateAllowance {
 			f.gateAllowance = f.live[i].nominalMs
+		}
+		// The protection is against CAUSING a miss. A request whose remaining
+		// budget per token is already below what the instance is delivering is
+		// being missed now, and refusing new work does not rescue it: the batch
+		// it is in keeps running at the pace it is running at, and only shrinks
+		// as those requests finish. Letting it set the limit would close the
+		// instance to every other class while saving nobody. Measured, that is
+		// what happened: instances sat at a tightest allowance of 28 ms against
+		// a delivered 32 ms and refused work while holding a third of their
+		// admissible occupancy.
+		if f.live[i].allowanceMs < f.meanStep {
+			continue
+		}
+		if f.live[i].allowanceMs < f.tightestAllowance {
+			f.tightestAllowance = f.live[i].allowanceMs
 		}
 	}
 
@@ -490,8 +509,6 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 
 	limit := math.Min(f.capKv, f.capMem)
 	f.headroom = limit - f.proj
-	f.meanStep = p.capacity.meanStepMs(f.kvLogical, f.nDecode, f.pendingPrefill,
-		f.chunk, p.cfg.horizonSteps)
 	return f
 }
 
