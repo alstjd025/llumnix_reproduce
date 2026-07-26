@@ -40,9 +40,74 @@ type capacityModel struct {
 	cN  float64 // ms per decoding request
 
 	predictor *LatencyPredictor
+
+	// correction scales the predicted MEAN iteration time. See noteResidual.
+	correction float64
 }
 
-// An online correction of the decode law was implemented and removed. The only
+const (
+	// Weight of one interval in the correction. The samples arrive at the status
+	// polling rate, so a few per second per instance; this converges over about
+	// twenty seconds, which is fast enough to follow a change of offered rate
+	// and slow enough not to chase one burst.
+	fsCorrectionAlpha = 0.02
+	// Bounds. Outside this range the offline law no longer describes the engine
+	// at all, which is a condition to report rather than to absorb silently.
+	fsCorrectionMin = 0.5
+	fsCorrectionMax = 3.0
+)
+
+// noteResidual folds one interval's measurement into the correction.
+//
+// This replaces an earlier online calibration that was removed as unusable, and
+// the difference is what is being compared. That one tried to refit the DECODE
+// law, which required separating decode cost from prefill cost inside a 500 ms
+// interval; the only test available looks at the queue at the two endpoints, and
+// a queue that forms and drains in between is invisible, so prefill cost was
+// charged to the decode law and the factor ran to 1.73.
+//
+// Here there is nothing to separate. The quantity the decision needs is the mean
+// iteration time over the horizon, meanStepMs already predicts exactly that
+// including its prefill term, and the step counter and status timestamp measure
+// exactly that over the interval just elapsed. The correction is the ratio of
+// the two, so an interval that carried prefill work is not a contaminated
+// sample -- it is the sample.
+//
+// It matters because the bias is not small and is one-directional. Measured over
+// a two-minute run the model predicted a median of 27 ms where the engine took
+// 35 ms, on every instance. An instance is admitted work up to a budget, so a
+// prediction 23% low is admission 23% past what the budget allows, and the
+// requests that were admitted on that basis miss.
+func (m *capacityModel) noteResidual(predictedMs, measuredMs float64) {
+	if predictedMs <= 0 || measuredMs <= 0 || math.IsInf(predictedMs, 0) {
+		return
+	}
+	ratio := measuredMs / predictedMs
+	// A ratio this far out describes a status pair that straddles something
+	// other than steady operation.
+	if ratio < 0.2 || ratio > 5 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// The ratio is against the ALREADY CORRECTED prediction, so the update
+	// multiplies rather than replaces.
+	m.correction *= 1 + fsCorrectionAlpha*(ratio-1)
+	if m.correction < fsCorrectionMin {
+		m.correction = fsCorrectionMin
+	}
+	if m.correction > fsCorrectionMax {
+		m.correction = fsCorrectionMax
+	}
+}
+
+func (m *capacityModel) correctionFactor() float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.correction
+}
+
+// An online correction of the DECODE LAW specifically was implemented and removed. The only
 // test available without an engine change -- no prefill queued at either end of
 // a status interval -- cannot certify that no prefill ran DURING it: statuses
 // arrive every 500 ms and the engine executes around 25 iterations in between,
@@ -57,10 +122,11 @@ type capacityModel struct {
 
 func newCapacityModel(p *fluidserveProfile, predictor *LatencyPredictor) *capacityModel {
 	return &capacityModel{
-		c0:        p.DecodeStepLaw.C0Ms,
-		cKv:       p.DecodeStepLaw.CKvMsPerToken,
-		cN:        p.DecodeStepLaw.CNMsPerRequest,
-		predictor: predictor,
+		c0:         p.DecodeStepLaw.C0Ms,
+		cKv:        p.DecodeStepLaw.CKvMsPerToken,
+		cN:         p.DecodeStepLaw.CNMsPerRequest,
+		predictor:  predictor,
+		correction: 1.0,
 	}
 }
 
@@ -123,7 +189,7 @@ func (m *capacityModel) meanStepMs(kvTokens, nDecode, pendingPrefill, chunk floa
 	}
 	m.mu.RLock()
 	dec := m.decodeStepLocked(kvTokens, nDecode)
-	c0 := m.c0
+	c0, corr := m.c0, m.correction
 	m.mu.RUnlock()
 
 	sp := prefillSteps(pendingPrefill, chunk)
@@ -132,13 +198,13 @@ func (m *capacityModel) meanStepMs(kvTokens, nDecode, pendingPrefill, chunk floa
 		sp = k
 	}
 	if sp <= 0 {
-		return dec
+		return dec * corr
 	}
 	pre := m.prefillStepMs(math.Min(pendingPrefill, chunk))
 	if math.IsInf(pre, 0) {
 		return math.Inf(1)
 	}
-	return ((k-sp)*dec + sp*(pre+dec-c0)) / k
+	return corr * ((k-sp)*dec + sp*(pre+dec-c0)) / k
 }
 
 // maxKvForAllowance inverts meanStepMs in the KV term: the largest number of KV
@@ -161,12 +227,15 @@ func (m *capacityModel) maxKvForAllowance(
 		horizon = 1
 	}
 	m.mu.RLock()
-	c0, cKv, cN := m.c0, m.cKv, m.cN
+	c0, cKv, cN, corr := m.c0, m.cKv, m.cN, m.correction
 	m.mu.RUnlock()
 
-	if cKv <= 0 {
+	if cKv <= 0 || corr <= 0 {
 		return math.Inf(1)
 	}
+	// The inversion is of the corrected mean, so the allowance is divided by the
+	// correction once rather than each term being scaled.
+	allowanceMs /= corr
 	f := prefillSteps(pendingPrefill, chunk) / float64(horizon)
 	if f > 1 {
 		f = 1
@@ -188,5 +257,5 @@ func (m *capacityModel) maxKvForAllowance(
 func (m *capacityModel) floorStepMs() float64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.c0
+	return m.c0 * m.correction
 }

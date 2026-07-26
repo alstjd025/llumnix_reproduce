@@ -221,7 +221,8 @@ func testCapacity(t *testing.T) *capacityModel {
 	t.Helper()
 	return &capacityModel{
 		c0: 16.0, cKv: 1e-5, cN: 0.08,
-		predictor: fixedPrefillPredictor(),
+		predictor:  fixedPrefillPredictor(),
+		correction: 1.0,
 	}
 }
 
@@ -292,6 +293,39 @@ func TestAllowanceBelowFloorIsUnreachable(t *testing.T) {
 	// different decisions.
 	assert.Less(t, m.maxKvForAllowance(10, 1, 0, 8192, 100), 0.0)
 	assert.Equal(t, 16.0, m.floorStepMs())
+}
+
+func TestTheMeanStepCorrectionFollowsTheMeasurement(t *testing.T) {
+	// The correction is against the mean iteration time, which the model
+	// predicts directly and the step counter measures directly, so an interval
+	// that carried prefill work is a valid sample rather than a contaminated
+	// one. That is the whole difference from the decode-law calibration this
+	// replaced, which needed to know how much of an interval was prefill and
+	// could not find out.
+	m := testCapacity(t)
+	assert.InDelta(t, 1.0, m.correctionFactor(), 1e-9)
+
+	base := m.meanStepMs(200000, 20, 0, 8192, 100)
+	// Sustained evidence that iterations take 30% longer than predicted.
+	for i := 0; i < 2000; i++ {
+		m.noteResidual(m.meanStepMs(200000, 20, 0, 8192, 100), base*1.3)
+	}
+	assert.InDelta(t, 1.3, m.correctionFactor(), 0.05)
+	assert.InDelta(t, base*1.3, m.meanStepMs(200000, 20, 0, 8192, 100), base*0.05)
+
+	// The capacity inversion has to move with it, or the two would disagree
+	// about the same instance: a corrected prediction that says an instance is
+	// slower, alongside an uncorrected inversion that says it can hold as much
+	// as before.
+	kv := m.maxKvForAllowance(60, 20, 0, 8192, 100)
+	assert.InDelta(t, 60.0, m.meanStepMs(kv, 20, 0, 8192, 100), 0.5)
+
+	// Implausible samples are rejected rather than absorbed.
+	before := m.correctionFactor()
+	for i := 0; i < 100; i++ {
+		m.noteResidual(base, 60000)
+	}
+	assert.InDelta(t, before, m.correctionFactor(), 1e-9)
 }
 
 // ---------------------------------------------------------------------------

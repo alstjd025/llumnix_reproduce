@@ -57,6 +57,15 @@ go build -buildvcs=false \
   빠지면 기동 시 panic이고 유닛 테스트로는 잡히지 않는다.
 - 스케줄러를 `-v 4`로 띄우면 초당 수백 줄이 나와 컨테이너 로그가 1분 남짓만 남는다.
   메커니즘 확인은 로그가 아니라 메트릭이나 분석 산출물로 한다.
+- **게이트웨이 버퍼 큐가 워커 5개다**(`--wait-queue-threads 5`, `--max-queue-size 512`).
+  워커는 요청이 엔드포인트를 받을 때까지 묶이므로, 배치를 미루는 정책(FluidServe의
+  보유-재시도)에서는 **동시 보유 요청이 5건으로 제한**되고 나머지는 큐에서 수십 초를
+  기다린다. `gateway_pending_requests`가 515에 고정되면 이 상태다. 4096/16384로 올린다
+  (`set_scheduler_profiling.py`가 모든 정책에 적용).
+- **실행 중인 셸 스크립트를 편집하지 말 것.** bash는 파일 오프셋을 기억한 채 이어
+  읽으므로, 실행 도중 앞부분에 줄을 넣으면 엉뚱한 블록으로 점프한다. 실제로
+  `run_exp22_fluidserve.sh`에 case 하나를 추가했다가 실행 중이던 smoke가 sweep 블록으로
+  넘어가 의도치 않은 arm이 시작됐다. 편집은 실행이 끝난 뒤에 한다.
 - 선재 문제: `pkg/cms/cms_read_client_test.go`가 `NewCMSReadClient` 인자 개수 불일치로
   `go vet ./...`을 실패시킨다. 이 저장소 작업과 무관하며 미수정 상태다. 빌드/테스트는
   패키지를 지정해서 돌린다(`go test ./pkg/scheduler/...`).

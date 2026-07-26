@@ -106,13 +106,41 @@ FLUIDSERVE_ABLATIONS = {
 # all means the scheduler stopped answering.
 GATEWAY_FLAGS_BY_POLICY = {
     "fluidserve": {
-        "--wait-scheduling-retry-interval": "100ms",
+        # Matched to --cms-pull-status-interval-ms, which is how often the
+        # instance state the decision reads is refreshed.  Re-deciding faster
+        # than the state changes cannot reach a different answer and only costs
+        # scheduling calls, so the re-decision period is the state period.
+        "--wait-scheduling-retry-interval": "500ms",
         "--wait-scheduling-timeout": "35000ms",
     },
 }
 GATEWAY_DEFAULTS = {
     "--wait-scheduling-retry-interval": "1000ms",
     "--wait-scheduling-timeout": "5000ms",
+}
+
+# Applied to every policy, because it is a property of the gateway rather than
+# of the arm and it has to be identical on both sides of a comparison.
+#
+# The gateway takes each request off a buffer queue with a fixed pool of worker
+# goroutines, and the worker stays on the request until it has an endpoint.  For
+# a policy that answers immediately that is invisible: a worker is occupied for
+# under a millisecond, and five of them serve thousands of requests a second.
+# For a policy that defers a placement, the worker is occupied for the whole
+# hold, so five workers cap the fleet at five concurrently held requests and
+# every other arrival waits for the 512-slot queue.  Measured, that pinned
+# gateway_pending_requests at 515 for an entire run and drove the time to first
+# token to 20-50 s while the engines ran at a third of their capacity and the
+# scheduler answered in 0.1 ms.  It made the hold mechanism look like a policy
+# failure when it was a pool size.
+#
+# The workers are waiting on the network, not computing, so the pool is sized
+# for the number of requests that may be in flight rather than for the number of
+# cores.  PolyServe's pending gauge is zero either way, so this changes nothing
+# on that side of the comparison and both arms are run with it.
+GATEWAY_CAPACITY = {
+    "--wait-queue-threads": "4096",
+    "--max-queue-size": "16384",
 }
 
 
@@ -309,12 +337,15 @@ def main():
 def set_gateway(policy, timeout):
     """Point the gateway's hold-and-retry loop at the right cadence.
 
-    Only FluidServe depends on this: for every other policy the scheduler either
-    returns an instance or the request fails, so the retry loop is a failure
-    path rather than a control mechanism.  The values are reset for those
-    policies so that switching back leaves no trace of the FluidServe run.
+    Only FluidServe depends on the retry cadence: for every other policy the
+    scheduler either returns an instance or the request fails, so the retry loop
+    is a failure path rather than a control mechanism.  Those values are reset
+    for other policies so that switching back leaves no trace of the FluidServe
+    run.  The queue capacity in GATEWAY_CAPACITY is applied to every policy, for
+    the reason recorded there.
     """
-    want = GATEWAY_FLAGS_BY_POLICY.get(policy, GATEWAY_DEFAULTS)
+    want = dict(GATEWAY_FLAGS_BY_POLICY.get(policy, GATEWAY_DEFAULTS))
+    want.update(GATEWAY_CAPACITY)
     d = json.loads(kubectl("get", "deploy", "gateway", "-o", "json"))
     c = d["spec"]["template"]["spec"]["containers"][0]
     args = list(c.get("args", []))

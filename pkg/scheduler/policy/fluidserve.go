@@ -131,9 +131,13 @@ type fluidserveRequest struct {
 type instanceFlux struct {
 	id string
 
-	kvLogical      float64 // KV tokens as the latency model counts them
-	kvPhysical     float64 // blocks the engine has allocated
-	kvCapacity     float64 // physical pool size
+	kvLogical  float64 // KV tokens as the latency model counts them
+	kvPhysical float64 // blocks the engine has allocated
+	kvCapacity float64 // physical pool size
+	// sharing is the ratio of physical blocks to logical tokens, which is how
+	// far prefix reuse stretches the pool. It converts the physical capacity
+	// into the logical units everything else is counted in.
+	sharing        float64
 	nDecode        float64
 	pendingPrefill float64
 	chunk          float64
@@ -265,6 +269,9 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 		if f != nil {
 			f.observedStep = observed
 			if observed >= 0 {
+				// The correction is fed here, where the prediction and the
+				// measurement of the same interval are both in hand.
+				p.capacity.noteResidual(f.meanStep, observed)
 				// Published only when the engine actually advanced, which is at
 				// most once per status pull per instance. These are the series
 				// the run is analysed from: the per-decision log lines do not
@@ -475,7 +482,11 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	if ratio < 0.01 {
 		ratio = 0.01
 	}
+	if ratio > 1 {
+		ratio = 1
+	}
 	f.capMem = f.kvCapacity * fsMemorySafety / ratio
+	f.sharing = ratio
 
 	limit := math.Min(f.capKv, f.capMem)
 	f.headroom = limit - f.proj
@@ -678,6 +689,20 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	cost := p.costOf(req)
 
 	// State after admitting this request.
+	//
+	// The prompt is charged in full as prefill work, which over-states it: this
+	// workload replays byte-identical prompts, so most of a prompt's tokens are
+	// already resident and the engine skips them. Discounting it by the measured
+	// physical-to-logical ratio was implemented and reverted, because that ratio
+	// measures block SHARING AMONG RESIDENT REQUESTS, which is a different
+	// quantity from the cache hit an arriving prompt will get, and using it
+	// loosens admission for exactly the class whose arrival damages the others
+	// most: a 22k-token agent prompt would be charged as 2k and would then pass
+	// the test that is supposed to keep it away from requests on a tight budget.
+	// A discount needs a direct signal -- the engine reporting the hit length for
+	// a scheduled prefill -- not a proxy that happens to have a similar value.
+	// Until then the charge stays conservative in the direction that protects
+	// the requests already running.
 	newPending := f.pendingPrefill + float64(req.promptTokens)
 	newN := f.nDecode + 1
 	newKv := f.proj + cost
@@ -1000,6 +1025,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 // rotates its container log in about a minute at the verbosity these lines need.
 func (p *fluidserveDispatchPolicy) reportLoop() {
 	for range time.Tick(5 * time.Second) {
+		metrics.Gauge("scheduler_fluidserve_capacity_correction",
+			metrics.Labels{}).Set(p.capacity.correctionFactor())
 		byCount, bySurvival, byAge := p.registry.counters()
 		metrics.Gauge("scheduler_fluidserve_retired_total",
 			metrics.Labels{{Name: "reason", Value: "count"}}).Set(float64(byCount))
