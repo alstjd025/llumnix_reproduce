@@ -287,3 +287,17 @@ func TestCalibrationIgnoresIntervalsContainingPrefill(t *testing.T) {
 	assert.InDelta(t, before, p.capacity.correctionFactor(), 1e-9,
 		"an interval that carried prefill work must not be charged to the decode law")
 }
+
+func TestIdleInstancesReportNoIterationTime(t *testing.T) {
+	// An engine with nothing to decode still advances its step counter, but the
+	// time between those steps is time spent waiting for work. Treating it as an
+	// iteration time would report hundreds of milliseconds for an instance that
+	// is in fact completely free.
+	p := fsPolicy(t, "25:e2e:16000,50:decode", nil)
+	v := fsView(fsViewOpts{id: "a", decodeReqs: 0, decodeTokens: 0, stepID: 1000})
+	v.cmsView.Status.TimestampMs = 1_000_000
+	p.observeInstance(v)
+	v.cmsView.Status.StepId = 1002
+	v.cmsView.Status.TimestampMs = 1_003_000
+	assert.Equal(t, -1.0, p.observeInstance(v))
+}

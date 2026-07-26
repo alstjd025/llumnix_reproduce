@@ -175,16 +175,26 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 				metrics.Gauge("scheduler_fluidserve_observed_step_ms", lbl).Set(observed)
 				metrics.Gauge("scheduler_fluidserve_predicted_step_ms", lbl).Set(f.meanStep)
 				metrics.Gauge("scheduler_fluidserve_headroom_tokens", lbl).Set(f.headroom)
-				metrics.Gauge("scheduler_fluidserve_cap_kv_tokens", lbl).Set(f.capKv)
+				// An instance with no live request has no latency constraint at
+				// all. Reporting -1 rather than leaving the previous value in
+				// place keeps the series honest: a stale reading would look like
+				// a real constraint that is no longer there.
+				capKv := f.capKv
+				if math.IsInf(capKv, 0) {
+					capKv = -1
+				}
+				metrics.Gauge("scheduler_fluidserve_cap_kv_tokens", lbl).Set(capKv)
 				metrics.Gauge("scheduler_fluidserve_projected_kv_tokens", lbl).Set(f.proj)
 				metrics.Gauge("scheduler_fluidserve_outflow_tokens", lbl).Set(f.outflow)
 				metrics.Gauge("scheduler_fluidserve_live_requests", lbl).Set(float64(len(f.live)))
 				metrics.Gauge("scheduler_fluidserve_unachievable_requests", lbl).
 					Set(float64(f.unachievable))
-				if !math.IsInf(f.tightestAllowance, 0) {
-					metrics.Gauge("scheduler_fluidserve_tightest_allowance_ms", lbl).
-						Set(f.tightestAllowance)
+				allowance := f.tightestAllowance
+				if math.IsInf(allowance, 0) {
+					allowance = -1
 				}
+				metrics.Gauge("scheduler_fluidserve_tightest_allowance_ms", lbl).
+					Set(allowance)
 			}
 		}
 		view.schedulingCtx.fluidserveFlux = f
@@ -258,6 +268,15 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	// Guard against a status pair that straddles an engine restart or a long
 	// stall, where the ratio would describe neither interval.
 	if steps > 10000 || elapsed > 30000 {
+		return -1
+	}
+	// An engine with nothing to decode still advances its step counter, but the
+	// wall time between those steps is time spent waiting for work rather than
+	// time spent computing. Dividing one by the other would report iteration
+	// times of hundreds of milliseconds for an idle instance, which is the
+	// opposite of the truth and would make the safety loop back off exactly when
+	// there is most room.
+	if prev.nDecode < 1 || cur.nDecode < 1 {
 		return -1
 	}
 	measured := elapsed / float64(steps)

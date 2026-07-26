@@ -13,6 +13,11 @@ root on the node.
     # install tables + switch to the SLO policy, wait for rollout
     python3 ms_dev/scripts/set_scheduler_profiling.py --policy slo
 
+    # FluidServe additionally needs its own profile and a gateway that retries
+    # quickly, because holding a request is how it expresses "no instance can
+    # take this yet"
+    python3 ms_dev/scripts/set_scheduler_profiling.py --policy fluidserve
+
     # put the cluster back the way it was
     python3 ms_dev/scripts/set_scheduler_profiling.py --policy load-balance
 
@@ -50,6 +55,37 @@ SLO_FLAGS = {
 # per-class means of the mix workload: swe 728, chat 386, deepresearch 275.
 POLYSERVE_FLAGS = {
     "--polyserve-tier-decode-tokens": "25:728,50:386,100:275",
+}
+
+# How each tier's latency budget is defined, which is how the requests are
+# actually scored: chat and deepresearch on the mean time between output tokens
+# over the whole request, swe on end-to-end latency.  Both forms are cumulative,
+# so a request that has been running ahead of its budget is not held to a
+# per-token ceiling it does not need.
+FLUIDSERVE_FLAGS = {
+    "--fluidserve-profile-path": f"{MOUNT}/fluidserve.json",
+    "--fluidserve-class-budgets": "25:e2e:30000,50:decode,100:decode",
+    "--fluidserve-horizon-steps": "100",
+    "--fluidserve-z-safety": "1.65",
+    "--fluidserve-alpha-externality": "1.0",
+}
+
+# The gateway holds a request and re-asks the scheduler while no instance can
+# take it, so its retry interval is FluidServe's re-decision period.  The stock
+# 1000 ms is far coarser than the timescale the decision moves on: at 20 ms per
+# iteration an instance's state turns over completely between two retries.  The
+# window is widened to cover the largest time-to-first-token budget in the
+# workload (11.8 s for the agent class) so that holding is bounded by the
+# request's own budget rather than by the gateway giving up first.
+GATEWAY_FLAGS_BY_POLICY = {
+    "fluidserve": {
+        "--wait-scheduling-retry-interval": "100ms",
+        "--wait-scheduling-timeout": "12000ms",
+    },
+}
+GATEWAY_DEFAULTS = {
+    "--wait-scheduling-retry-interval": "1000ms",
+    "--wait-scheduling-timeout": "5000ms",
 }
 
 
@@ -95,11 +131,21 @@ def show():
 
 def install_configmap():
     files = [os.path.join(TABLE_DIR, n) for n in ("ttft.json", "tpot.json")]
+    fs = os.path.join(TABLE_DIR, "fluidserve.json")
+    if os.path.exists(fs):
+        files.append(fs)
     for f in files:
         if not os.path.exists(f):
             sys.exit(f"missing {f} -- run gen_profiling_from_stepdump.py first")
         with open(f) as fh:
             doc = json.load(fh)
+        if os.path.basename(f) == "fluidserve.json":
+            if not doc.get("classes") or not doc.get("decode_step_law"):
+                sys.exit(f"{f} is missing classes or decode_step_law; the policy "
+                         f"would refuse to start")
+            print(f"  fluidserve.json: {len(doc['classes'])} classes, "
+                  f"{os.path.getsize(f):,} bytes")
+            continue
         if not doc.get("results"):
             sys.exit(f"{f} has no results; GetLatencyPredictor would Fatalf")
         print(f"  {os.path.basename(f)}: {len(doc['results'])} results, "
@@ -113,7 +159,8 @@ def install_configmap():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--policy", choices=["polyserve", "slo", "load-balance"])
+    ap.add_argument("--policy",
+                    choices=["fluidserve", "polyserve", "slo", "load-balance"])
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--timeout", type=int, default=180)
     a = ap.parse_args()
@@ -136,6 +183,8 @@ def main():
     for k, v in SLO_FLAGS.items():
         args = set_flag(args, k, v)
     for k, v in POLYSERVE_FLAGS.items():
+        args = set_flag(args, k, v)
+    for k, v in FLUIDSERVE_FLAGS.items():
         args = set_flag(args, k, v)
     c["args"] = args
 
@@ -194,7 +243,42 @@ def main():
         return 1
     if a.policy == "slo" and not hits:
         print("  WARNING: no LatencyPredictor line found; check -v level and logs")
+
+    if set_gateway(a.policy, a.timeout) != 0:
+        return 1
     return 0
+
+
+def set_gateway(policy, timeout):
+    """Point the gateway's hold-and-retry loop at the right cadence.
+
+    Only FluidServe depends on this: for every other policy the scheduler either
+    returns an instance or the request fails, so the retry loop is a failure
+    path rather than a control mechanism.  The values are reset for those
+    policies so that switching back leaves no trace of the FluidServe run.
+    """
+    want = GATEWAY_FLAGS_BY_POLICY.get(policy, GATEWAY_DEFAULTS)
+    d = json.loads(kubectl("get", "deploy", "gateway", "-o", "json"))
+    c = d["spec"]["template"]["spec"]["containers"][0]
+    args = list(c.get("args", []))
+    before = list(args)
+    for k, v in want.items():
+        args = set_flag(args, k, v)
+    if args == before:
+        print(f"\n  gateway retry settings already {want}")
+        return 0
+    c["args"] = args
+    for k in ("resourceVersion", "uid", "creationTimestamp", "generation"):
+        d["metadata"].pop(k, None)
+    d.pop("status", None)
+    d["spec"]["template"]["metadata"].setdefault("annotations", {})[
+        "llumnix.dev/restartedAt"] = str(time.time())
+    kubectl("apply", "-f", "-", stdin=json.dumps(d))
+    print(f"\n  gateway -> {want}")
+    r = subprocess.run(["kubectl", "-n", NS, "rollout", "status", "deploy/gateway",
+                        f"--timeout={timeout}s"], capture_output=True, text=True)
+    print("  " + (r.stdout or r.stderr).strip())
+    return r.returncode
 
 
 if __name__ == "__main__":
