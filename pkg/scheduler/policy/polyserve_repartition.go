@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"k8s.io/klog/v2"
 
+	"llumnix/pkg/metrics"
 	"llumnix/pkg/types"
 )
 
@@ -217,6 +219,15 @@ func (r *tierRepartitioner) maybeRepartition(
 	r.observed = map[int]*tierObservation{}
 	r.windowStart = now
 
+	// Publish on every window, not only on the windows that move a server:
+	// the point of the series is to show the allocation TRACKING demand, which
+	// needs the flat stretches too. Deferred so the early returns below (no
+	// live servers, hysteresis not satisfied) still emit a sample -- otherwise
+	// the gauge would go stale exactly when nothing is changing. klog carries
+	// the same information but only survives as long as the pod's log buffer,
+	// which a long run outlives.
+	defer r.publishAllocation(len(live))
+
 	if len(live) == 0 {
 		return
 	}
@@ -247,6 +258,24 @@ func (r *tierRepartitioner) maybeRepartition(
 
 	klog.Infof("PolyServe repartition: %s (demand %s, %d live servers)",
 		formatAllocation(target), formatDemand(r.demand), len(live))
+}
+
+// publishAllocation exports the current tier -> server split and the smoothed
+// demand that produced it, so a run's repartitioning history can be read back
+// from the metrics scrape instead of from scheduler logs.
+//
+// Called with r.mu held (from the repartition path).
+func (r *tierRepartitioner) publishAllocation(liveServers int) {
+	metrics.Gauge("scheduler_polyserve_live_servers", nil).Set(float64(liveServers))
+	// Iterate over demand, not over current: a tier that has gone quiet keeps
+	// decaying in demand and must keep reporting (its servers were taken away),
+	// whereas iterating over `current` would silently drop it from the series.
+	for tier, d := range r.demand {
+		labels := metrics.Labels{{Name: "tpot_slo_ms", Value: strconv.Itoa(tier)}}
+		metrics.Gauge("scheduler_polyserve_tier_demand", labels).Set(d)
+		metrics.Gauge("scheduler_polyserve_tier_servers", labels).
+			Set(float64(r.current[tier]))
+	}
 }
 
 // allocateServers divides n servers among tiers in proportion to demand, by
