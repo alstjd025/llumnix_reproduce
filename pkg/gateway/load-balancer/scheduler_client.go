@@ -14,6 +14,7 @@ import (
 	"llumnix/cmd/gateway/app/options"
 	"llumnix/pkg/consts"
 	"llumnix/pkg/keepalive"
+	"llumnix/pkg/metrics"
 	"llumnix/pkg/resolver"
 	"llumnix/pkg/types"
 )
@@ -157,9 +158,15 @@ func (cb *SchedulerClient) Get(req *types.RequestContext) (types.SchedulingResul
 		return nil, consts.ErrorSchedulerNotReady
 	}
 
+	waits := 0
 	for {
 		result, err := cb.doSchedule(req)
 		if err == nil {
+			if waits > 0 {
+				metrics.Counter("gateway_scheduling_waited_total", metrics.Labels{}).Inc()
+				metrics.Histogram("gateway_scheduling_wait_milliseconds",
+					metrics.Labels{}).ObserveInt(time.Since(tStart).Milliseconds())
+			}
 			return result, nil
 		}
 
@@ -172,9 +179,19 @@ func (cb *SchedulerClient) Get(req *types.RequestContext) (types.SchedulingResul
 		// all service endpoints are busy, wait a period for next try
 		if errors.Is(err, consts.ErrorNoAvailableEndpoint) {
 			if time.Since(tStart) > cb.config.WaitSchedulingTimeout {
+				metrics.Counter("gateway_scheduling_gave_up_total", metrics.Labels{}).Inc()
 				return nil, err
 			} else {
-				klog.Infof("[%s] all service endpoints are busy, try next after %dms", req.Id, cb.config.WaitSchedulingRetryInterval.Milliseconds())
+				// V(3), not Info: with a scheduling policy that answers "not
+				// yet" as a normal outcome rather than an error -- holding the
+				// request here is how it defers a placement -- this line fires
+				// once per held request per retry interval, which at a 100 ms
+				// interval is thousands of lines a second and both slows the
+				// gateway and rotates its log away. The counters above carry
+				// the same information durably.
+				klog.V(3).Infof("[%s] all service endpoints are busy, try next after %dms",
+					req.Id, cb.config.WaitSchedulingRetryInterval.Milliseconds())
+				waits++
 				time.Sleep(cb.config.WaitSchedulingRetryInterval)
 				continue
 			}
@@ -207,6 +224,7 @@ func (cb *SchedulerClient) createReleaseRequest(req *types.RequestContext, insta
 //   - Prefill stage: released in OnPostPrefill after the first token arrives, which could be overlapped by the second token generation.
 //   - Retry path: released before issuing the next Schedule.
 //   - Decode stage: released in OnPostRequest after the response completes.
+//
 // While in PD separated scheduling, released in OnPostPrefill will blocked the next decode schedule.
 func (cb *SchedulerClient) Release(req *types.RequestContext, instance *types.LLMInstance) {
 	if req == nil || instance == nil {
