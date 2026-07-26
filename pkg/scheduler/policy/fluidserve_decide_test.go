@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -155,10 +156,10 @@ func TestTightRequestsCollectWhereTightRequestsAlreadyAre(t *testing.T) {
 	withTerm := fsPolicy(t, "25:e2e:16000,50:decode", nil)
 	loose := views2["looseOnly"]
 	off := p2.evaluate(loose.schedulingCtx.fluidserveFlux, loose, req)
-	assert.Zero(t, off.harm+off.bindingLoss,
+	assert.Zero(t, off.harm+off.mismatch,
 		"the ablation must charge nothing for placing a request on this instance")
 	on := withTerm.evaluate(loose.schedulingCtx.fluidserveFlux, loose, req)
-	assert.Greater(t, on.harm+on.bindingLoss, 0.0,
+	assert.Greater(t, on.harm+on.mismatch, 0.0,
 		"with the terms on, that same placement is charged")
 }
 
@@ -385,4 +386,48 @@ func TestRequestsAlreadyPastTheirBudgetDoNotMakeAnInstanceExpensive(t *testing.T
 	// Only the second request contributes: 60ms of extra delay against the
 	// 100ms of slack it had.
 	assert.InDelta(t, 0.6, harm, 1e-9)
+}
+
+func TestBudgetMismatchIsSymmetricAndZeroOnAnEmptyInstance(t *testing.T) {
+	// An instance with nothing on it has no constraint to mismatch against, so
+	// it is free to take whatever arrives first and become the home for that
+	// budget. That is how the separation starts from a cold fleet.
+	assert.Zero(t, budgetMismatch(math.Inf(1), 50))
+	assert.Zero(t, budgetMismatch(50, 50))
+	// Mixing budgets wastes capacity in both directions, so the penalty does
+	// not depend on which way round the pair is.
+	assert.InDelta(t, budgetMismatch(50, 100), budgetMismatch(100, 50), 1e-12)
+	// And it grows with how far apart they are.
+	assert.Greater(t, budgetMismatch(50, 100), budgetMismatch(50, 60))
+}
+
+func TestRequestsPreferInstancesHoldingTheirOwnBudget(t *testing.T) {
+	// Two instances with the same free space, one already serving interactive
+	// requests and one already serving batch requests. A batch request should
+	// take the batch instance even though neither is fuller than the other,
+	// because an instance's admissible occupancy is set by the tightest budget
+	// on it and mixing the two wastes capacity on both.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", nil)
+	now := nowMillis()
+	views := map[string]*instanceViewScheduling{
+		"interactive": fsView(fsViewOpts{id: "interactive", decodeReqs: 5,
+			decodeTokens: 200_000, usedGpu: 40_000, stepID: 5000}),
+		"batch": fsView(fsViewOpts{id: "batch", decodeReqs: 5,
+			decodeTokens: 200_000, usedGpu: 40_000, stepID: 5000}),
+	}
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("chat-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("interactive", id, 50, 1000, 8192, 4990, now)
+		id = fmt.Sprintf("dr-%d", i)
+		p.registry.noteArrival(id, now)
+		p.registry.onDispatch("batch", id, 100, 4000, 8192, 4990, now)
+	}
+	got := decide(p, fsRequest("dr-new", 100, 10000, 4000), views)
+	require.NotNil(t, got)
+	assert.Equal(t, "batch", got.GetInstanceId())
+
+	got = decide(p, fsRequest("chat-new", 50, 5000, 1000), views)
+	require.NotNil(t, got)
+	assert.Equal(t, "interactive", got.GetInstanceId())
 }

@@ -62,10 +62,14 @@ const (
 	// the reason not to place is that it damages others; if the request simply
 	// cannot meet its own budget anywhere, waiting makes that worse rather than
 	// better.
-	fsPendHarmThreshold = 0.5
+	fsPendHarmThreshold = 2.0
 	// A request's budget has to be at least this much tighter than the instance's
 	// current constraint before it is charged for binding the instance to it.
-	fsBindingMargin = 0.9
+	// Weight on the budget mismatch, chosen so that the separation between the
+	// interactive and the batch budget (a factor of two, so a log-ratio of 0.69)
+	// outweighs any difference in free space between two instances, which the
+	// room term bounds to 1.
+	fsMismatchWeight = 3.0
 )
 
 type fluidserveConfig struct {
@@ -92,6 +96,7 @@ type fluidserveRequest struct {
 	nowMs        int64
 	allowanceMs  float64
 	expectedToks float64
+	nominalMs    float64
 }
 
 // instanceFlux is one instance's state at the moment of a decision.
@@ -108,6 +113,7 @@ type instanceFlux struct {
 
 	live              []liveRequest
 	tightestAllowance float64 // over requests whose budget is still achievable
+	tightestNominal   float64 // the class identity of what the instance serves
 	achievable        int
 	unachievable      int
 
@@ -171,6 +177,7 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 		nowMs:        now,
 		allowanceMs:  allowance,
 		expectedToks: expected,
+		nominalMs:    p.registry.NominalAllowance(tier),
 	}
 
 	for _, view := range instanceViews {
@@ -356,6 +363,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 
 	floor := p.capacity.floorStepMs()
 	f.tightestAllowance = math.Inf(1)
+	f.tightestNominal = math.Inf(1)
 	for i := range f.live {
 		if f.live[i].allowanceMs < floor {
 			// No batch composition can serve this request within its remaining
@@ -371,6 +379,9 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 		f.achievable++
 		if f.live[i].allowanceMs < f.tightestAllowance {
 			f.tightestAllowance = f.live[i].allowanceMs
+		}
+		if f.live[i].nominalMs > 0 && f.live[i].nominalMs < f.tightestNominal {
+			f.tightestNominal = f.live[i].nominalMs
 		}
 	}
 
@@ -459,7 +470,7 @@ type candidate struct {
 	feasible      bool
 	score         float64
 	harm          float64
-	bindingLoss   float64
+	mismatch      float64
 	meanBefore    float64
 	meanAfter     float64
 	allowAfter    float64
@@ -577,7 +588,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	c.meanBefore = f.meanStep
 	if p.cfg.enableExternality {
 		c.harm = p.harmToIncumbents(f, c.meanBefore, c.meanAfter)
-		c.bindingLoss = p.bindingLoss(f, req)
+		c.mismatch = budgetMismatch(f.tightestNominal, req.nominalMs)
 	}
 
 	// The terms are put on one scale by expressing each as a fraction of the
@@ -594,7 +605,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	} else if room < -1 {
 		room = -1
 	}
-	c.score = room - p.cfg.alphaExternality*(c.harm+c.bindingLoss/scale)
+	c.score = room - p.cfg.alphaExternality*(c.harm+fsMismatchWeight*c.mismatch)
 	return c
 }
 
@@ -643,34 +654,34 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 	return harm
 }
 
-// bindingLoss is the capacity an instance gives up by taking a request whose
-// budget is tighter than anything already on it: its admissible occupancy is
-// set by the tightest budget in force, so this removes occupancy it could
-// otherwise have used for the classes it is already serving. Kept alongside the
-// harm term because the two cover different cases -- this one fires when a
-// tight request lands on a loose instance, the other when heavy work lands on
-// an instance whose requests have little slack left.
-func (p *fluidserveDispatchPolicy) bindingLoss(
-	f *instanceFlux, req *fluidserveRequest) float64 {
-
-	// Only a materially tighter budget counts. Two requests of the same class
-	// differ by a millisecond or two simply because one is further along, and
-	// charging for that would make an instance expensive for the very class it
-	// is already serving.
-	if math.IsInf(f.tightestAllowance, 0) ||
-		req.allowanceMs >= f.tightestAllowance*fsBindingMargin {
+// budgetMismatch measures how far a request's latency budget is from the budget
+// the instance is currently held to, as the log of the ratio: zero when they
+// match, growing symmetrically in either direction.
+//
+// This is what makes requests of the same class collect on the same instances
+// without any instance being assigned to a class. An instance's admissible
+// occupancy is set by the tightest budget on it, so mixing budgets wastes
+// capacity in both directions: a tight request lands on a loose instance and
+// pulls its whole capacity down, while a loose request lands on a tight
+// instance and gets less room than its budget entitles it to. An instance with
+// nothing on it has no constraint and so no mismatch, which leaves it free to
+// take whatever arrives first and become the home for that budget.
+//
+// The earlier form of this term measured the same thing in tokens of capacity
+// given up, and had to be divided by the instance size to be comparable with
+// the other terms. Measured, that came to 0.013 against a term spanning
+// [-1, 1], so it never affected which instance was chosen: all four instances
+// ended a run held to the same budget, which is the absence of any separation.
+func budgetMismatch(instanceAllowanceMs, requestAllowanceMs float64) float64 {
+	if math.IsInf(instanceAllowanceMs, 0) ||
+		instanceAllowanceMs <= 0 || requestAllowanceMs <= 0 {
 		return 0
 	}
-	before := p.capacity.maxKvForAllowance(
-		f.tightestAllowance*fsAllowanceUtilisation, f.nDecode,
-		f.pendingPrefill, f.chunk, p.cfg.horizonSteps)
-	after := p.capacity.maxKvForAllowance(
-		req.allowanceMs*fsAllowanceUtilisation, f.nDecode,
-		f.pendingPrefill, f.chunk, p.cfg.horizonSteps)
-	if math.IsInf(before, 0) || math.IsInf(after, 0) || before <= after {
-		return 0
+	ratio := requestAllowanceMs / instanceAllowanceMs
+	if ratio < 1 {
+		ratio = 1 / ratio
 	}
-	return before - after
+	return math.Log(ratio)
 }
 
 // canWait decides whether the request still has room to be held at the gateway.
@@ -724,15 +735,15 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 	metrics.Histogram("scheduler_fluidserve_headroom_at_dispatch",
 		metrics.Labels{}).Observe(c.headroomAfter)
 	metrics.Histogram("scheduler_fluidserve_harm", metrics.Labels{}).Observe(c.harm)
-	metrics.Histogram("scheduler_fluidserve_binding_loss",
-		metrics.Labels{}).Observe(c.bindingLoss)
+	metrics.Histogram("scheduler_fluidserve_budget_mismatch",
+		metrics.Labels{}).Observe(c.mismatch)
 
 	klog.V(3).Infof("FluidServe %s request %s (tier %dms, prompt %d) -> %s: "+
 		"headroom %.0f->%.0f cap(kv %.0f mem %.0f) proj %.0f meanStep %.1f->%.1fms "+
 		"allowance %.1fms harm %.2f bindingLoss %.0f live %d (%d unachievable)",
 		kind, req.id, req.tier, req.promptTokens, c.flux.id,
 		c.flux.headroom, c.headroomAfter, c.flux.capKv, c.flux.capMem, c.flux.proj,
-		c.flux.meanStep, c.meanAfter, c.allowAfter, c.harm, c.bindingLoss,
+		c.flux.meanStep, c.meanAfter, c.allowAfter, c.harm, c.mismatch,
 		len(c.flux.live), c.flux.unachievable)
 }
 
@@ -776,11 +787,11 @@ func newSafetyTuner(cfg *fluidserveConfig) *safetyTuner {
 const (
 	// Fraction of intervals in which the engine was substantially slower than
 	// predicted before the margin is widened.
-	fsOvershootTrigger = 0.10
+	fsOvershootTrigger = 0.25
 	// How much slower than predicted counts as substantially. Below this the
 	// difference is within the spread the offline fit already reports
 	// (6% median, 21% at the 90th percentile).
-	fsResidualTrigger = 1.5
+	fsResidualTrigger = 2.0
 	fsZBackoffFactor  = 1.5
 	fsZStep           = 0.05
 	fsZMin            = 0.5

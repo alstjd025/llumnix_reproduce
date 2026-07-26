@@ -135,6 +135,13 @@ type liveRequest struct {
 	kvTokens    float64 // prompt + produced, before reconciliation scaling
 	remaining   float64 // expected output tokens still to come
 	allowanceMs float64 // time per remaining token that still meets the budget
+	// nominalMs is the per-token budget the tier starts with, independent of
+	// how this particular request has fared. The live allowance moves as a
+	// request falls behind or gets ahead, which makes it the right quantity for
+	// deciding what an instance can still hold, but the wrong one for deciding
+	// which requests belong together: one request falling behind would
+	// otherwise change what class the instance appears to be serving.
+	nominalMs float64
 	// unachievable is set when the allowance has fallen below the cost of an
 	// iteration on an empty instance. No placement decision can rescue such a
 	// request, so it is excluded from the constraint that sets an instance's
@@ -353,7 +360,31 @@ func (r *requestRegistry) liveViewLocked(rec *dispatchRecord, j int, nowMs int64
 		kvTokens:    float64(rec.promptTokens + j),
 		remaining:   remaining,
 		allowanceMs: allowance,
+		nominalMs:   r.nominalAllowanceLocked(rec.tier),
 	}
+}
+
+// nominalAllowanceLocked is the per-token budget a tier starts with: its key
+// for the per-token form, and the whole budget spread over the expected output
+// for the end-to-end form.
+func (r *requestRegistry) nominalAllowanceLocked(tier int) float64 {
+	spec := r.budgets.forTier(tier)
+	if spec.mode == budgetE2E {
+		expected := 1.0
+		if prof := r.lengths.forTier(tier); prof != nil {
+			expected = prof.expectedRemaining(0)
+		}
+		return spec.totalMs / expected
+	}
+	return spec.perTokMs
+}
+
+// NominalAllowance is the exported form used when judging a request that has
+// not been dispatched yet.
+func (r *requestRegistry) NominalAllowance(tier int) float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.nominalAllowanceLocked(tier)
 }
 
 // newRequestAllowance is the allowance a request would start with, used when
