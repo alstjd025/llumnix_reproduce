@@ -183,6 +183,10 @@ type requestRegistry struct {
 	// have added requests, and a view that did not know about them would let the
 	// same capacity be handed out twice.
 	dispatchVersion map[string]uint64
+	// promptTokensSince[instanceID] accumulates the prompt tokens placed on an
+	// instance since the last time the measurement read it, which is what the
+	// prefill-fraction estimate is measured against.
+	promptTokensSince map[string]float64
 
 	// Counters exported for telemetry.
 	retiredByCount    int64
@@ -192,11 +196,12 @@ type requestRegistry struct {
 
 func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestRegistry {
 	return &requestRegistry{
-		lengths:         lengths,
-		budgets:         budgets,
-		byInstance:      map[string]map[string]*dispatchRecord{},
-		arrivedMs:       map[string]int64{},
-		dispatchVersion: map[string]uint64{},
+		lengths:           lengths,
+		budgets:           budgets,
+		byInstance:        map[string]map[string]*dispatchRecord{},
+		arrivedMs:         map[string]int64{},
+		dispatchVersion:   map[string]uint64{},
+		promptTokensSince: map[string]float64{},
 	}
 }
 
@@ -250,6 +255,7 @@ func (r *requestRegistry) onDispatch(
 		arrived = nowMs
 	}
 	r.dispatchVersion[instanceID]++
+	r.promptTokensSince[instanceID] += float64(promptTokens)
 	m[requestID] = &dispatchRecord{
 		id:             requestID,
 		tier:           tier,
@@ -424,6 +430,16 @@ func (r *requestRegistry) forget(requestID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.arrivedMs, requestID)
+}
+
+// takePromptTokens returns and clears the prompt tokens placed on an instance
+// since the previous call, so that one measurement interval is read once.
+func (r *requestRegistry) takePromptTokens(instanceID string) float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v := r.promptTokensSince[instanceID]
+	r.promptTokensSince[instanceID] = 0
+	return v
 }
 
 // version reports how many placements this instance has received.

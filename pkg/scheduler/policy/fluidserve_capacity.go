@@ -43,6 +43,10 @@ type capacityModel struct {
 
 	// correction scales the predicted MEAN iteration time. See noteResidual.
 	correction float64
+
+	// prefillFraction is the share of an arriving prompt's tokens the engine
+	// actually computes. See notePrefill.
+	prefillFraction float64
 }
 
 const (
@@ -107,6 +111,82 @@ func (m *capacityModel) correctionFactor() float64 {
 	return m.correction
 }
 
+const (
+	// Bounds on the measured prefill fraction. The lower one is an order of
+	// magnitude below the lowest sharing ratio ever measured on this workload,
+	// so it bounds nonsense without interfering with a real reading; the upper
+	// one is the no-cache case.
+	fsPrefillFractionMin = 0.02
+	fsPrefillFractionMax = 1.0
+	// Weight of one interval. Slower than the step correction because the
+	// quantity is a property of the workload rather than of the hardware, and a
+	// workload's prompt reuse changes over minutes rather than seconds.
+	fsPrefillAlpha = 0.01
+)
+
+// notePrefill measures how much of the prompts sent to one instance the engine
+// actually had to compute, and folds it into a running estimate.
+//
+// It exists because charging an arriving prompt in full is wrong by an order of
+// magnitude on any workload with prompt reuse, and wrong in the direction that
+// matters most. An agent request carries a 22k-token prompt; charged in full it
+// occupies three of the next hundred iterations with prefill and raises the
+// predicted mean by about 15 ms, which is enough to make it infeasible almost
+// everywhere. Measured at an offered rate the fleet carries comfortably, that
+// produced a 28.8% rejection rate for the agent class while the engines ran at
+// 13.5 ms against budgets of 50 and 100 ms.
+//
+// The engine's own figure for queued prefill is already net of its cache, so
+// only the request being added needs this. What is measured here is the work
+// the engine did:
+//
+//	prefill time in the interval = (measured mean - decode-only prediction) x steps
+//	chunks executed              = that / the extra cost of a chunk-carrying step
+//	tokens computed              = chunks x chunk size
+//
+// against the prompt tokens this scheduler sent to that instance over the same
+// interval. Anything else that makes the engine slower than the decode law
+// predicts is attributed to prefill by this arithmetic, which overstates the
+// tokens computed and therefore understates the discount. That is the safe
+// direction: it charges an arrival more than it costs rather than less.
+func (m *capacityModel) notePrefill(
+	measuredMs, decodeOnlyMs, steps, chunk, promptTokensDispatched float64) {
+
+	if promptTokensDispatched <= 0 || steps <= 0 || chunk <= 0 ||
+		measuredMs <= 0 || decodeOnlyMs <= 0 {
+		return
+	}
+	perChunk := m.prefillStepMs(chunk) - m.c0
+	if math.IsInf(perChunk, 0) || perChunk <= 0 {
+		return
+	}
+	prefillMs := (measuredMs - decodeOnlyMs) * steps
+	if prefillMs < 0 {
+		prefillMs = 0
+	}
+	computed := prefillMs / perChunk * chunk
+	ratio := computed / promptTokensDispatched
+	if ratio > fsPrefillFractionMax {
+		ratio = fsPrefillFractionMax
+	}
+	if ratio < fsPrefillFractionMin {
+		ratio = fsPrefillFractionMin
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.prefillFraction += fsPrefillAlpha * (ratio - m.prefillFraction)
+}
+
+// prefillFractionOf reports the share of an arriving prompt's tokens the engine
+// is expected to compute. It starts at 1 -- charge the whole prompt -- so that
+// the first decisions of a process are made on the conservative assumption, and
+// moves only as evidence accumulates.
+func (m *capacityModel) prefillFractionOf() float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.prefillFraction
+}
+
 // An online correction of the DECODE LAW specifically was implemented and removed. The only
 // test available without an engine change -- no prefill queued at either end of
 // a status interval -- cannot certify that no prefill ran DURING it: statuses
@@ -122,11 +202,12 @@ func (m *capacityModel) correctionFactor() float64 {
 
 func newCapacityModel(p *fluidserveProfile, predictor *LatencyPredictor) *capacityModel {
 	return &capacityModel{
-		c0:         p.DecodeStepLaw.C0Ms,
-		cKv:        p.DecodeStepLaw.CKvMsPerToken,
-		cN:         p.DecodeStepLaw.CNMsPerRequest,
-		predictor:  predictor,
-		correction: 1.0,
+		c0:              p.DecodeStepLaw.C0Ms,
+		cKv:             p.DecodeStepLaw.CKvMsPerToken,
+		cN:              p.DecodeStepLaw.CNMsPerRequest,
+		predictor:       predictor,
+		correction:      1.0,
+		prefillFraction: 1.0,
 	}
 }
 

@@ -221,8 +221,9 @@ func testCapacity(t *testing.T) *capacityModel {
 	t.Helper()
 	return &capacityModel{
 		c0: 16.0, cKv: 1e-5, cN: 0.08,
-		predictor:  fixedPrefillPredictor(),
-		correction: 1.0,
+		predictor:       fixedPrefillPredictor(),
+		correction:      1.0,
+		prefillFraction: 1.0,
 	}
 }
 
@@ -326,6 +327,41 @@ func TestTheMeanStepCorrectionFollowsTheMeasurement(t *testing.T) {
 		m.noteResidual(base, 60000)
 	}
 	assert.InDelta(t, before, m.correctionFactor(), 1e-9)
+}
+
+func TestThePrefillFractionIsMeasuredFromTheWorkTheEngineDid(t *testing.T) {
+	// Charging an arriving prompt in full is wrong wherever prompts share
+	// prefixes, and wrong in the direction that refuses the heaviest class
+	// everywhere. What is measurable without touching the engine is the prefill
+	// time it actually spent over an interval: whatever the interval cost beyond
+	// the decode-only prediction, converted to chunks at the extra cost of a
+	// chunk-carrying step.
+	m := testCapacity(t)
+	assert.InDelta(t, 1.0, m.prefillFractionOf(), 1e-9,
+		"before any evidence the whole prompt is charged")
+
+	// 100 iterations whose decode-only cost is 20 ms each. One of them also
+	// carried a full 8192-token chunk, which costs 520 - 16 = 504 ms extra, so
+	// the mean comes out 5.04 ms above the decode-only figure. Over the same
+	// interval 81,920 prompt tokens were sent here, so a tenth of them were
+	// computed.
+	dec := m.decodeStepMs(200000, 20)
+	for i := 0; i < 2000; i++ {
+		m.notePrefill(dec+504.0/100, dec, 100, 8192, 81920)
+	}
+	assert.InDelta(t, 0.1, m.prefillFractionOf(), 0.01)
+
+	// An interval where the engine took exactly as long as the decode law says
+	// means nothing was computed, which is floored rather than taken as zero.
+	for i := 0; i < 5000; i++ {
+		m.notePrefill(dec, dec, 100, 8192, 81920)
+	}
+	assert.InDelta(t, fsPrefillFractionMin, m.prefillFractionOf(), 1e-3)
+
+	// Nothing dispatched means nothing to measure against.
+	before := m.prefillFractionOf()
+	m.notePrefill(dec+100, dec, 100, 8192, 0)
+	assert.InDelta(t, before, m.prefillFractionOf(), 1e-12)
 }
 
 // ---------------------------------------------------------------------------

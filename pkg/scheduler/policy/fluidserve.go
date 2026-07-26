@@ -435,6 +435,18 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	}
 	measured := elapsed / float64(steps)
 
+	// The same interval also measures how much of the prompts sent here the
+	// engine actually had to compute. The decode-only prediction is taken at the
+	// START of the interval, because that is the state the engine ran under for
+	// most of it, and anything the engine spent beyond it is prefill.
+	chunk := 8192.0
+	if view.cmsView.Metadata != nil && view.cmsView.Metadata.MaxNumBatchedTokens > 0 {
+		chunk = float64(view.cmsView.Metadata.MaxNumBatchedTokens)
+	}
+	p.capacity.notePrefill(measured,
+		p.capacity.decodeStepMs(prev.kvLogical, prev.nDecode),
+		float64(steps), chunk, p.registry.takePromptTokens(id))
+
 	return measured
 }
 
@@ -770,20 +782,22 @@ func (p *fluidserveDispatchPolicy) evaluate(
 
 	// State after admitting this request.
 	//
-	// The prompt is charged in full as prefill work, which over-states it: this
-	// workload replays byte-identical prompts, so most of a prompt's tokens are
-	// already resident and the engine skips them. Discounting it by the measured
-	// physical-to-logical ratio was implemented and reverted, because that ratio
-	// measures block SHARING AMONG RESIDENT REQUESTS, which is a different
-	// quantity from the cache hit an arriving prompt will get, and using it
-	// loosens admission for exactly the class whose arrival damages the others
-	// most: a 22k-token agent prompt would be charged as 2k and would then pass
-	// the test that is supposed to keep it away from requests on a tight budget.
-	// A discount needs a direct signal -- the engine reporting the hit length for
-	// a scheduled prefill -- not a proxy that happens to have a similar value.
-	// Until then the charge stays conservative in the direction that protects
-	// the requests already running.
-	newPending := f.pendingPrefill + float64(req.promptTokens)
+	// The prompt is charged only for the part the engine will actually compute,
+	// measured live (see capacityModel.notePrefill). Charging it in full is
+	// wrong by an order of magnitude wherever prompts share prefixes, and wrong
+	// in the direction that hurts: it made the heaviest class infeasible almost
+	// everywhere and produced a 28.8% rejection rate at an offered rate the
+	// fleet was carrying at 13.5 ms per iteration against budgets of 50 and 100.
+	//
+	// An earlier version discounted it by the physical-to-logical KV ratio and
+	// was reverted: that ratio measures block sharing among resident requests,
+	// which is a different quantity that merely happens to have a similar value.
+	// The measurement used now is of the prefill work the engine performed.
+	//
+	// The KV footprint below is NOT discounted, because the latency model counts
+	// logical tokens and a shared block is charged to every request holding it.
+	newPending := f.pendingPrefill +
+		float64(req.promptTokens)*p.capacity.prefillFractionOf()
 	newN := f.nDecode + 1
 	newKv := f.proj + cost
 	c.meanBefore = f.meanStep
@@ -977,7 +991,10 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 	if f != nil && f.chunk > 0 {
 		chunk = f.chunk
 	}
-	steps := prefillSteps(float64(req.promptTokens), chunk)
+	// Same discount as the admission test: the time to a first token is set by
+	// the work the engine does, not by the length of the prompt.
+	steps := prefillSteps(
+		float64(req.promptTokens)*p.capacity.prefillFractionOf(), chunk)
 	if steps <= 0 {
 		return 0
 	}
@@ -1108,6 +1125,8 @@ func (p *fluidserveDispatchPolicy) reportLoop() {
 	for range time.Tick(5 * time.Second) {
 		metrics.Gauge("scheduler_fluidserve_capacity_correction",
 			metrics.Labels{}).Set(p.capacity.correctionFactor())
+		metrics.Gauge("scheduler_fluidserve_prefill_fraction",
+			metrics.Labels{}).Set(p.capacity.prefillFractionOf())
 		byCount, bySurvival, byAge := p.registry.counters()
 		metrics.Gauge("scheduler_fluidserve_retired_total",
 			metrics.Labels{{Name: "reason", Value: "count"}}).Set(float64(byCount))
