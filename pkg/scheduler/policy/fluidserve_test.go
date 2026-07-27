@@ -2,6 +2,7 @@ package policy
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -367,40 +368,28 @@ func TestThePrefillFractionIsMeasuredFromTheWorkTheEngineDid(t *testing.T) {
 	assert.InDelta(t, before, m.prefillFractionOf(), 1e-12)
 }
 
-func TestTheDispatchRateIsMeasuredAgainstTheTimeItCovers(t *testing.T) {
-	// The accumulation is only read when an iteration time could be measured,
-	// and that is not on every status: an idle instance is skipped, as is a pair
-	// straddling a restart. Tokens keep accumulating across those skips, so the
-	// denominator has to be the time since the accumulator was last read rather
-	// than the length of one status interval. Getting that wrong reported a rate
-	// several times the real one and rejected half the offered load at a rate
-	// the fleet carries comfortably.
+func TestTheOfferedRateIsCountedOncePerRequest(t *testing.T) {
+	// The projection of future prefill work is built from what the workload
+	// asks for, not from what this scheduler recently sent. The gateway re-asks
+	// about a request it is holding, so counting per call would report a rate
+	// that rises with how long requests are held -- which is itself a
+	// consequence of the decisions this rate feeds.
 	r := testRegistry(t)
 	now := int64(1_000_000)
 
-	// First read establishes the mark; there is no interval yet.
-	tokens, elapsed := r.takePromptTokens("a", now)
-	assert.Zero(t, tokens)
-	assert.Zero(t, elapsed)
+	// Twenty requests of 10,000 tokens over two seconds is 100 tokens per ms.
+	for i := 0; i < 20; i++ {
+		r.noteArrival(fmt.Sprintf("r%d", i), 10000, now+int64(i*100))
+	}
+	r.noteArrival("last", 10000, now+2000)
+	assert.InDelta(t, 100.0, r.offeredRate(), 15.0)
 
-	r.noteArrival("x", now)
-	r.onDispatch("a", "x", 50, 20000, 8192, 100, now)
-	r.noteArrival("y", now)
-	r.onDispatch("a", "y", 50, 20000, 8192, 100, now)
-
-	// Read two seconds later, having skipped whatever happened in between:
-	// 40,000 tokens over 2,000 ms.
-	tokens, elapsed = r.takePromptTokens("a", now+2000)
-	assert.InDelta(t, 40000.0, tokens, 1e-9)
-	assert.InDelta(t, 2000.0, elapsed, 1e-9)
-
-	r.noteDispatchRate("a", tokens/elapsed)
-	assert.InDelta(t, 20.0, r.dispatchRateOf("a"), 1e-9)
-
-	// And the accumulator is emptied by the read, so the same tokens are not
-	// counted twice.
-	tokens, _ = r.takePromptTokens("a", now+3000)
-	assert.Zero(t, tokens)
+	// Re-asking about requests already seen adds nothing.
+	before := r.offeredRate()
+	for i := 0; i < 20; i++ {
+		r.noteArrival(fmt.Sprintf("r%d", i), 10000, now+3000)
+	}
+	assert.InDelta(t, before, r.offeredRate(), 1e-12)
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +406,7 @@ func testRegistry(t *testing.T) *requestRegistry {
 func TestProgressComesFromTheStepCounter(t *testing.T) {
 	r := testRegistry(t)
 	now := int64(1_000_000)
-	r.noteArrival("a", now)
+	r.noteArrival("a", 0, now)
 	// A 16k prompt needs two iterations at an 8192-token budget before the
 	// request produces anything.
 	r.onDispatch("e0", "a", 50, 16384, 8192, 1000, now)
@@ -436,7 +425,7 @@ func TestReconcileTrimsToTheEngineCount(t *testing.T) {
 	r := testRegistry(t)
 	now := int64(1_000_000)
 	for _, id := range []string{"a", "b", "c"} {
-		r.noteArrival(id, now)
+		r.noteArrival(id, 0, now)
 	}
 	// Dispatched at different times, so they have made different progress.
 	r.onDispatch("e0", "a", 50, 1000, 8192, 1000, now)
@@ -461,7 +450,7 @@ func TestReconcileTrimsToTheEngineCount(t *testing.T) {
 func TestRecordsDropWhenTheEngineRestarts(t *testing.T) {
 	r := testRegistry(t)
 	now := int64(1_000_000)
-	r.noteArrival("a", now)
+	r.noteArrival("a", 0, now)
 	r.onDispatch("e0", "a", 50, 1000, 8192, 5000, now)
 	// A restarted engine reports a step counter below what we recorded.
 	live := r.reconcile("e0", 1, 3, now+1000)
@@ -472,7 +461,7 @@ func TestRecordsDropWhenTheEngineRestarts(t *testing.T) {
 func TestRequestsPastEveryObservedLengthAreRetired(t *testing.T) {
 	r := testRegistry(t)
 	now := int64(1_000_000)
-	r.noteArrival("a", now)
+	r.noteArrival("a", 0, now)
 	r.onDispatch("e0", "a", 50, 100, 8192, 1000, now)
 	// The 50 ms tier tops out at 400 tokens in the test profile.
 	live := r.reconcile("e0", 5, 1000+1+500, now+20000)
@@ -484,7 +473,7 @@ func TestRequestsPastEveryObservedLengthAreRetired(t *testing.T) {
 func TestDecodeBudgetCarriesCreditForward(t *testing.T) {
 	r := testRegistry(t)
 	now := int64(1_000_000)
-	r.noteArrival("a", now)
+	r.noteArrival("a", 0, now)
 	r.onDispatch("e0", "a", 50, 100, 8192, 1000, now)
 
 	// First observation with progress starts the decode clock.
@@ -512,14 +501,14 @@ func TestEndToEndBudgetCountsQueueingTime(t *testing.T) {
 	now := int64(1_000_000)
 	// Tier 25 is scored end to end, so time spent before dispatch is spent
 	// budget, unlike the decode-mode tiers.
-	r.noteArrival("s", now)
+	r.noteArrival("s", 0, now)
 	r.onDispatch("e0", "s", 25, 20000, 8192, 1000, now+5000)
 
 	early := r.reconcile("e0", 1, 1010, now+6000)
 	require.Len(t, early, 1)
 
 	r2 := testRegistry(t)
-	r2.noteArrival("s", now)
+	r2.noteArrival("s", 0, now)
 	r2.onDispatch("e0", "s", 25, 20000, 8192, 1000, now+5000)
 	late := r2.reconcile("e0", 1, 1010, now+20000)
 	require.Len(t, late, 1)

@@ -82,7 +82,7 @@ func fill(p *fluidserveDispatchPolicy, inst string, tier, prompt, n int,
 	atStep int64, atMs int64) {
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("%s-%d-%d", inst, tier, i)
-		p.registry.noteArrival(id, atMs)
+		p.registry.noteArrival(id, 0, atMs)
 		p.registry.onDispatch(inst, id, tier, prompt, 8192, atStep, atMs)
 	}
 }
@@ -109,7 +109,7 @@ func TestAmongFeasibleInstancesTheClassGoesWhereItAlreadyIs(t *testing.T) {
 	fill(p, "mostlyChat", 50, 1000, 10, 4990, now)
 	for i := 0; i < 10; i++ {
 		id := fmt.Sprintf("b-%d", i)
-		p.registry.noteArrival(id, now)
+		p.registry.noteArrival(id, 0, now)
 		tier := 50
 		if i%2 == 1 {
 			tier = 100
@@ -296,10 +296,13 @@ func TestTheProjectionCountsPrefillThatHasNotArrivedYet(t *testing.T) {
 	assert.Zero(t, quiet.arrivingPrefill)
 	quietStep, quietCap := quiet.meanStep, quiet.capKv
 
-	// Now say prompts are arriving at 400 tokens per millisecond. Over a
-	// hundred iterations of roughly 25 ms that is a million tokens of prompt,
-	// and at the fixture's fraction of one, a million tokens of prefill.
-	p.registry.noteDispatchRate("a", 400)
+	// Now say prompts are arriving at the gateway fast enough to matter. The
+	// rate is the fleet's, spread over the instances, so it is fed the way the
+	// scheduler feeds it: one call per arriving request.
+	base := nowMillis()
+	for i := 0; i < 200; i++ {
+		p.registry.noteArrival(fmt.Sprintf("offered-%d", i), 20000, base+int64(i*10))
+	}
 	// Force a rebuild: the view is cached against the engine's status and the
 	// placements made since, and neither has moved.
 	v := views["a"]
@@ -329,7 +332,7 @@ func TestUnachievableRequestsDoNotPinInstanceCapacity(t *testing.T) {
 			usedGpu: 15000, stepID: 5000}),
 	}
 	// An end-to-end request that has already spent nearly its whole budget.
-	p.registry.noteArrival("doomed", now-15900)
+	p.registry.noteArrival("doomed", 0, now-15900)
 	p.registry.onDispatch("a", "doomed", 25, 20000, 8192, 4900, now-15900)
 
 	p.calculateMetrics(consts.InferTypeNeutral, fsRequest("probe", 50, 5000, 1000), views)
@@ -380,7 +383,7 @@ func TestHoldingUsesTheWholeFirstTokenBudget(t *testing.T) {
 	}
 	// Waited 2.5 s of a 5 s budget: far past the old quarter-budget cap, still
 	// leaving room for the prefill of a short prompt.
-	p.registry.noteArrival("waiting", now-2500)
+	p.registry.noteArrival("waiting", 0, now-2500)
 	assert.Nil(t, decide(p, fsRequest("waiting", 50, 5000, 1000), views))
 }
 
@@ -414,7 +417,7 @@ func TestRequestIsRejectedOnceNoPlacementCanMeetItsOwnBudget(t *testing.T) {
 		"a": fsView(fsViewOpts{id: "a", decodeReqs: 300, decodeTokens: 5_000_000,
 			pendingPre: 200_000, usedGpu: 570_000, stepID: 9000}),
 	}
-	p.registry.noteArrival("late", now-4900)
+	p.registry.noteArrival("late", 0, now-4900)
 	assert.Nil(t, decide(p, fsRequest("late", 50, 5000, 1000), views))
 	assert.True(t, p.admissionRejected("late"),
 		"the decision has to reach the gateway as a rejection, not as another wait")
@@ -433,7 +436,7 @@ func TestShedCanBeDisabledForAblation(t *testing.T) {
 		"a": fsView(fsViewOpts{id: "a", decodeReqs: 300, decodeTokens: 5_000_000,
 			pendingPre: 200_000, usedGpu: 570_000, stepID: 9000}),
 	}
-	p.registry.noteArrival("late", now-4900)
+	p.registry.noteArrival("late", 0, now-4900)
 	got := decide(p, fsRequest("late", 50, 5000, 1000), views)
 	require.NotNil(t, got)
 	assert.False(t, p.admissionRejected("late"))
@@ -512,20 +515,20 @@ func TestTheInstanceViewIsRebuiltWheneverItCouldHaveChanged(t *testing.T) {
 	views := map[string]*instanceViewScheduling{"a": v}
 	now := nowMillis()
 
-	first := p.flux(v, now)
+	first := p.flux(v, now, 1)
 	require.NotNil(t, first)
-	assert.Same(t, first, p.flux(v, now), "nothing changed, so nothing is rebuilt")
+	assert.Same(t, first, p.flux(v, now, 1), "nothing changed, so nothing is rebuilt")
 
 	// A placement changes what the instance holds even though the engine has
 	// not reported anything new.
 	require.NotNil(t, decide(p, fsRequest("r1", 50, 5000, 1000), views))
-	after := p.flux(v, now)
+	after := p.flux(v, now, 1)
 	assert.NotSame(t, first, after, "a placement has to invalidate the view")
 	assert.Len(t, after.live, 1)
 
 	// So does a new engine status.
 	v.cmsView.Status.StepId = 5100
-	assert.NotSame(t, after, p.flux(v, now), "a new status has to invalidate it too")
+	assert.NotSame(t, after, p.flux(v, now, 1), "a new status has to invalidate it too")
 }
 
 func TestDispatchIsRecordedForTheNextDecision(t *testing.T) {

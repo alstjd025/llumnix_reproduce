@@ -208,9 +208,10 @@ type fluidserveDispatchPolicy struct {
 // cachedFlux is one instance's state as of a particular engine status and a
 // particular number of placements onto it.
 type cachedFlux struct {
-	stepID  int64
-	version uint64
-	flux    *instanceFlux
+	stepID    int64
+	version   uint64
+	instances int
+	flux      *instanceFlux
 }
 
 // flux returns the instance's state, rebuilding it only when something it
@@ -228,7 +229,8 @@ type cachedFlux struct {
 // The staleness this admits is bounded by the same two events. It is not bounded
 // by time, deliberately: a view is reused only while neither the engine nor this
 // scheduler has done anything that would change it.
-func (p *fluidserveDispatchPolicy) flux(view *instanceViewScheduling, nowMs int64) *instanceFlux {
+func (p *fluidserveDispatchPolicy) flux(
+	view *instanceViewScheduling, nowMs int64, instances int) *instanceFlux {
 	if view.cmsView == nil || view.cmsView.Status == nil {
 		return nil
 	}
@@ -237,13 +239,14 @@ func (p *fluidserveDispatchPolicy) flux(view *instanceViewScheduling, nowMs int6
 	version := p.registry.version(id)
 
 	p.fluxMu.Lock()
-	if c, ok := p.fluxCache[id]; ok && c.stepID == stepID && c.version == version {
+	if c, ok := p.fluxCache[id]; ok && c.stepID == stepID && c.version == version &&
+		c.instances == instances {
 		p.fluxMu.Unlock()
 		return c.flux
 	}
 	p.fluxMu.Unlock()
 
-	f := p.buildFlux(view, nowMs)
+	f := p.buildFlux(view, nowMs, instances)
 	if f == nil {
 		return nil
 	}
@@ -251,7 +254,8 @@ func (p *fluidserveDispatchPolicy) flux(view *instanceViewScheduling, nowMs int6
 	if p.fluxCache == nil {
 		p.fluxCache = map[string]cachedFlux{}
 	}
-	p.fluxCache[id] = cachedFlux{stepID: stepID, version: version, flux: f}
+	p.fluxCache[id] = cachedFlux{stepID: stepID, version: version,
+		instances: instances, flux: f}
 	p.fluxMu.Unlock()
 	return f
 }
@@ -308,7 +312,7 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 	}
 
 	now := nowMillis()
-	arrived := p.registry.noteArrival(request.Id, now)
+	arrived := p.registry.noteArrival(request.Id, request.PromptNumTokens, now)
 
 	tier := request.TpotSloMs
 	nominal, expected, isE2E, budgetMs := p.registry.requestBudget(tier)
@@ -329,7 +333,7 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 	for _, view := range instanceViews {
 		observed := p.observeInstance(view)
 		view.schedulingCtx.fluidserveRequest = ctx
-		f := p.flux(view, now)
+		f := p.flux(view, now, len(instanceViews))
 		if f != nil {
 			f.observedStep = observed
 			if observed >= 0 {
@@ -364,8 +368,8 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 					Set(f.arrivingPrefill)
 				metrics.Gauge("scheduler_fluidserve_queued_prefill_tokens", lbl).
 					Set(f.pendingPrefill)
-				metrics.Gauge("scheduler_fluidserve_dispatch_rate_tokens_per_ms", lbl).
-					Set(p.registry.dispatchRateOf(f.id))
+				metrics.Gauge("scheduler_fluidserve_offered_rate_tokens_per_ms",
+					metrics.Labels{}).Set(p.registry.offeredRate())
 			}
 		}
 		view.schedulingCtx.fluidserveFlux = f
@@ -463,19 +467,9 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	if view.cmsView.Metadata != nil && view.cmsView.Metadata.MaxNumBatchedTokens > 0 {
 		chunk = float64(view.cmsView.Metadata.MaxNumBatchedTokens)
 	}
-	dispatched, since := p.registry.takePromptTokens(id, nowMillis())
 	p.capacity.notePrefill(measured,
 		p.capacity.decodeStepMs(prev.kvLogical, prev.nDecode),
-		float64(steps), chunk, dispatched)
-	// The same accumulation says how fast prompt work is arriving here, which is
-	// what the projection needs and what the engine's own queued figure cannot
-	// give: that queue drains inside one status interval, so read at a sampling
-	// instant it is usually near zero. The denominator is the time since this
-	// was last read, not the length of the status interval, because the two are
-	// only equal when every status yields a measurement.
-	if since > 0 {
-		p.registry.noteDispatchRate(id, dispatched/since)
-	}
+		float64(steps), chunk, p.registry.takePromptTokens(id))
 
 	p.obsMu.Lock()
 	if o, ok := p.lastObs[id]; ok && o.stepID == cur.stepID {
@@ -502,7 +496,7 @@ func (p *fluidserveDispatchPolicy) paceMs(id string, kvLogical, nDecode float64)
 }
 
 func (p *fluidserveDispatchPolicy) buildFlux(
-	view *instanceViewScheduling, nowMs int64) *instanceFlux {
+	view *instanceViewScheduling, nowMs int64, instances int) *instanceFlux {
 
 	if view.cmsView == nil || view.cmsView.Status == nil {
 		return nil
@@ -556,14 +550,26 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	// climbed to 1.48 on a fleet whose interactive classes were at 100%, and the
 	// rejections followed it.
 	//
+	// The rate is the fleet's OFFERED one spread over the instances, not this
+	// instance's own recent share of it. An instance's share over the next
+	// horizon is precisely what is being decided, so reading it off the recent
+	// past assumes the answer and closes a loop through the decision: a higher
+	// estimate tightens that instance's gate, which sends it less, which lowers
+	// the estimate. Measured, that settled in two different places on two runs
+	// of the same binary at the same offered rate, and the equal-weight
+	// attainment differed by 9.5 points between them with nothing else changed.
+	// Spread evenly it is a common background load that shifts no instance
+	// relative to another, which is also what stops it working against the
+	// class-affinity ordering.
+	//
 	// The horizon is counted in iterations, so it becomes a duration at the pace
 	// the instance is delivering. The result is not clamped here because the
 	// capacity model already caps the prefill-carrying share of the horizon at
 	// one: an engine cannot absorb more than one chunk per iteration however
 	// much arrives.
 	horizonMs := float64(p.cfg.horizonSteps) * p.paceMs(f.id, f.kvLogical, f.nDecode)
-	f.arrivingPrefill = p.registry.dispatchRateOf(f.id) * horizonMs *
-		p.capacity.prefillFractionOf()
+	f.arrivingPrefill = p.registry.offeredRate() / math.Max(float64(instances), 1) *
+		horizonMs * p.capacity.prefillFractionOf()
 	f.effectivePrefill = f.pendingPrefill + f.arrivingPrefill
 
 	// The pace the instance is delivering right now. It is needed before the

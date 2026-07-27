@@ -187,17 +187,28 @@ type requestRegistry struct {
 	// instance since the last time the measurement read it, which is what the
 	// prefill-fraction estimate is measured against.
 	promptTokensSince map[string]float64
-	// dispatchRate[instanceID] is the same quantity smoothed and expressed per
-	// millisecond. It is what says how much prefill work will ARRIVE at an
-	// instance over a planning horizon, as opposed to how much is queued there
-	// now, and the two are different by a large factor: a queue drains within one
-	// status interval, so the queued figure read at a sampling instant is
-	// usually near zero while the engine spends a real share of every interval
-	// on prefill.
-	dispatchRate map[string]float64
-	// lastDrainMs[instanceID] is when the accumulator above was last read, which
-	// is the only honest denominator for the rate.
-	lastDrainMs map[string]int64
+	// The offered rate: prompt tokens per millisecond ARRIVING at the gateway,
+	// counted once per request rather than once per retry, and smoothed.
+	//
+	// This is what the projection of future prefill work is built from, and the
+	// reason it is the offered figure rather than the dispatched one is that the
+	// dispatched figure is this scheduler's own output. Estimating "how much
+	// work will arrive at instance i" from "how much this scheduler recently
+	// sent to instance i" closes a loop: a higher estimate tightens that
+	// instance's gate, which sends it less, which lowers the estimate. The loop
+	// has gain and delay and no external observation to anchor it, and measured
+	// it settled in two different places on two runs of the same binary at the
+	// same offered rate -- 70-80k tokens projected in one and 17-37k in the
+	// other, with the prediction sitting at 2.4 times the measured iteration
+	// time for the whole of the first and twice the rejections to show for it.
+	//
+	// Occupancy and iteration time are also consequences of this scheduler's
+	// decisions, and they are safe to use for the opposite reason: the engine
+	// observes them and reports them back, so a wrong belief is corrected. The
+	// dispatch ledger has no such observation behind it.
+	offeredTokens     float64
+	offeredRateEwma   float64
+	offeredLastConvMs int64
 
 	// Counters exported for telemetry.
 	retiredByCount    int64
@@ -213,21 +224,36 @@ func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestReg
 		arrivedMs:         map[string]int64{},
 		dispatchVersion:   map[string]uint64{},
 		promptTokensSince: map[string]float64{},
-		dispatchRate:      map[string]float64{},
-		lastDrainMs:       map[string]int64{},
 	}
 }
 
 // noteArrival records when a request first asked to be placed and returns that
 // time. The gateway retries the same request id while it holds it, so the first
 // call is the arrival and later calls report how long it has been waiting.
-func (r *requestRegistry) noteArrival(requestID string, nowMs int64) int64 {
+//
+// The first call is also where the offered rate is counted, for the same
+// reason: it is the one call per request, so what accumulates here is what the
+// workload asked for rather than how often the gateway asked again.
+func (r *requestRegistry) noteArrival(requestID string, promptTokens int, nowMs int64) int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t, ok := r.arrivedMs[requestID]; ok {
 		return t
 	}
 	r.arrivedMs[requestID] = nowMs
+	r.offeredTokens += float64(promptTokens)
+	if r.offeredLastConvMs == 0 {
+		r.offeredLastConvMs = nowMs
+	} else if elapsed := float64(nowMs - r.offeredLastConvMs); elapsed >= fsOfferedWindowMs {
+		rate := r.offeredTokens / elapsed
+		if r.offeredRateEwma == 0 {
+			r.offeredRateEwma = rate
+		} else {
+			r.offeredRateEwma += fsOfferedRateAlpha * (rate - r.offeredRateEwma)
+		}
+		r.offeredTokens = 0
+		r.offeredLastConvMs = nowMs
+	}
 	r.gcLocked(nowMs)
 	return nowMs
 }
@@ -446,60 +472,37 @@ func (r *requestRegistry) forget(requestID string) {
 }
 
 // takePromptTokens returns and clears the prompt tokens placed on an instance
-// since the previous call, together with the wall time that accumulation
-// actually covers.
+// since the previous call.
 //
-// The elapsed time has to be measured here rather than taken from the engine's
-// status timestamps. The caller only reaches this point when it could measure an
-// iteration time, and it cannot on every status: an instance with nothing
-// decoding is skipped, as is a pair that straddles a restart. Tokens keep
-// accumulating across those skips, so dividing them by the length of the last
-// status interval alone reports a rate several times the real one. Measured,
-// that put the projected arrivals at 284,000 tokens an instance where the
-// offered load justified about 15,000, and the fleet rejected half of everything
-// at a rate it carries comfortably.
-func (r *requestRegistry) takePromptTokens(instanceID string, nowMs int64) (tokens, elapsedMs float64) {
+// This feeds the prefill-fraction estimate only, which is a ratio of two
+// quantities measured over the same stretch -- the prefill work the engine did
+// there, and the prompt tokens sent there. Both move together when the
+// scheduler sends more or less, so the ratio is a property of the workload
+// rather than of the decisions, which is why this one is safe to build from the
+// dispatch ledger where a rate is not.
+func (r *requestRegistry) takePromptTokens(instanceID string) float64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	tokens = r.promptTokensSince[instanceID]
+	v := r.promptTokensSince[instanceID]
 	r.promptTokensSince[instanceID] = 0
-	if last, ok := r.lastDrainMs[instanceID]; ok {
-		elapsedMs = float64(nowMs - last)
-	}
-	r.lastDrainMs[instanceID] = nowMs
-	return tokens, elapsedMs
+	return v
 }
 
 const (
-	// Weight of one interval in the dispatch rate. The intervals are status
-	// pulls, so a couple a second per instance; this settles over roughly ten
-	// seconds, which is the timescale the offered rate actually moves on and
-	// short enough that an instance which has just started receiving work is
-	// charged for it before the horizon it was admitted against has elapsed.
-	fsDispatchRateAlpha = 0.05
+	// Shortest stretch of arrivals converted into a rate. Below this the divisor
+	// is small enough that one long prompt reads as a burst.
+	fsOfferedWindowMs = 1000
+	// Weight of one such window. At a one-second window this settles over about
+	// twenty seconds, which is the timescale an offered rate moves on in the
+	// dynamic trace and slow enough not to follow one arrival.
+	fsOfferedRateAlpha = 0.05
 )
 
-// noteDispatchRate folds one interval's arrivals into the smoothed rate.
-func (r *requestRegistry) noteDispatchRate(instanceID string, tokensPerMs float64) {
-	if tokensPerMs < 0 || math.IsInf(tokensPerMs, 0) || math.IsNaN(tokensPerMs) {
-		return
-	}
+// offeredRate reports the prompt tokens per millisecond arriving at the fleet.
+func (r *requestRegistry) offeredRate() float64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	prev, seen := r.dispatchRate[instanceID]
-	if !seen {
-		r.dispatchRate[instanceID] = tokensPerMs
-		return
-	}
-	r.dispatchRate[instanceID] = prev + fsDispatchRateAlpha*(tokensPerMs-prev)
-}
-
-// dispatchRateOf reports the prompt tokens per millisecond this instance is
-// being sent.
-func (r *requestRegistry) dispatchRateOf(instanceID string) float64 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.dispatchRate[instanceID]
+	return r.offeredRateEwma
 }
 
 // version reports how many placements this instance has received.
