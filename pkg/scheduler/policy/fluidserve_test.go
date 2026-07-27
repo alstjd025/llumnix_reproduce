@@ -367,6 +367,42 @@ func TestThePrefillFractionIsMeasuredFromTheWorkTheEngineDid(t *testing.T) {
 	assert.InDelta(t, before, m.prefillFractionOf(), 1e-12)
 }
 
+func TestTheDispatchRateIsMeasuredAgainstTheTimeItCovers(t *testing.T) {
+	// The accumulation is only read when an iteration time could be measured,
+	// and that is not on every status: an idle instance is skipped, as is a pair
+	// straddling a restart. Tokens keep accumulating across those skips, so the
+	// denominator has to be the time since the accumulator was last read rather
+	// than the length of one status interval. Getting that wrong reported a rate
+	// several times the real one and rejected half the offered load at a rate
+	// the fleet carries comfortably.
+	r := testRegistry(t)
+	now := int64(1_000_000)
+
+	// First read establishes the mark; there is no interval yet.
+	tokens, elapsed := r.takePromptTokens("a", now)
+	assert.Zero(t, tokens)
+	assert.Zero(t, elapsed)
+
+	r.noteArrival("x", now)
+	r.onDispatch("a", "x", 50, 20000, 8192, 100, now)
+	r.noteArrival("y", now)
+	r.onDispatch("a", "y", 50, 20000, 8192, 100, now)
+
+	// Read two seconds later, having skipped whatever happened in between:
+	// 40,000 tokens over 2,000 ms.
+	tokens, elapsed = r.takePromptTokens("a", now+2000)
+	assert.InDelta(t, 40000.0, tokens, 1e-9)
+	assert.InDelta(t, 2000.0, elapsed, 1e-9)
+
+	r.noteDispatchRate("a", tokens/elapsed)
+	assert.InDelta(t, 20.0, r.dispatchRateOf("a"), 1e-9)
+
+	// And the accumulator is emptied by the read, so the same tokens are not
+	// counted twice.
+	tokens, _ = r.takePromptTokens("a", now+3000)
+	assert.Zero(t, tokens)
+}
+
 // ---------------------------------------------------------------------------
 // C2: registry
 // ---------------------------------------------------------------------------

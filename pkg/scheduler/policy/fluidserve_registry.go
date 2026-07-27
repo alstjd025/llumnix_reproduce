@@ -195,6 +195,9 @@ type requestRegistry struct {
 	// usually near zero while the engine spends a real share of every interval
 	// on prefill.
 	dispatchRate map[string]float64
+	// lastDrainMs[instanceID] is when the accumulator above was last read, which
+	// is the only honest denominator for the rate.
+	lastDrainMs map[string]int64
 
 	// Counters exported for telemetry.
 	retiredByCount    int64
@@ -211,6 +214,7 @@ func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestReg
 		dispatchVersion:   map[string]uint64{},
 		promptTokensSince: map[string]float64{},
 		dispatchRate:      map[string]float64{},
+		lastDrainMs:       map[string]int64{},
 	}
 }
 
@@ -442,13 +446,28 @@ func (r *requestRegistry) forget(requestID string) {
 }
 
 // takePromptTokens returns and clears the prompt tokens placed on an instance
-// since the previous call, so that one measurement interval is read once.
-func (r *requestRegistry) takePromptTokens(instanceID string) float64 {
+// since the previous call, together with the wall time that accumulation
+// actually covers.
+//
+// The elapsed time has to be measured here rather than taken from the engine's
+// status timestamps. The caller only reaches this point when it could measure an
+// iteration time, and it cannot on every status: an instance with nothing
+// decoding is skipped, as is a pair that straddles a restart. Tokens keep
+// accumulating across those skips, so dividing them by the length of the last
+// status interval alone reports a rate several times the real one. Measured,
+// that put the projected arrivals at 284,000 tokens an instance where the
+// offered load justified about 15,000, and the fleet rejected half of everything
+// at a rate it carries comfortably.
+func (r *requestRegistry) takePromptTokens(instanceID string, nowMs int64) (tokens, elapsedMs float64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	v := r.promptTokensSince[instanceID]
+	tokens = r.promptTokensSince[instanceID]
 	r.promptTokensSince[instanceID] = 0
-	return v
+	if last, ok := r.lastDrainMs[instanceID]; ok {
+		elapsedMs = float64(nowMs - last)
+	}
+	r.lastDrainMs[instanceID] = nowMs
+	return tokens, elapsedMs
 }
 
 const (

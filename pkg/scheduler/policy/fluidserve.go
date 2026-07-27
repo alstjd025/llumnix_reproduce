@@ -364,6 +364,8 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 					Set(f.arrivingPrefill)
 				metrics.Gauge("scheduler_fluidserve_queued_prefill_tokens", lbl).
 					Set(f.pendingPrefill)
+				metrics.Gauge("scheduler_fluidserve_dispatch_rate_tokens_per_ms", lbl).
+					Set(p.registry.dispatchRateOf(f.id))
 			}
 		}
 		view.schedulingCtx.fluidserveFlux = f
@@ -461,15 +463,19 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	if view.cmsView.Metadata != nil && view.cmsView.Metadata.MaxNumBatchedTokens > 0 {
 		chunk = float64(view.cmsView.Metadata.MaxNumBatchedTokens)
 	}
-	dispatched := p.registry.takePromptTokens(id)
+	dispatched, since := p.registry.takePromptTokens(id, nowMillis())
 	p.capacity.notePrefill(measured,
 		p.capacity.decodeStepMs(prev.kvLogical, prev.nDecode),
 		float64(steps), chunk, dispatched)
-	// The same interval says how fast prompt work is arriving here, which is
+	// The same accumulation says how fast prompt work is arriving here, which is
 	// what the projection needs and what the engine's own queued figure cannot
 	// give: that queue drains inside one status interval, so read at a sampling
-	// instant it is usually near zero.
-	p.registry.noteDispatchRate(id, dispatched/elapsed)
+	// instant it is usually near zero. The denominator is the time since this
+	// was last read, not the length of the status interval, because the two are
+	// only equal when every status yields a measurement.
+	if since > 0 {
+		p.registry.noteDispatchRate(id, dispatched/since)
+	}
 
 	p.obsMu.Lock()
 	if o, ok := p.lastObs[id]; ok && o.stepID == cur.stepID {
