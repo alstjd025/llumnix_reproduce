@@ -663,3 +663,30 @@ func TestIdleInstancesReportNoIterationTime(t *testing.T) {
 	v.cmsView.Status.TimestampMs = 1_003_000
 	assert.Equal(t, -1.0, p.observeInstance(v))
 }
+
+func TestFractionalPrefillIsNotRoundedUpOverTheHorizon(t *testing.T) {
+	// The quantity is how many of the next hundred iterations carry prefill work,
+	// so a fractional answer is meaningful and rounding it up charges work that
+	// will not happen. Measured at 4800 rpm the engines ran at 32-40 ms while the
+	// model predicted 44.7-46.7 against a gate of 45, and the whole difference was
+	// this rounding: the arriving prefill was 1.2-1.6 chunks and was charged as 2.
+	//
+	// Below one chunk the count stays at 1, because there the caller prices the
+	// partial chunk itself; letting the count fall below 1 as well would discount
+	// the same work twice.
+	assert.InDelta(t, 1.0, prefillSteps(4096, 8192), 1e-9,
+		"a partial chunk is one step; its cost is priced by the caller")
+	assert.InDelta(t, 1.0, prefillSteps(8192, 8192), 1e-9)
+	assert.InDelta(t, 1.401, prefillSteps(11478, 8192), 1e-3,
+		"beyond one chunk the count carries the fraction rather than rounding up")
+	assert.Zero(t, prefillSteps(0, 8192))
+
+	// What that is worth on the predicted mean, at the numbers the run produced.
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	const chunk, horizon = 8192.0, 100
+	rounded := p.capacity.meanStepMs(400_000, 20, 2*chunk, chunk, horizon)
+	actual := p.capacity.meanStepMs(400_000, 20, 11478, chunk, horizon)
+	assert.Greater(t, rounded-actual, 2.0,
+		"rounding 1.4 chunks up to 2 adds more than 2 ms to the predicted mean, "+
+			"which is the margin the gate was being missed by")
+}

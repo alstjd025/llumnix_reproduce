@@ -256,15 +256,37 @@ func (m *capacityModel) prefillStepMs(chunk float64) float64 {
 	return v
 }
 
-// prefillSteps is how many iterations it takes to absorb this much queued
-// prefill work at the engine's token budget. vLLM's chunked prefill fills the
-// budget on every step while any prefill is waiting, so the count is simply the
-// work divided by the chunk size, rounded up.
+// prefillSteps is how many of the next `horizon` iterations carry prefill work,
+// given how much of it there is. vLLM's chunked prefill fills the token budget on
+// every step while any prefill is waiting, so the count is the work divided by
+// the chunk size.
+//
+// It is NOT rounded up, and that matters at exactly the load where the decision
+// is hard. Rounding up is right for a single step -- an iteration either runs or
+// it does not -- but this quantity is spread over a hundred iterations, and over
+// a hundred iterations 1.4 chunk-carrying steps is 1.4, not 2. Charging the extra
+// 0.6 of a step adds (t_pre(chunk) - c0) * 0.6 / horizon to the predicted mean,
+// which is 3.0 ms here.
+//
+// Measured, that 3.0 ms decided the outcome. At 4800 rpm the engines ran at 32-40
+// ms while the model predicted 44.7-46.7 against a gate of 45, so nothing was ever
+// feasible and 86.8% of all decisions were to hold the request at the gateway. The
+// same run shows the mechanism directly: in the one interval where the arriving
+// prefill fell to 0.85 chunks and the ceiling therefore stopped adding a whole
+// step, the prediction dropped to 41.0 ms and the instance became admissible again.
+//
+// The pairing with the caller's cost term is what makes both regimes right. Below
+// one chunk the caller prices the PARTIAL chunk, so the count has to stay at 1 or
+// the same work would be discounted twice. Above one chunk the caller prices a
+// full chunk, so the count carries the fraction.
 func prefillSteps(pendingTokens, chunk float64) float64 {
 	if pendingTokens <= 0 || chunk <= 0 {
 		return 0
 	}
-	return math.Ceil(pendingTokens / chunk)
+	if pendingTokens <= chunk {
+		return 1
+	}
+	return pendingTokens / chunk
 }
 
 // meanStepMs is the average iteration time over the next `horizon` iterations.
