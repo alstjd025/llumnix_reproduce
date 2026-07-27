@@ -103,6 +103,7 @@ type fluidserveConfig struct {
 	enableShed     bool
 	enableAffinity bool
 	enableFlux     bool
+	classHarm      bool
 }
 
 // fluidserveRequest is the per-request context the selector needs. Filters and
@@ -1132,10 +1133,14 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 	//
 	// An empty instance is charged nothing: it belongs to no class yet, and it is
 	// the placement that costs least by any reading.
-	// Gated on the same switch as the feasible-set ordering, because it is the
-	// same mechanism: class affinity, applied where nothing is feasible. Turning
-	// affinity off has to turn off both or the ablation measures a mixture.
-	if p.cfg.enableAffinity && len(f.live) > 0 {
+	// Two switches, and they are separate on purpose. --fluidserve-enable-affinity
+	// turns off ALL class preference, which is the ablation that asks where the
+	// separation comes from at all. --fluidserve-class-harm turns off only this
+	// term, which is the ablation that asks what it is worth to protect an
+	// instance whose own class has already started missing -- a question the
+	// feasible-set ordering cannot answer, because in that regime nothing is
+	// feasible and that ordering never runs.
+	if p.cfg.enableAffinity && p.cfg.classHarm && len(f.live) > 0 {
 		harm += (1 - classShare(f, tier)) * fsHarmCap
 	}
 	return harm
@@ -1311,6 +1316,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		enableShed:     p.FluidserveEnableShed,
 		enableAffinity: p.FluidserveEnableAffinity,
 		enableFlux:     p.FluidserveEnableFlux,
+		classHarm:      p.FluidserveClassHarm,
 	}
 	if cfg.horizonSteps <= 0 {
 		panic("--fluidserve-horizon-steps must be positive")
@@ -1349,9 +1355,11 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	}
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
-		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, flux=%v, budgets %q",
+		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, flux=%v, classharm=%v, "+
+		"budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
-		cfg.enableShed, cfg.enableAffinity, cfg.enableFlux, p.FluidserveClassBudgets)
+		cfg.enableShed, cfg.enableAffinity, cfg.enableFlux, cfg.classHarm,
+		p.FluidserveClassBudgets)
 
 	go policy.reportLoop()
 	return policy

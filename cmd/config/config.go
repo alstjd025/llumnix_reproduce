@@ -273,6 +273,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveEnableShed     bool
 	FluidserveEnableAffinity bool
 	FluidserveEnableFlux     bool
+	FluidserveClassHarm      bool
 
 	// Adaptive PD
 	EnableAdaptivePD             bool
@@ -405,6 +406,14 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 	flags.BoolVar(&c.FluidserveEnableFlux, "fluidserve-enable-flux", true,
 		"Project occupancy over the horizon. Disabling it judges instances on their "+
 			"current occupancy alone, which is the level-based baseline.")
+	flags.BoolVar(&c.FluidserveClassHarm, "fluidserve-class-harm", true,
+		"When no instance can take a request at its promised pace, charge each "+
+			"candidate for the share of it that belongs to OTHER classes. Disabling "+
+			"it leaves the damage estimate as the sum over incumbents that can still "+
+			"meet their budgets, which reads an instance whose class has already "+
+			"begun to miss as costing nothing and therefore keeps sending it more. "+
+			"It is a separate switch from --fluidserve-enable-affinity so that the "+
+			"feasible-set ordering and this can be told apart in an ablation.")
 
 	flags.BoolVar(&c.EnableAdaptivePD, "enable-adaptive-pd", consts.DefaultEnableAdaptivePD, "Llumnix enable adaptive pd")
 	flags.Float32Var(&c.TpotMigrateOutFloorThreshold, "tpot-migrate-out-floor-threshold", consts.DefaultTpotMigrateOutFloorThreshold, "Llumnix tpot migrate out floor threshold")

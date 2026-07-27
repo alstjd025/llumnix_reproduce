@@ -82,6 +82,10 @@ FLUIDSERVE_FLAGS = {
 #                      the difference is what their capacity cost the others
 #   FS_AFFINITY=false  among the instances that can take a request, ignore which
 #                      class each is already holding and route on free space
+#   FS_CLASS_HARM=false  when nothing is feasible, stop charging a candidate for
+#                      the share of it that belongs to other classes.  Separate
+#                      from FS_AFFINITY because the feasible-set ordering never
+#                      runs in the regime this term is for.
 #   FS_FLUX=false      judge instances on current occupancy instead of projecting
 # The point of each is to attribute a result to a mechanism rather than to the
 # policy as a whole.  FS_PEND=false FS_SHED=false is FluidServe as pure routing,
@@ -91,6 +95,7 @@ FLUIDSERVE_ABLATIONS = {
     "FS_SHED": "--fluidserve-enable-shed",
     "FS_AFFINITY": "--fluidserve-enable-affinity",
     "FS_FLUX": "--fluidserve-enable-flux",
+    "FS_CLASS_HARM": "--fluidserve-class-harm",
     "FS_HORIZON": "--fluidserve-horizon-steps",
     "FS_Z": "--fluidserve-z-safety",
 }
@@ -404,6 +409,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-enable-shed", "shed"),
         ("--fluidserve-enable-affinity", "affinity"),
         ("--fluidserve-enable-flux", "flux"),
+        ("--fluidserve-class-harm", "classharm"),
         ("--fluidserve-z-safety", "z"),
     ]
     bad = []

@@ -31,6 +31,7 @@ func fsPolicy(t *testing.T, budgets string, mutate func(*fluidserveConfig)) *flu
 		enableShed:     true,
 		enableAffinity: true,
 		enableFlux:     true,
+		classHarm:      true,
 	}
 	if mutate != nil {
 		mutate(&cfg)
