@@ -269,7 +269,7 @@ func TestHeavyWorkCannotJoinRequestsThatAreUsingTheirSlack(t *testing.T) {
 		"the instance is not simply closed")
 }
 
-func TestTheProjectionCountsPrefillThatHasNotArrivedYet(t *testing.T) {
+func TestTheProjectionCountsPrefillTheEngineIsObservedCarrying(t *testing.T) {
 	// The engine drains its prefill queue well inside one status pull, so what
 	// it reports queued at a sampling instant is usually near zero while it
 	// spends a real share of every iteration over the horizon on prompts that
@@ -278,45 +278,68 @@ func TestTheProjectionCountsPrefillThatHasNotArrivedYet(t *testing.T) {
 	// multiplier on the whole mean, which scales the KV and batch terms with it
 	// and shrinks the admissible occupancy far more than the missing prefill
 	// would.
+	//
+	// The projection is therefore built from how long the engine's iterations
+	// ACTUALLY took against what the decode law alone accounts for. Two
+	// properties are asserted here and the second is the reason the earlier
+	// rate-driven forms were replaced: the projection has to be per instance, so
+	// that an instance carrying prefill is distinguished from one that is not.
+	// A fleet-wide average raises every instance's prediction together, which
+	// cannot order candidates and can only close the whole fleet at once.
 	p := fsPolicy(t, "25:e2e:16000,50:decode", nil)
-	views := map[string]*instanceViewScheduling{
-		"a": fsView(fsViewOpts{id: "a", decodeReqs: 20, decodeTokens: 400_000,
-			usedGpu: 120_000, stepID: 5000}),
-	}
+	busyView := fsView(fsViewOpts{id: "busy", decodeReqs: 20, decodeTokens: 400_000,
+		usedGpu: 120_000, stepID: 5000})
+	calmView := fsView(fsViewOpts{id: "calm", decodeReqs: 20, decodeTokens: 400_000,
+		usedGpu: 120_000, stepID: 5000})
+	views := map[string]*instanceViewScheduling{"busy": busyView, "calm": calmView}
 	probe := fsRequest("probe", 50, 5000, 1000)
-	// Requests on the instance, so that it is held to a budget at all and its
+	// Requests on both instances, so each is held to a budget at all and its
 	// admissible occupancy is a finite number.
-	fill(p, "a", 50, 1000, 20, 4990, nowMillis())
+	now := nowMillis()
+	fill(p, "busy", 50, 1000, 20, 4990, now)
+	fill(p, "calm", 50, 1000, 20, 4990, now)
+	for _, v := range views {
+		v.cmsView.Status.TimestampMs = now
+	}
 
-	// Nothing has been sent here yet, so nothing is projected and the
-	// prediction is the decode-only cost.
+	// First status: no interval has elapsed yet, so nothing has been measured
+	// and nothing is projected.
 	p.calculateMetrics(consts.InferTypeNeutral, probe, views)
-	quiet := views["a"].schedulingCtx.fluidserveFlux
+	quiet := views["busy"].schedulingCtx.fluidserveFlux
 	require.NotNil(t, quiet)
 	assert.Zero(t, quiet.arrivingPrefill)
 	quietStep, quietCap := quiet.meanStep, quiet.capKv
 
-	// Now say prompts are arriving at the gateway fast enough to matter. The
-	// rate is the fleet's, spread over the instances, so it is fed the way the
-	// scheduler feeds it: one call per arriving request.
-	base := nowMillis()
-	for i := 0; i < 200; i++ {
-		p.registry.noteArrival(fmt.Sprintf("offered-%d", i), 20000, base+int64(i*10))
+	// Second status. Both instances executed 100 iterations. The decode-only law
+	// accounts for `decodeOnly` of each; "busy" took three times that, so two
+	// thirds of its engine time went somewhere the decode law does not explain,
+	// which is prefill. "calm" took exactly what the law predicts.
+	decodeOnly := p.capacity.decodeStepMs(400_000, 20)
+	const steps = 100
+	for id, v := range views {
+		v.cmsView.Status.StepId = 5100
+		mean := decodeOnly
+		if id == "busy" {
+			mean = 3 * decodeOnly
+		}
+		v.cmsView.Status.TimestampMs = now + int64(mean*steps)
 	}
-	// Force a rebuild: the view is cached against the engine's status and the
-	// placements made since, and neither has moved.
-	v := views["a"]
-	v.cmsView.Status.StepId = 5100
 	p.calculateMetrics(consts.InferTypeNeutral, probe, views)
-	busy := views["a"].schedulingCtx.fluidserveFlux
+	busy := views["busy"].schedulingCtx.fluidserveFlux
+	calm := views["calm"].schedulingCtx.fluidserveFlux
 	require.NotNil(t, busy)
+	require.NotNil(t, calm)
 
-	assert.Greater(t, busy.arrivingPrefill, 100_000.0,
-		"a large arrival rate has to show up as prefill work over the horizon")
+	assert.Greater(t, busy.arrivingPrefill, 0.0,
+		"engine time the decode law does not account for is prefill over the horizon")
+	assert.Zero(t, calm.arrivingPrefill,
+		"an instance running at the decode law is carrying no prefill")
 	assert.Greater(t, busy.meanStep, quietStep,
 		"and the predicted iteration has to reflect it")
 	assert.Less(t, busy.capKv, quietCap,
 		"so the instance may hold less while still meeting the same budget")
+	assert.Greater(t, calm.capKv, busy.capKv,
+		"the projection has to separate the two instances, not raise both together")
 }
 
 func TestUnachievableRequestsDoNotPinInstanceCapacity(t *testing.T) {

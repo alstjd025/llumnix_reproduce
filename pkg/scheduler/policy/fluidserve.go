@@ -368,6 +368,12 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 					Set(f.arrivingPrefill)
 				metrics.Gauge("scheduler_fluidserve_queued_prefill_tokens", lbl).
 					Set(f.pendingPrefill)
+				metrics.Gauge("scheduler_fluidserve_prefill_duty", lbl).
+					Set(p.prefillDutyOf(f.id))
+				// Telemetry only. This series is how a run is checked for how far
+				// past the fleet's capacity it was driven; no decision reads it,
+				// which is the whole point of the change that removed it from the
+				// projection.
 				metrics.Gauge("scheduler_fluidserve_offered_rate_tokens_per_ms",
 					metrics.Labels{}).Set(p.registry.offeredRate())
 			}
@@ -391,7 +397,29 @@ type stepObservation struct {
 	// planning horizon, which is counted in iterations, can be converted into
 	// the milliseconds over which arrivals accumulate.
 	meanMs float64
+	// prefillDuty is the share of this instance's engine time spent on prefill,
+	// smoothed over recent intervals. See notePrefillDuty.
+	prefillDuty float64
 }
+
+const (
+	// Weight of one status interval in the per-instance prefill duty cycle.
+	//
+	// A status interval is about 500 ms and carries roughly 25 iterations, of
+	// which only a few carry a prefill chunk, so a single interval is a noisy
+	// estimate of the share. At 0.1 the effective window is around ten intervals
+	// (five seconds, some 250 iterations), which averages that noise out while
+	// still following a change in the mix within a few seconds.
+	//
+	// A fast filter is safe here in a way it was not for the step correction,
+	// and the reason is the sign of the loop it sits in. Charging more prefill
+	// admits less work to this instance, which makes the engine spend LESS time
+	// on prefill, which lowers the estimate: the feedback is negative and
+	// settles. The correction's loop and the offered-rate loop it replaces were
+	// positive in the rejection rate, which is why they needed a time constant
+	// far slower than the loop to avoid running away.
+	fsPrefillDutyAlpha = 0.1
+)
 
 // observeInstance measures how long the engine's iterations actually took since
 // the previous status, and returns that mean in milliseconds (or -1 when it
@@ -467,18 +495,70 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	if view.cmsView.Metadata != nil && view.cmsView.Metadata.MaxNumBatchedTokens > 0 {
 		chunk = float64(view.cmsView.Metadata.MaxNumBatchedTokens)
 	}
-	p.capacity.notePrefill(measured,
-		p.capacity.decodeStepMs(prev.kvLogical, prev.nDecode),
+	decodeOnly := p.capacity.decodeStepMs(prev.kvLogical, prev.nDecode)
+	p.capacity.notePrefill(measured, decodeOnly,
 		float64(steps), chunk, p.registry.takePromptTokens(id))
+
+	// The same difference measures how much of THIS instance's engine time went
+	// to prefill rather than decode. Everything the engine did beyond what the
+	// decode law accounts for is prefill work, by the same attribution
+	// notePrefill uses; the difference is that this is kept per instance and as
+	// a rate, which is what the projection below needs.
+	duty := 0.0
+	if measured > decodeOnly && measured > 0 {
+		duty = (measured - decodeOnly) / measured
+		if duty > 1 {
+			duty = 1
+		}
+	}
 
 	p.obsMu.Lock()
 	if o, ok := p.lastObs[id]; ok && o.stepID == cur.stepID {
 		o.meanMs = measured
+		if prev.prefillDuty > 0 || duty > 0 {
+			o.prefillDuty = prev.prefillDuty + fsPrefillDutyAlpha*(duty-prev.prefillDuty)
+		}
 		p.lastObs[id] = o
 	}
 	p.obsMu.Unlock()
 
 	return measured
+}
+
+// prefillDutyOf is the share of engine time instance `id` has recently spent on
+// prefill. Zero before anything has been measured, which is the permissive
+// direction: a fresh process starts by admitting more rather than less, and the
+// first measurement arrives within one status interval.
+func (p *fluidserveDispatchPolicy) prefillDutyOf(id string) float64 {
+	p.obsMu.Lock()
+	defer p.obsMu.Unlock()
+	if o, ok := p.lastObs[id]; ok {
+		return o.prefillDuty
+	}
+	return 0
+}
+
+// carriedPrefillTokens converts an observed prefill duty cycle into the units
+// the capacity model works in.
+//
+// The model takes queued prefill in TOKENS and turns it into a count of
+// chunk-carrying iterations. Here the measurement is a share of engine TIME, so
+// it is converted the other way through the same constant: the time the engine
+// will spend on prefill over the horizon, divided by what one chunk-carrying
+// iteration costs beyond a decode-only one, is the number of such iterations,
+// and multiplying by the chunk size puts it back in tokens. Passing it through
+// the same conversion the model uses in reverse is what makes the two agree.
+func (p *fluidserveDispatchPolicy) carriedPrefillTokens(
+	duty, horizonMs, chunk float64) float64 {
+
+	if duty <= 0 || horizonMs <= 0 || chunk <= 0 {
+		return 0
+	}
+	perChunk := p.capacity.prefillStepMs(chunk) - p.capacity.c0
+	if math.IsInf(perChunk, 0) || perChunk <= 0 {
+		return 0
+	}
+	return duty * horizonMs / perChunk * chunk
 }
 
 // paceMs is the iteration time to convert the planning horizon into a duration.
@@ -536,31 +616,54 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	f.live = p.registry.reconcile(f.id, int(st.SchedulerRunningToDecodeRequestsNum),
 		f.stepID, nowMs)
 
-	// Prefill that will arrive over the horizon, not just what is queued now.
+	// Prefill the instance will carry over the horizon, not just what is queued
+	// at this instant.
 	//
-	// This is the difference between describing an instant and describing an
-	// interval. The engine drains its prefill queue well inside one status pull,
-	// so the queued figure read at a sampling instant is usually near zero,
-	// while over the horizon the engine spends a real share of every iteration
-	// on prompts that arrived in between. Leaving it out does not merely make
-	// the prediction low: the measured-against-predicted correction then absorbs
-	// the whole difference as a multiplier on the mean, which scales the KV and
-	// batch-size terms with it and shrinks the admissible occupancy far more
-	// than the missing prefill would. Measured at 600 rpm, that correction
-	// climbed to 1.48 on a fleet whose interactive classes were at 100%, and the
-	// rejections followed it.
+	// The anticipation is necessary. The engine drains its prefill queue well
+	// inside one status pull, so the queued figure read at a sampling instant is
+	// usually near zero, while over the horizon the engine spends a real share of
+	// every iteration on prompts that arrived in between. Leaving it out does not
+	// merely make the prediction low: the measured-against-predicted correction
+	// then absorbs the whole difference as a multiplier on the mean, which scales
+	// the KV and batch-size terms with it and shrinks the admissible occupancy far
+	// more than the missing prefill would. Measured at 600 rpm, that correction
+	// climbed to 1.48 on a fleet whose interactive classes were at 100%.
 	//
-	// The rate is the fleet's OFFERED one spread over the instances, not this
-	// instance's own recent share of it. An instance's share over the next
-	// horizon is precisely what is being decided, so reading it off the recent
-	// past assumes the answer and closes a loop through the decision: a higher
-	// estimate tightens that instance's gate, which sends it less, which lowers
-	// the estimate. Measured, that settled in two different places on two runs
-	// of the same binary at the same offered rate, and the equal-weight
-	// attainment differed by 9.5 points between them with nothing else changed.
-	// Spread evenly it is a common background load that shifts no instance
-	// relative to another, which is also what stops it working against the
-	// class-affinity ordering.
+	// What it is built from has changed twice, and the reason is a property the
+	// two earlier forms lacked rather than a difference in accuracy.
+	//
+	// It was this instance's own recent dispatch rate. That reads the scheduler's
+	// own output back as an input: a higher estimate tightens the instance's gate,
+	// which sends it less, which lowers the estimate. Two runs of the same binary
+	// at the same offered rate settled in different places, 8 points apart.
+	//
+	// It was then the fleet's OFFERED token rate divided by the instance count.
+	// That broke the loop through the placement decision but opened one through
+	// the admission decision: the offered rate counts requests this policy is
+	// about to reject, so with rejection rate s the projection is the served rate
+	// over 1-s, and a higher s tightens the gate, which raises s. Measured at
+	// 3000 rpm it settled with 54.6% rejected while the engines ran at 32.9 ms
+	// against a gate demanding 61.7 ms. Being a fleet average, it was also
+	// identical on every instance, so it could not order candidates at all: its
+	// entire effect was to raise the level on every instance at once, which
+	// closed the fleet to every class simultaneously. That is why 44% of chat --
+	// 674-token prompts, which PolyServe served in full -- was rejected.
+	//
+	// It is now the share of engine time THIS instance has been observed to spend
+	// on prefill, projected over the horizon. That quantity is measured at the
+	// engine, so no belief of the scheduler's feeds it; it differs between
+	// instances, so it orders candidates as well as gating them; and the loop it
+	// does sit in has the opposite sign: charging more admits less to this
+	// instance, which makes it spend less time on prefill, which lowers the
+	// charge.
+	//
+	// Queue and duty cycle describe overlapping work -- what is queued now is
+	// part of what the engine will be observed to prefill next -- so they are
+	// combined by taking the larger rather than by adding, which would charge the
+	// same prompts twice. Each covers a case the other misses: a burst that has
+	// just landed shows in the queue before it shows in the duty cycle, and a
+	// steady stream that the engine absorbs between status pulls shows in the
+	// duty cycle while the queue reads zero.
 	//
 	// The horizon is counted in iterations, so it becomes a duration at the pace
 	// the instance is delivering. The result is not clamped here because the
@@ -568,9 +671,8 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	// one: an engine cannot absorb more than one chunk per iteration however
 	// much arrives.
 	horizonMs := float64(p.cfg.horizonSteps) * p.paceMs(f.id, f.kvLogical, f.nDecode)
-	f.arrivingPrefill = p.registry.offeredRate() / math.Max(float64(instances), 1) *
-		horizonMs * p.capacity.prefillFractionOf()
-	f.effectivePrefill = f.pendingPrefill + f.arrivingPrefill
+	f.arrivingPrefill = p.carriedPrefillTokens(p.prefillDutyOf(f.id), horizonMs, f.chunk)
+	f.effectivePrefill = math.Max(f.pendingPrefill, f.arrivingPrefill)
 
 	// The pace the instance is delivering right now. It is needed before the
 	// loop because a request the instance is ALREADY failing cannot be made to

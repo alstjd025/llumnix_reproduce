@@ -190,22 +190,28 @@ type requestRegistry struct {
 	// The offered rate: prompt tokens per millisecond ARRIVING at the gateway,
 	// counted once per request rather than once per retry, and smoothed.
 	//
-	// This is what the projection of future prefill work is built from, and the
-	// reason it is the offered figure rather than the dispatched one is that the
-	// dispatched figure is this scheduler's own output. Estimating "how much
-	// work will arrive at instance i" from "how much this scheduler recently
-	// sent to instance i" closes a loop: a higher estimate tightens that
-	// instance's gate, which sends it less, which lowers the estimate. The loop
-	// has gain and delay and no external observation to anchor it, and measured
-	// it settled in two different places on two runs of the same binary at the
-	// same offered rate -- 70-80k tokens projected in one and 17-37k in the
-	// other, with the prediction sitting at 2.4 times the measured iteration
-	// time for the whole of the first and twice the rejections to show for it.
+	// TELEMETRY ONLY. No decision reads this. It was briefly the input to the
+	// projection of future prefill work, and both things it was tried as failed
+	// for the same underlying reason, which is worth keeping written down.
 	//
-	// Occupancy and iteration time are also consequences of this scheduler's
-	// decisions, and they are safe to use for the opposite reason: the engine
-	// observes them and reports them back, so a wrong belief is corrected. The
-	// dispatch ledger has no such observation behind it.
+	// The dispatched rate closes a loop through the PLACEMENT decision: a higher
+	// estimate tightens an instance's gate, which sends it less, which lowers the
+	// estimate. Measured, that settled in two different places on two runs of the
+	// same binary at the same offered rate -- 70-80k tokens projected in one and
+	// 17-37k in the other, 8 points of attainment apart.
+	//
+	// The offered rate closes a loop through the ADMISSION decision instead: it
+	// counts the requests this policy is about to reject, so at rejection rate s
+	// it reports the served rate divided by 1-s. A higher s therefore raises the
+	// projection, which tightens the gate, which raises s. Measured at 3000 rpm
+	// it settled at 54.6% rejected with the engines running at 32.9 ms against a
+	// gate demanding 61.7 ms.
+	//
+	// What replaced it is the per-instance prefill duty cycle: the share of engine
+	// time the engine itself was observed to spend on prefill. Occupancy and
+	// iteration time are also consequences of this scheduler's decisions, and they
+	// are safe to use for the reason neither rate was: the engine observes them
+	// and reports them back, so a wrong belief is corrected rather than confirmed.
 	offeredTokens     float64
 	offeredRateEwma   float64
 	offeredLastConvMs int64
