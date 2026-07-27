@@ -27,6 +27,7 @@ root on the node.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -157,14 +158,33 @@ def get_deploy():
 
 
 def set_flag(args, name, value):
-    """Set --name value in an argv list, replacing any existing occurrence."""
+    """Set a flag in an argv list, replacing any existing occurrence.
+
+    A boolean is written as one token, --name=value, and this is not a style
+    choice. Go's pflag only reads the separated form for flags that take a
+    value; for a boolean, `--name false` sets the flag to TRUE and leaves
+    "false" as a positional argument, which the scheduler ignores. Written that
+    way, every ablation switch silently did the opposite of what it was asked.
+    It cost a four-hour run in which the arm with holding and rejection turned
+    off recorded 72,593 holds and 15,723 rejections, and matched the arm they
+    were meant to be turned off in to within one point at every rate -- because
+    it was the same configuration measured twice.
+    """
     out, i = [], 0
     while i < len(args):
-        if args[i] == name:
-            i += 2                      # drop the old flag and its value
+        cur = args[i]
+        if cur == name:
+            # Separated form. Drop the flag and its value, unless what follows
+            # is another flag, in which case this one had no value to drop.
+            i += 2 if i + 1 < len(args) and not args[i + 1].startswith("-") else 1
             continue
-        out.append(args[i])
+        if cur.startswith(name + "="):
+            i += 1
+            continue
+        out.append(cur)
         i += 1
+    if str(value).lower() in ("true", "false"):
+        return out + [f"{name}={value}"]
     return out + [name, value]
 
 
@@ -179,12 +199,16 @@ def drop_flags(args, keep, prefix):
     """
     out, i, dropped = [], 0, []
     while i < len(args):
-        name = args[i]
+        tok = args[i]
+        name = tok.split("=", 1)[0]
         if name.startswith(prefix) and name not in keep:
             dropped.append(name)
-            i += 2 if i + 1 < len(args) and not args[i + 1].startswith("--") else 1
+            if "=" in tok:
+                i += 1
+            else:
+                i += 2 if i + 1 < len(args) and not args[i + 1].startswith("-") else 1
             continue
-        out.append(name)
+        out.append(tok)
         i += 1
     if dropped:
         print("  dropping flags no longer defined: " + " ".join(dropped))
@@ -329,9 +353,92 @@ def main():
     if a.policy == "slo" and not hits:
         print("  WARNING: no LatencyPredictor line found; check -v level and logs")
 
+    # Read from the START of the log for the verification, not the tail: the
+    # scheduler runs at -v 4 and emits hundreds of lines a second, so the
+    # start-up line it has to be checked against is out of any tail window
+    # within seconds of the pod becoming ready.
+    full = kubectl("logs", target, check=False)
+    if verify_effective(a.policy, full, args) != 0:
+        return 1
+
     if set_gateway(a.policy, a.timeout) != 0:
         return 1
     return 0
+
+
+def verify_effective(policy, logs, applied_args):
+    """Check that the scheduler is running the configuration it was given.
+
+    Applying a flag and having it take effect are different things, and the gap
+    between them is silent. A boolean written in the separated form is accepted
+    by the deployment, survives a rollout, appears in `kubectl get deploy`, and
+    is read as the opposite of what it says. Four hours of measurement were
+    taken through exactly that, with an ablation arm that was in fact identical
+    to the arm it was supposed to differ from.
+
+    The scheduler prints what it actually resolved at start-up. That line, not
+    the spec, is the authority, so it is parsed and compared here and the caller
+    fails rather than proceeding.
+    """
+    if policy != consts_fluidserve():
+        return 0
+    line = next((l for l in logs.splitlines()
+                 if "FluidServe dispatch policy created" in l), None)
+    if not line:
+        print("\n  ERROR: the scheduler never reported its FluidServe configuration.")
+        print("  Without that line there is no way to tell what it is running.")
+        return 1
+
+    want = {}
+    for i, tok in enumerate(applied_args):
+        name, _, inline = tok.partition("=")
+        if not name.startswith("--fluidserve-"):
+            continue
+        val = inline if inline else (
+            applied_args[i + 1] if i + 1 < len(applied_args) else "")
+        want[name] = val
+
+    effective = dict(re.findall(r"(\w+)=([\w.]+)", line))
+    checks = [
+        ("--fluidserve-enable-pend", "pend"),
+        ("--fluidserve-enable-shed", "shed"),
+        ("--fluidserve-enable-affinity", "affinity"),
+        ("--fluidserve-enable-flux", "flux"),
+        ("--fluidserve-z-safety", "z"),
+    ]
+    bad = []
+    for flag, key in checks:
+        if flag not in want or key not in effective:
+            continue
+        asked, got = want[flag].lower(), effective[key].lower()
+        try:
+            same = abs(float(asked) - float(got)) < 1e-6
+        except ValueError:
+            same = asked == got
+        if not same:
+            bad.append(f"{flag}: asked {asked}, scheduler reports {key}={got}")
+    # The horizon is printed in its own phrasing.
+    m = re.search(r"horizon (\d+) steps", line)
+    if m and "--fluidserve-horizon-steps" in want:
+        if m.group(1) != want["--fluidserve-horizon-steps"]:
+            bad.append(f"--fluidserve-horizon-steps: asked "
+                       f"{want['--fluidserve-horizon-steps']}, reports {m.group(1)}")
+
+    print("\n--- effective FluidServe configuration (read from the scheduler) ---")
+    print("  " + line.split("] ", 1)[-1].strip())
+    if bad:
+        print("\n  ERROR: the scheduler is not running what it was asked to run:")
+        for b in bad:
+            print("    " + b)
+        print("  A boolean must be written as --flag=value; the separated form"
+              " is read as true.")
+        return 1
+    print("  verified: every FluidServe flag matches what was applied")
+    return 0
+
+
+def consts_fluidserve():
+    return "fluidserve"
 
 
 def set_gateway(policy, timeout):

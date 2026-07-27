@@ -62,6 +62,15 @@ go build -buildvcs=false \
   보유-재시도)에서는 **동시 보유 요청이 5건으로 제한**되고 나머지는 큐에서 수십 초를
   기다린다. `gateway_pending_requests`가 515에 고정되면 이 상태다. 4096/16384로 올린다
   (`set_scheduler_profiling.py`가 모든 정책에 적용).
+- **Go bool 플래그는 `--flag=value` 한 덩어리로 넣어야 한다.** `--flag false`로 쓰면
+  pflag가 플래그를 **true로** 설정하고 `"false"`는 위치 인자로 흘려버린다. 배포 spec에도
+  남고 rollout도 성공하므로 **조용히 반대로 동작한다.** 이것 때문에 EXP-25의 ablation arm이
+  대조군과 동일한 설정으로 4시간 돌았다(shed 껐다는 arm에서 shed 15,723건).
+  `set_scheduler_profiling.py`의 `set_flag`가 이제 bool을 등호형으로 쓰고, 적용 후
+  스케줄러 로그의 `FluidServe dispatch policy created` 줄을 되읽어 대조한다.
+- **설정을 적용했다는 것과 반영됐다는 것은 다르다.** 스케줄러 로그의 시작 줄이 유일한
+  authority다. spec을 읽는 것으로는 위 함정을 못 잡는다. 그 줄은 `-v 4`에서 몇 초 만에
+  tail 밖으로 밀려나므로 **전체 로그를 읽어야 한다**(`kubectl logs <pod>`, `--tail` 없이).
 - **실험이 도는 동안 `bin/`의 바이너리를 덮어쓰지 말 것.** `--restart-per-condition`이
   조건마다 `rollout restart scheduler,gateway`를 하므로, sweep 중간에 새 바이너리를
   넣으면 **조건마다 다른 코드**로 측정된다. 소스는 고쳐도 되지만 빌드 산출물은
