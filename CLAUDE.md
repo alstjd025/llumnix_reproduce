@@ -4,6 +4,44 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 연구용 정책을 구현하고, 부하 실험은 별도 저장소 `Agent_applications/`(자체 git, 이
 저장소의 `.gitignore` 대상)에서 돌린다.
 
+## 복귀 절차 — 대화가 잘리거나 compaction된 뒤 여기부터 (사용자가 말하지 않아도 수행)
+
+맥락이 사라진 상태에서 이어서 일하려면 **순서대로 세 가지만** 하면 된다.
+
+**1. 무엇을 하고 있었는지 읽는다**
+
+| 읽을 것 | 무엇이 있나 |
+|---|---|
+| [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) **§13** | **자족적으로 작성된 현재 상태.** 버전 이력 v9~v18, 최신 수치, 반증된 가정, 다음 순서 |
+| 같은 문서 **마지막 절** | §13 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
+| `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
+
+**2. 지금 클러스터에서 뭐가 도는지 확인한다**
+
+```bash
+kubectl -n llumnix get jobs | grep bench-runner        # 실험이 도는 중인가
+ls -dt Agent_applications/agent_motivation_experiment/results/* | head -5
+ls -l --time-style=+%m%d_%H:%M bin/scheduler-exp07     # 배포된 바이너리 시각
+git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
+```
+
+**실험이 돌고 있으면 `bin/`을 덮어쓰지 말고 실행 중인 셸 스크립트를 편집하지 말 것**
+(아래 함정 참조). 끝날 때까지 소스만 고친다.
+
+**3. 결과를 볼 때 반드시 지키는 규칙 — 전부 실제로 틀렸던 것들이다**
+
+- **조건당 1회 측정으로 판정하지 않는다.** FluidServe의 세션 내 산포가 1.4~3.3점,
+  **세션 간 이동은 5~17점**이다. 평균 차이가 산포보다 작으면 "차이 없음"으로 보고한다.
+- **세션을 넘는 비교는 무효다.** arm은 반드시 같은 세션 안에 있어야 하고, 반복을
+  바깥 루프로 돌린다.
+- **채점 분모는 offered** — 거절·에러·미완을 전부 위반으로 센다.
+- **요청 단위 지표만 보지 않는다.** `engine_occupancy.py`(엔진이 놀고 있는가)와
+  `slo_rule_breakdown.py`(TTFT 실패인가 TBT 실패인가)를 같이 본다. 정책 문제와
+  배관 문제는 이 둘로만 구분된다.
+- **설정을 바꿨으면 스케줄러가 실제로 읽은 값을 확인한다.**
+  `set_scheduler_profiling.py`가 자동으로 대조하고 `verified: …`를 출력한다.
+  그 줄이 없으면 그 run은 무효다.
+
 ## 서술 규칙 (문서·커밋 메시지·사용자 보고 전부)
 
 **비유나 관용구를 쓰지 말고 일반적으로 통용되는 기술 용어로 쓴다.** 문장이 길어져도
