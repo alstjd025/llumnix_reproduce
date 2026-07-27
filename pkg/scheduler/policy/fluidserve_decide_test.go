@@ -512,14 +512,53 @@ func TestRequestsAlreadyPastTheirBudgetDoNotMakeAnInstanceExpensive(t *testing.T
 	f := &instanceFlux{
 		meanStep: 200,
 		live: []liveRequest{
-			{allowanceMs: 50},  // 200ms per token already; nothing left to lose
-			{allowanceMs: 300}, // still has room
+			{tier: 25, allowanceMs: 50},  // 200ms/token already; nothing to lose
+			{tier: 25, allowanceMs: 300}, // still has room
 		},
 	}
-	harm := p.harmToIncumbents(f, 200, 260)
+	// Placing another request of the class that already owns the instance.
+	harm := p.harmToIncumbents(f, 25, 200, 260)
 	// Only the second request contributes: 60ms of extra delay against the
-	// 100ms of slack it had.
+	// 100ms of slack it had. The class term is zero because nothing on the
+	// instance belongs to another class.
 	assert.InDelta(t, 0.6, harm, 1e-9)
+}
+
+func TestAnInstanceBelongingToAnotherClassIsNotFreeJustBecauseItIsLate(t *testing.T) {
+	// The counterpart to the test above, and the case it did not cover. The
+	// asymmetry that makes overload collect where it is already lost reads only
+	// the incumbents' remaining budgets, so an instance whose requests have all
+	// gone past theirs reads as costing nothing -- no matter WHICH class those
+	// requests belong to. An instance full of late chat requests would then be
+	// the cheapest place to put an agent request, and the next chat request to
+	// arrive would have nowhere clean to go. Measured with admission disabled at
+	// 3000 rpm, chat fell to 54.5% that way while PolyServe held it at 100%.
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	mine := &instanceFlux{
+		meanStep: 200,
+		live: []liveRequest{
+			{tier: 25, allowanceMs: 50},
+			{tier: 25, allowanceMs: 40},
+		},
+	}
+	theirs := &instanceFlux{
+		meanStep: 200,
+		live: []liveRequest{
+			{tier: 50, allowanceMs: 50},
+			{tier: 50, allowanceMs: 40},
+		},
+	}
+	// Every incumbent on both instances is already past its budget, so the
+	// incumbent sum is zero on both and cannot separate them.
+	same := p.harmToIncumbents(mine, 25, 200, 260)
+	other := p.harmToIncumbents(theirs, 25, 200, 260)
+	assert.Zero(t, same, "the instance this class already owns stays free")
+	assert.Greater(t, other, same,
+		"an instance held by another class is not free to break further")
+
+	// An instance with nothing on it belongs to no class and is cheapest of all.
+	empty := &instanceFlux{meanStep: 200}
+	assert.Zero(t, p.harmToIncumbents(empty, 25, 200, 260))
 }
 
 // ---------------------------------------------------------------------------

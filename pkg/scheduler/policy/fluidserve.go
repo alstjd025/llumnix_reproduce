@@ -1027,7 +1027,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	if p.cfg.enableAffinity {
 		c.share = classShare(f, req.tier)
 	}
-	c.harm = p.harmToIncumbents(f, c.meanBefore, c.meanAfter)
+	c.harm = p.harmToIncumbents(f, req.tier, c.meanBefore, c.meanAfter)
 
 	// Free space is expressed as a fraction of the instance's physical capacity
 	// so that the tie-break means the same thing regardless of instance size.
@@ -1083,8 +1083,13 @@ func (p *fluidserveDispatchPolicy) missesOwnBudget(
 // look expensive -- which is exactly the instance that should keep absorbing it.
 // That asymmetry is what makes overload collect on the instances it has already
 // broken and leave the others clean, with none of them reserved in advance.
+//
+// On its own the asymmetry has no notion of WHICH class did the breaking, and
+// that is the gap the class term below closes: an instance broken by agent work
+// and full of agent work should keep taking agent work, while an instance broken
+// by one stray agent request and otherwise full of chat should not.
 func (p *fluidserveDispatchPolicy) harmToIncumbents(
-	f *instanceFlux, meanBefore, meanAfter float64) float64 {
+	f *instanceFlux, tier int, meanBefore, meanAfter float64) float64 {
 
 	delta := meanAfter - meanBefore
 	if delta <= 0 || math.IsInf(delta, 0) {
@@ -1104,6 +1109,34 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 			h = fsHarmCap
 		}
 		harm += h
+	}
+
+	// The sum over incumbents is not the whole cost, and what it leaves out is
+	// what decides where UNSERVABLE work goes.
+	//
+	// A request that has already passed its budget drops out of the sum, which is
+	// correct as far as it goes: refusing to slow the instance does not rescue
+	// it. The consequence is that an instance whose class has begun to miss reads
+	// as costing nothing, so it attracts more foreign work, which makes the rest
+	// of that class miss too, which lowers the reading further. Measured with
+	// admission disabled at 3000 rpm, chat fell to 54.5% while PolyServe held it
+	// at 100% by never letting agent work onto chat's servers at all.
+	//
+	// What the sum misses is that an instance is not only the requests on it now.
+	// It is also where the class collecting there will arrive next, and that
+	// claim does not disappear when the current occupants start missing. The
+	// share of the instance belonging to OTHER classes measures that claim, and
+	// it is charged at the scale of one maximally harmed request so that it
+	// separates instances the incumbent sum cannot tell apart without overriding
+	// a real, large difference between them.
+	//
+	// An empty instance is charged nothing: it belongs to no class yet, and it is
+	// the placement that costs least by any reading.
+	// Gated on the same switch as the feasible-set ordering, because it is the
+	// same mechanism: class affinity, applied where nothing is feasible. Turning
+	// affinity off has to turn off both or the ablation measures a mixture.
+	if p.cfg.enableAffinity && len(f.live) > 0 {
+		harm += (1 - classShare(f, tier)) * fsHarmCap
 	}
 	return harm
 }
