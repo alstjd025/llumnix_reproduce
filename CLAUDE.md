@@ -12,8 +12,9 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 
 | 읽을 것 | 무엇이 있나 |
 |---|---|
-| [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) **§13** | **자족적으로 작성된 현재 상태.** 버전 이력 v9~v18, 최신 수치, 반증된 가정, 다음 순서 |
-| 같은 문서 **마지막 절** | §13 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
+| [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) **§13** | **자족적으로 작성된 현재 상태.** 버전 이력 v9~v18, 반증된 가정 |
+| 같은 문서 **§15~§17** | v19(투영을 엔진 관측으로), v20(다른 클래스 인스턴스 보호), 여유 HBM 검토와 preemption 비용 |
+| 같은 문서 **마지막 절** | 그 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
 | `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
 
 **2. 지금 클러스터에서 뭐가 도는지 확인한다**
@@ -26,7 +27,9 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 ```
 
 **실험이 돌고 있으면 `bin/`을 덮어쓰지 말고 실행 중인 셸 스크립트를 편집하지 말 것**
-(아래 함정 참조). 끝날 때까지 소스만 고친다.
+(아래 함정 참조). 끝날 때까지 소스만 고친다. 다음 실험을 미리 걸어두려면
+`/home/nxclab/tools/staging/`에 빌드해 두고, 앞 실험이 끝나기를 기다렸다가 배포·실행하는
+연쇄 스크립트를 쓴다(`/home/nxclab/tools/exp27_after_exp25.sh`가 그 예).
 
 **3. 결과를 볼 때 반드시 지키는 규칙 — 전부 실제로 틀렸던 것들이다**
 
@@ -34,10 +37,18 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
   **세션 간 이동은 5~17점**이다. 평균 차이가 산포보다 작으면 "차이 없음"으로 보고한다.
 - **세션을 넘는 비교는 무효다.** arm은 반드시 같은 세션 안에 있어야 하고, 반복을
   바깥 루프로 돌린다.
-- **채점 분모는 offered** — 거절·에러·미완을 전부 위반으로 센다.
-- **요청 단위 지표만 보지 않는다.** `engine_occupancy.py`(엔진이 놀고 있는가)와
-  `slo_rule_breakdown.py`(TTFT 실패인가 TBT 실패인가)를 같이 본다. 정책 문제와
-  배관 문제는 이 둘로만 구분된다.
+- **분모를 두 개 다 본다 (2026-07-28 변경).** 주 지표는 **admitted**(시스템이 받아들인
+  요청이 분모), 그 옆에 **offered**(도착한 모든 요청, 거절은 위반). admitted만 읽으면
+  전부 거절하는 정책이 최고점을 받으므로 **거절률과 token goodput을 반드시 같이 본다.**
+  `exp23_rate_sweep.py`가 네 개를 한 표에 출력한다.
+  → 2026-07-28 이전 기록의 "served" 수치는 구현 결함으로 사실상 offered 수치다(§16.5).
+- **요청 단위 지표만 보지 않는다.** 넷을 같이 본다.
+  `engine_occupancy.py`는 이제 **preemption 횟수와 엔진별 prefix hit rate**도 낸다.
+  preemption은 요청 단위 지표에 전혀 안 보이는데 vLLM V1은 recompute로 쫓아내므로
+  엔진 시간을 크게 먹는다(PolyServe 3000 rpm 8분에 549회 = 엔진 2대 시간의 약 27%).
+  엔진별 prefix hit rate는 **라우팅이 클래스를 분리했는지를 엔진이 직접 보고하는 값**
+  이다(PolyServe chat 엔진 94.5% 대 agent 엔진 66.7%; FluidServe는 네 엔진 전부
+  63~65% = 섞여 있음). `slo_rule_breakdown.py`는 TTFT/TBT/E2E 중 무엇이 깨졌는지.
 - **설정을 바꿨으면 스케줄러가 실제로 읽은 값을 확인한다.**
   `set_scheduler_profiling.py`가 자동으로 대조하고 `verified: …`를 출력한다.
   그 줄이 없으면 그 run은 무효다.
