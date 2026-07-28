@@ -14,7 +14,8 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 |---|---|
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **여기부터 읽는다.** v0.1의 자족적 명세 — 결정 규칙, 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | 시간순 경위. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
-| implementation.md **마지막 절** | v0.1 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
+| implementation.md **마지막 절** | 그 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
+| **미해결** | 80 req/s에서 예측이 실측보다 8ms 높아 결정의 84%가 보유. §24.2에 다음 단계(계측 노출)까지 적혀 있다 |
 | `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
 
 **2. 지금 클러스터에서 뭐가 도는지 확인한다**
