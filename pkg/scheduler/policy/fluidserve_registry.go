@@ -175,6 +175,11 @@ type requestRegistry struct {
 	// arrival time per request id, kept for every request the gateway asks
 	// about, including those still waiting for a placement.
 	arrivedMs map[string]int64
+	// lastSeenMs[requestID] is when this request was last put through the
+	// scheduling path. The gateway re-asks about a held request on a fixed
+	// cadence, so the difference between two consecutive calls IS that cadence,
+	// measured rather than configured. See noteArrival.
+	lastSeenMs map[string]int64
 	lastGCMs  int64
 
 	// dispatchVersion[instanceID] increments on every placement. It is what lets
@@ -228,6 +233,7 @@ func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestReg
 		budgets:           budgets,
 		byInstance:        map[string]map[string]*dispatchRecord{},
 		arrivedMs:         map[string]int64{},
+		lastSeenMs:        map[string]int64{},
 		dispatchVersion:   map[string]uint64{},
 		promptTokensSince: map[string]float64{},
 	}
@@ -240,13 +246,28 @@ func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestReg
 // The first call is also where the offered rate is counted, for the same
 // reason: it is the one call per request, so what accumulates here is what the
 // workload asked for rather than how often the gateway asked again.
-func (r *requestRegistry) noteArrival(requestID string, promptTokens int, nowMs int64) int64 {
+// It also measures how long it has been since this request was last considered.
+// A held request cannot act between two of those calls, so that interval is the
+// granularity at which any deadline can be honoured, and a deadline that leaves
+// less than one interval of margin can be passed without the request ever being
+// looked at inside it. Measuring it here rather than configuring it keeps the
+// policy independent of the gateway's retry setting: whatever cadence the
+// gateway uses, this reports it.
+func (r *requestRegistry) noteArrival(
+	requestID string, promptTokens int, nowMs int64) (int64, float64) {
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t, ok := r.arrivedMs[requestID]; ok {
-		return t
+		gap := 0.0
+		if last, seen := r.lastSeenMs[requestID]; seen && nowMs > last {
+			gap = float64(nowMs - last)
+		}
+		r.lastSeenMs[requestID] = nowMs
+		return t, gap
 	}
 	r.arrivedMs[requestID] = nowMs
+	r.lastSeenMs[requestID] = nowMs
 	r.offeredTokens += float64(promptTokens)
 	if r.offeredLastConvMs == 0 {
 		r.offeredLastConvMs = nowMs
@@ -261,7 +282,9 @@ func (r *requestRegistry) noteArrival(requestID string, promptTokens int, nowMs 
 		r.offeredLastConvMs = nowMs
 	}
 	r.gcLocked(nowMs)
-	return nowMs
+	// First sighting: nothing has been waited yet, so no re-decision interval is
+	// needed and none has been observed.
+	return nowMs, 0
 }
 
 func (r *requestRegistry) gcLocked(nowMs int64) {
@@ -272,6 +295,7 @@ func (r *requestRegistry) gcLocked(nowMs int64) {
 	for id, t := range r.arrivedMs {
 		if nowMs-t > fsArrivalTTLMs {
 			delete(r.arrivedMs, id)
+			delete(r.lastSeenMs, id)
 		}
 	}
 }
@@ -475,6 +499,7 @@ func (r *requestRegistry) forget(requestID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.arrivedMs, requestID)
+	delete(r.lastSeenMs, requestID)
 }
 
 // takePromptTokens returns and clears the prompt tokens placed on an instance

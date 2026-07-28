@@ -690,3 +690,65 @@ func TestFractionalPrefillIsNotRoundedUpOverTheHorizon(t *testing.T) {
 		"rounding 1.4 chunks up to 2 adds more than 2 ms to the predicted mean, "+
 			"which is the margin the gate was being missed by")
 }
+
+func TestTheDeadlineReservesOneReDecisionInterval(t *testing.T) {
+	// A held request is only looked at on the gateway's retry cadence, so a
+	// deadline that leaves less margin than one interval can be stepped over
+	// without anything ever evaluating it inside its budget. Measured, the fixed
+	// margin was 300 ms against a 500 ms cadence: a chat request whose deadline
+	// fell at 4,650 ms was asked at 4,500 and allowed to wait, then not asked
+	// again until 5,000, by which time its 5,000 ms budget was gone.
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	f := &instanceFlux{chunk: 8192, meanStep: 30}
+	best := candidate{flux: f, prefillMs: 50, meanAfter: 30}
+
+	mk := func(waited, recheck float64) *fluidserveRequest {
+		return &fluidserveRequest{
+			id: "chat", tier: 50, ttftSloMs: 5000, promptTokens: 666,
+			arrivedMs: 0, nowMs: int64(waited), recheckMs: recheck,
+			expectedToks: 400, nominalMs: 50,
+		}
+	}
+	// Deadline without the reservation is 5000 - 50 - 300 = 4,650 ms.
+	assert.True(t, p.canWait(best, mk(4500, 0)),
+		"with no observed cadence the deadline is unchanged")
+	// With a 500 ms cadence the same instant is past the point at which the
+	// request can still be looked at before its budget runs out.
+	assert.False(t, p.canWait(best, mk(4500, 500)),
+		"one re-decision interval has to be reserved, or the deadline is passed "+
+			"in the gap between two calls")
+	// It is a reservation, not a cap: earlier in the budget the request still waits.
+	assert.True(t, p.canWait(best, mk(3000, 500)))
+}
+
+func TestQueuedPrefillIsPricedAtItsOwnChunkSize(t *testing.T) {
+	// The work already ahead of a request is counted in units of the engine's
+	// chunk, so it has to be priced at the cost of a step carrying a chunk --
+	// not at the cost of a step carrying THIS request's prompt. Charging 11,478
+	// tokens of backlog at the price of a 666-token chat prefill understates the
+	// wait by about eight times, which is what let a request be held to within
+	// 350 ms of its budget and then miss.
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	chat := &fluidserveRequest{id: "c", tier: 50, ttftSloMs: 5000,
+		promptTokens: 666, expectedToks: 400, nominalMs: 50}
+
+	clear := &instanceFlux{chunk: 8192}
+	backed := &instanceFlux{chunk: 8192, effectivePrefill: 11478}
+
+	own := p.prefillEstimateMs(chat, clear)
+	withQueue := p.prefillEstimateMs(chat, backed)
+	queued := withQueue - own
+
+	// 11,478 tokens is 1.40 chunks; a chunk-carrying step costs t_pre(8192).
+	// The exact figure depends on the profile, so assert the scale rather than
+	// the value: it must be several hundred ms, not the ~84 ms the old pricing
+	// produced from this request's own 666-token step cost.
+	assert.Greater(t, queued, 400.0,
+		"a backlog of one and a half chunks is several hundred ms of engine time")
+	assert.Greater(t, queued, 4*own,
+		"and it dominates this request's own prefill, which is one short prompt")
+
+	// An instance with no backlog is unchanged, so light load keeps its behaviour.
+	assert.InDelta(t, own, p.prefillEstimateMs(chat, &instanceFlux{chunk: 8192}),
+		1e-9)
+}

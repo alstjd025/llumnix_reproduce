@@ -116,6 +116,10 @@ type fluidserveRequest struct {
 	promptTokens int
 	arrivedMs    int64
 	nowMs        int64
+	// recheckMs is how long it has been since this request was last considered,
+	// which is the cadence the gateway re-asks on and therefore the granularity
+	// at which the request can act on its own deadline. Zero on first sighting.
+	recheckMs    float64
 	expectedToks float64
 	// nominalMs is the per-token pace this class is promised: the tier key for a
 	// per-token budget, and the whole budget divided by the expected output for
@@ -313,7 +317,8 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 	}
 
 	now := nowMillis()
-	arrived := p.registry.noteArrival(request.Id, request.PromptNumTokens, now)
+	arrived, recheckMs := p.registry.noteArrival(
+		request.Id, request.PromptNumTokens, now)
 
 	tier := request.TpotSloMs
 	nominal, expected, isE2E, budgetMs := p.registry.requestBudget(tier)
@@ -324,6 +329,7 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 		ttftSloMs:    float64(request.TtftSloMs),
 		promptTokens: request.PromptNumTokens,
 		arrivedMs:    arrived,
+		recheckMs:    recheckMs,
 		nowMs:        now,
 		expectedToks: expected,
 		nominalMs:    nominal,
@@ -1205,6 +1211,21 @@ func classShare(f *instanceFlux, tier int) float64 {
 // next. That was wrong: the rule is time to first token AND mean time between
 // tokens, so a request held 4.5 s of a 5 s budget and then served immediately
 // meets both. The cap is gone and with it one hand-set fraction.
+//
+// The deadline reserves the re-decision interval as well as the fixed margin,
+// and the two are subtracted rather than one of them taken, because they cover
+// different things. The fixed margin covers error in the prefill estimate. The
+// re-decision interval covers the fact that the request is only looked at on the
+// gateway's retry cadence: a deadline that leaves less margin than one interval
+// can be passed in the gap between two calls, with nothing ever evaluating it
+// inside its budget. Measured, the margin was 300 ms against a 500 ms cadence,
+// so a chat request whose deadline fell at 4,650 ms was asked at 4,500 -- still
+// allowed to wait -- and then not asked again until 5,000, already past its
+// 5,000 ms budget. That is the shape of the observed distribution: a median
+// time to first token of 4.08 s and a 90th percentile of 5.95 s.
+//
+// The interval is MEASURED, not configured, so this stays correct whatever
+// cadence the gateway is set to and adds no constant of its own.
 func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveRequest) bool {
 	waited := float64(req.nowMs - req.arrivedMs)
 	prefillMs := best.prefillMs
@@ -1218,12 +1239,12 @@ func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveReques
 			return false
 		}
 		deadline = req.budgetMs - prefillMs -
-			req.expectedToks*pace - p.cfg.ttftSafetyMs
+			req.expectedToks*pace - p.cfg.ttftSafetyMs - req.recheckMs
 	} else {
 		if req.ttftSloMs <= 0 {
 			return false
 		}
-		deadline = req.ttftSloMs - prefillMs - p.cfg.ttftSafetyMs
+		deadline = req.ttftSloMs - prefillMs - p.cfg.ttftSafetyMs - req.recheckMs
 	}
 	return waited < deadline
 }
@@ -1246,9 +1267,28 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 	if math.IsInf(per, 0) {
 		return 0
 	}
+	// The work already ahead of this request is priced at ITS OWN chunk size, not
+	// at this request's. The two are different quantities and mixing them is
+	// wrong by the ratio between the prompts: the count is in units of the
+	// engine's chunk, so charging it at the cost of a step carrying a 666-token
+	// chat prompt when each of those chunks is 8,192 tokens understates the wait
+	// by a factor of eight. Measured at 4800 rpm the instance carried 11,478
+	// tokens of prefill, which is 728 ms of engine time, and this returned 84.
+	//
+	// It is the same error v21 fixed in the capacity model, in the other
+	// direction: there a fractional count was rounded up against a full-chunk
+	// price, here a full-chunk count is charged at a partial-chunk price. Both
+	// come from the count and the unit price being taken from different prompts.
+	//
+	// Under light load the queued figure is a fraction of a chunk and this
+	// changes almost nothing, which is the intended behaviour: the estimate
+	// should only tighten where there is actually a backlog.
 	queued := 0.0
-	if f != nil {
-		queued = prefillSteps(f.effectivePrefill, chunk) * per
+	if f != nil && f.effectivePrefill > 0 {
+		perQueued := p.capacity.prefillStepMs(math.Min(f.effectivePrefill, chunk))
+		if !math.IsInf(perQueued, 0) {
+			queued = prefillSteps(f.effectivePrefill, chunk) * perQueued
+		}
 	}
 	return steps*per + queued
 }
