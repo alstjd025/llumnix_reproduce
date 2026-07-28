@@ -13,7 +13,7 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 | 읽을 것 | 무엇이 있나 |
 |---|---|
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) **§13** | **자족적으로 작성된 현재 상태.** 버전 이력 v9~v18, 반증된 가정 |
-| 같은 문서 **§15~§17** | v19(투영을 엔진 관측으로), v20(다른 클래스 인스턴스 보호), 여유 HBM 검토와 preemption 비용 |
+| 같은 문서 **§15~§20** | v19(투영을 엔진 관측으로), v20(효과 없음·제거 후보), v21(지평 소수 올림), 여유 HBM 검토, EXP-25/27 결과. **§20이 현재 결론** |
 | 같은 문서 **마지막 절** | 그 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
 | `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
 
