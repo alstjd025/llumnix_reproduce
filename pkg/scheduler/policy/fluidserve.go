@@ -404,15 +404,11 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 				// projection.
 				metrics.Gauge("scheduler_fluidserve_offered_rate_tokens_per_ms",
 					metrics.Labels{}).Set(p.registry.offeredRate())
-				// Fleet-wide, so no instance label. The correction multiplies the
-				// whole predicted mean and the prefill fraction scales every
-				// arriving prompt, so either one drifting moves every decision on
-				// every instance at once; neither is visible in any per-instance
-				// series.
-				metrics.Gauge("scheduler_fluidserve_correction", metrics.Labels{}).
-					Set(p.capacity.correctionFactor())
-				metrics.Gauge("scheduler_fluidserve_prefill_fraction", metrics.Labels{}).
-					Set(p.capacity.prefillFractionOf())
+				// The two fleet-wide scalars -- the multiplicative correction and
+				// the prefill fraction -- are already published by reportLoop as
+				// scheduler_fluidserve_capacity_correction and
+				// scheduler_fluidserve_prefill_fraction. Publishing them again
+				// here under new names was a duplicate and is not done.
 			}
 		}
 		view.schedulingCtx.fluidserveFlux = f
