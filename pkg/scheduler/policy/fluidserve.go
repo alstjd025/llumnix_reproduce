@@ -378,12 +378,41 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 					Set(f.pendingPrefill)
 				metrics.Gauge("scheduler_fluidserve_prefill_duty", lbl).
 					Set(p.prefillDutyOf(f.id))
+				// The remaining two terms of the prediction.
+				//
+				// decode_law_ms is the decode law at the batch the PREDICTION is
+				// evaluated at, which is the current status rather than the one
+				// that was running over the measured interval. Published beside
+				// decode_only_ms so that the difference between the two -- how
+				// far the batch moved between the two statuses -- is a readable
+				// quantity rather than an assumption.
+				//
+				// pace_ms is the iteration time the planning horizon is
+				// converted with. It enters the prefill term twice over: the
+				// horizon in milliseconds is horizonSteps x pace, and the
+				// arriving prefill is duty x that. Algebraically the prefill term
+				// collapses to duty x pace, so an error in pace appears in the
+				// prediction multiplied by the duty cycle and is invisible in
+				// every other series.
+				metrics.Gauge("scheduler_fluidserve_decode_law_ms", lbl).
+					Set(p.capacity.decodeStepMs(f.kvLogical, f.nDecode))
+				metrics.Gauge("scheduler_fluidserve_pace_ms", lbl).
+					Set(p.paceMs(f.id, f.kvLogical, f.nDecode))
 				// Telemetry only. This series is how a run is checked for how far
 				// past the fleet's capacity it was driven; no decision reads it,
 				// which is the whole point of the change that removed it from the
 				// projection.
 				metrics.Gauge("scheduler_fluidserve_offered_rate_tokens_per_ms",
 					metrics.Labels{}).Set(p.registry.offeredRate())
+				// Fleet-wide, so no instance label. The correction multiplies the
+				// whole predicted mean and the prefill fraction scales every
+				// arriving prompt, so either one drifting moves every decision on
+				// every instance at once; neither is visible in any per-instance
+				// series.
+				metrics.Gauge("scheduler_fluidserve_correction", metrics.Labels{}).
+					Set(p.capacity.correctionFactor())
+				metrics.Gauge("scheduler_fluidserve_prefill_fraction", metrics.Labels{}).
+					Set(p.capacity.prefillFractionOf())
 			}
 		}
 		view.schedulingCtx.fluidserveFlux = f
@@ -540,6 +569,29 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	decodeOnly := p.capacity.decodeStepMs(prev.kvLogical, prev.nDecode)
 	p.capacity.notePrefill(measured, decodeOnly,
 		float64(steps), chunk, p.registry.takePromptTokens(id))
+
+	// The three quantities that decompose the predicted iteration, published
+	// here because this is the one place that holds both ends of a measured
+	// interval. Without them the only readable series are the prediction and the
+	// measurement, and a gap between those two can be produced at four different
+	// places -- the decode law, the batch the law is evaluated at, the prefill
+	// term, or the multiplicative correction -- with no way to tell which from
+	// the outside. Three attempts at this gap have been made by reasoning from
+	// the two endpoints alone and all three were wrong, so the decomposition is
+	// measured instead.
+	//
+	//	decode_only_ms   the decode law at the batch that was RUNNING, which is
+	//	                 what the prefill attribution subtracts from the measured
+	//	                 mean. observed - decode_only is prefill time actually
+	//	                 spent, by definition of the attribution.
+	//	obs_kv_tokens    the KV the law was evaluated at, so that a gap caused by
+	//	                 evaluating it at the wrong batch is visible as such
+	//	                 rather than as a law error.
+	//	obs_decode_batch same, for the request count term.
+	obsLbl := metrics.Labels{{Name: "instance", Value: id}}
+	metrics.Gauge("scheduler_fluidserve_decode_only_ms", obsLbl).Set(decodeOnly)
+	metrics.Gauge("scheduler_fluidserve_obs_kv_tokens", obsLbl).Set(prev.kvLogical)
+	metrics.Gauge("scheduler_fluidserve_obs_decode_batch", obsLbl).Set(prev.nDecode)
 
 	// The same difference measures how much of THIS instance's engine time went
 	// to prefill rather than decode. Everything the engine did beyond what the
