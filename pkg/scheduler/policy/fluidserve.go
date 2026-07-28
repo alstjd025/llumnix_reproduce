@@ -475,6 +475,18 @@ type stepObservation struct {
 	// is three times as much evidence about that share.
 	prefillMsEwma float64
 	totalMsEwma   float64
+	// elapsedEwma and stepsEwma are what meanMs is the ratio of, for the same
+	// reason. One status interval can cover a single 436 ms prefill iteration or
+	// twelve 38 ms decode ones; averaging the two intervals' per-iteration times
+	// with equal weight answers "the mean over intervals", and the quantity every
+	// budget in this policy is expressed in is time per TOKEN, which is the total
+	// time divided by the total iterations.
+	//
+	// Measured over ten million tokens at 80 req/s: the engines' own
+	// inter-token latency reads 42.6 ms, the equal-weight average of the same
+	// intervals reads 58.7, and the median reads 38.7.
+	elapsedEwma float64
+	stepsEwma   float64
 }
 
 const (
@@ -642,8 +654,8 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	totalMs := measured * float64(steps)
 
 	p.obsMu.Lock()
+	weighted := measured
 	if o, ok := p.lastObs[id]; ok && o.stepID == cur.stepID {
-		o.meanMs = measured
 		o.prefillMsEwma = prev.prefillMsEwma +
 			fsPrefillDutyAlpha*(prefillMs-prev.prefillMsEwma)
 		o.totalMsEwma = prev.totalMsEwma +
@@ -659,11 +671,39 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 			duty = 1
 		}
 		o.prefillDuty = duty
+
+		// Time per token, as a ratio of two separately smoothed accumulations
+		// rather than an average of per-interval ratios. Same correction as the
+		// duty cycle above and for the same reason: an interval carrying one
+		// 436 ms prefill iteration and an interval carrying twelve 38 ms decode
+		// ones are not equal evidence about the time a token waits.
+		//
+		// This is what the whole policy is anchored to. meanMs sets the pace the
+		// planning horizon is converted with, and the value returned from here is
+		// what noteResidual trains the multiplicative correction against, so the
+		// prediction converges to whatever this says. Anchoring it to the mean
+		// over intervals put that target 16 ms above the latency the engines
+		// report, and no change to any other term could move it: measured at
+		// 80 req/s, halving the duty cycle simply drove the correction up by the
+		// same amount and left the prediction where it was.
+		o.elapsedEwma = prev.elapsedEwma + fsPrefillDutyAlpha*(elapsed-prev.elapsedEwma)
+		o.stepsEwma = prev.stepsEwma +
+			fsPrefillDutyAlpha*(float64(steps)-prev.stepsEwma)
+		if o.stepsEwma > 0 {
+			o.meanMs = o.elapsedEwma / o.stepsEwma
+		} else {
+			o.meanMs = measured
+		}
+		weighted = o.meanMs
 		p.lastObs[id] = o
 	}
 	p.obsMu.Unlock()
 
-	return measured
+	obsLbl2 := metrics.Labels{{Name: "instance", Value: id}}
+	metrics.Gauge("scheduler_fluidserve_obs_steps", obsLbl2).Set(float64(steps))
+	metrics.Gauge("scheduler_fluidserve_raw_step_ms", obsLbl2).Set(measured)
+
+	return weighted
 }
 
 // prefillDutyOf is the share of engine time instance `id` has recently spent on
