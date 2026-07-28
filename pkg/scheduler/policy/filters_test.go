@@ -562,3 +562,55 @@ func TestInvertedSingleInstanceFilterWrapper(t *testing.T) {
 	assert.False(t, filter1.instanceFilteredOut(instance1))
 	assert.True(t, filter1.instanceFilteredOut(instance2))
 }
+
+// staticMetric is a fixed reading, enough for a filter test: the filter only
+// asks whether the value is below a threshold.
+type staticMetric struct{ value float32 }
+
+func (m *staticMetric) GetName() string  { return "static" }
+func (m *staticMetric) GetValue() float32 { return m.value }
+func (m *staticMetric) Calculate(*types.SchedulingRequest, *instanceViewScheduling) {}
+func (m *staticMetric) Less(o instanceSchedulingMetric) bool { return m.value < o.GetValue() }
+func (m *staticMetric) ValueLess(v float32) bool             { return m.value < v }
+func (m *staticMetric) Equal(o instanceSchedulingMetric) bool { return m.value == o.GetValue() }
+
+func TestMetricFilterUsesTheRequestsOwnBudget(t *testing.T) {
+	// A fixed threshold is set once when the policy is built, so on a mixed fleet
+	// every request is judged against the same number whatever tier it carries.
+	// The global value then has to be the TIGHTEST class's or that class goes
+	// unprotected -- and every looser class is held to a budget it never asked
+	// for, refusing instances that would have served it comfortably.
+	view := func(predicted float32, reqTpotMs int) *instanceViewScheduling {
+		// The filter logs the instance id, so the view needs one: a bare
+		// schedulingCtx would panic in the log call rather than in the test.
+		cv := &cms.InstanceView{Metadata: &cms.InstanceMetadata{InstanceId: "i-1"}}
+		return &instanceViewScheduling{
+			cmsView:               cv,
+			InstanceViewInterface: cv,
+			schedulingCtx: schedulingCtx{
+				metrics: map[string]instanceSchedulingMetric{
+					consts.SchedulingMetricPredictedTpot: &staticMetric{value: predicted},
+				},
+				requestTpotSloMs: reqTpotMs,
+			},
+		}
+	}
+	f := &metricBasedFilter{
+		metricName:      consts.SchedulingMetricPredictedTpot,
+		perRequestSloMs: sloBudgetTpot,
+		sloMultiplier:   0.9,
+		threshold:       50 * 0.9, // the fallback: the tightest class
+	}
+	// An instance predicted at 70 ms is out for a 50 ms request and in for a
+	// 100 ms one. With a fixed threshold both answers would be "out".
+	assert.True(t, f.instanceFilteredOut(view(70, 50)))
+	assert.False(t, f.instanceFilteredOut(view(70, 100)))
+	// A request that carries no budget falls back to the configured one.
+	assert.True(t, f.instanceFilteredOut(view(70, 0)))
+	// Without the per-request wiring the filter behaves exactly as before.
+	fixed := &metricBasedFilter{
+		metricName: consts.SchedulingMetricPredictedTpot,
+		threshold:  50 * 0.9,
+	}
+	assert.True(t, fixed.instanceFilteredOut(view(70, 100)))
+}

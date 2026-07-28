@@ -82,19 +82,62 @@ func (r *invertedSingleInstanceFilterWrapper) skipWhenFallback() bool {
 }
 
 type metricBasedFilter struct {
-	metricName          string
-	threshold           float32
+	metricName string
+	threshold  float32
+	// perRequestSloMs, when set, names which of the request's own budgets this
+	// filter is against, and the threshold above becomes the fallback for a
+	// request that carries none.
+	//
+	// Without it the threshold is fixed when the policy is constructed, so every
+	// request is judged against the same number whatever tier it belongs to. On a
+	// fleet serving one class that is the same thing; on a mixed fleet it is not,
+	// and it is wrong in the direction that matters: the global value has to be
+	// set to the TIGHTEST class or that class is unprotected, which then holds
+	// every looser class to a budget it never asked for and refuses instances
+	// that would have served it comfortably.
+	perRequestSloMs     sloBudgetKind
+	sloMultiplier       float32
 	notSkipWhenFallback bool
+}
+
+type sloBudgetKind int
+
+const (
+	sloBudgetNone sloBudgetKind = iota
+	sloBudgetTtft
+	sloBudgetTpot
+)
+
+// thresholdFor is the budget this filter judges an instance against for the
+// request currently being scheduled. The request's own budget wins; the
+// configured one stands in when the request carries none.
+func (f *metricBasedFilter) thresholdFor(instance *instanceViewScheduling) float32 {
+	if f.perRequestSloMs == sloBudgetNone {
+		return f.threshold
+	}
+	ms := instance.schedulingCtx.requestTtftSloMs
+	if f.perRequestSloMs == sloBudgetTpot {
+		ms = instance.schedulingCtx.requestTpotSloMs
+	}
+	if ms <= 0 {
+		return f.threshold
+	}
+	m := f.sloMultiplier
+	if m <= 0 {
+		m = 1
+	}
+	return float32(ms) * m
 }
 
 func (f *metricBasedFilter) instanceFilteredOut(
 	instance *instanceViewScheduling) bool {
 	metric := instance.schedulingCtx.metrics[f.metricName]
-	result := !metric.ValueLess(f.threshold)
+	threshold := f.thresholdFor(instance)
+	result := !metric.ValueLess(threshold)
 	if result {
 		klog.V(3).Infof(
 			"Metric based filter applied, instance %s filtered out due to %s metric (%f not less than %f)",
-			instance.GetInstanceId(), f.metricName, metric.GetValue(), f.threshold)
+			instance.GetInstanceId(), f.metricName, metric.GetValue(), threshold)
 	}
 	return result
 }

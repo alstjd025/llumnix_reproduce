@@ -191,13 +191,26 @@ func newSloDispatchFullMode(p *options.SchedulerConfig) *sloDispatchPolicy {
 					&stalenessFilter{
 						instanceStalenessSeconds: p.InstanceStalenessSeconds,
 					},
+					// Judged against the REQUEST's own budget, with the global
+					// --ttft-slo / --tpot-slo standing in when a request carries
+					// none. The plumbing for this already exists -- schedulingCtx
+					// carries requestTtftSloMs and requestTpotSloMs, which the
+					// gateway fills from the packed priority field -- and using it
+					// is what makes this a fair baseline rather than a weakened one.
+					// A single global budget on a mixed fleet has to be set to the
+					// tightest class or that class is unprotected, and then every
+					// looser class is held to a budget it never asked for.
 					&metricBasedFilter{
 						metricName:          consts.SchedulingMetricPredictedTtft,
+						perRequestSloMs:     sloBudgetTtft,
+						sloMultiplier:       p.TtftSloDispatchThreshold,
 						threshold:           p.TtftSlo * p.TtftSloDispatchThreshold,
 						notSkipWhenFallback: true,
 					},
 					&metricBasedFilter{
 						metricName:          consts.SchedulingMetricPredictedTpot,
+						perRequestSloMs:     sloBudgetTpot,
+						sloMultiplier:       p.TpotSloDispatchThreshold,
 						threshold:           p.TpotSlo * p.TpotSloDispatchThreshold,
 						notSkipWhenFallback: true,
 					},
