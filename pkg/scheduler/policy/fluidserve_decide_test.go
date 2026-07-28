@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"llumnix/pkg/cms"
 	"llumnix/pkg/consts"
 	"llumnix/pkg/types"
 )
@@ -751,4 +752,55 @@ func TestQueuedPrefillIsPricedAtItsOwnChunkSize(t *testing.T) {
 	// An instance with no backlog is unchanged, so light load keeps its behaviour.
 	assert.InDelta(t, own, p.prefillEstimateMs(chat, &instanceFlux{chunk: 8192}),
 		1e-9)
+}
+
+func TestTheBatchIsCountedTheSameWayWhenPredictingAndWhenMeasuring(t *testing.T) {
+	// The duty cycle is (measured - decode-only prediction) / measured, so the
+	// decode-only prediction has to be for the batch the engine is actually
+	// running. It was not: the measurement counted one field where the
+	// prediction summed five, so part of the decode cost was left unexplained
+	// and attributed to prefill.
+	//
+	// Measured at 80 req/s that read a duty of 0.20 on instances reporting no
+	// prefill at all, added 8.7 ms to a predicted iteration of 46.3 against an
+	// observed 37.6, and put every instance above the 45.0 ms gate -- so nothing
+	// was feasible, 84% of decisions became holds, and deep research burned 8.5 s
+	// of its 10 s budget waiting for a fleet running at 21% KV.
+	st := &cms.InstanceStatus{
+		SchedulerRunningToDecodeTokensNum:         100_000,
+		SchedulerRunningToDecodeRequestsNum:       50,
+		SchedulerWaitingToDecodeTokensNum:         40_000,
+		SchedulerWaitingToDecodeRequestsNum:       20,
+		HybridSchedulerWaitingToDecodeTokensNum:   10_000,
+		HybridSchedulerWaitingToDecodeRequestsNum: 5,
+		NumTokensLoadingRequests:                  6_000,
+		NumLoadingRequests:                        3,
+	}
+	view := &cms.InstanceView{
+		InstanceStatusLocalAccount: cms.InstanceStatusLocalAccount{
+			NumTokensInflightDispatchDecodeRequests: 4_000,
+			NumInflightDispatchDecodeRequests:       2,
+		},
+	}
+	kv, n := decodeBatchOf(st, view)
+	assert.InDelta(t, 160_000.0, kv, 1e-9, "every field the engine reports counts")
+	assert.InDelta(t, 80.0, n, 1e-9)
+
+	// The running-only view is 62% of the KV and 63% of the batch here, and the
+	// gap between the two is what used to be charged as prefill.
+	runningOnly := float64(st.SchedulerRunningToDecodeTokensNum)
+	assert.Less(t, runningOnly, kv)
+
+	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	full := p.capacity.decodeStepMs(kv, n)
+	partial := p.capacity.decodeStepMs(runningOnly,
+		float64(st.SchedulerRunningToDecodeRequestsNum))
+	// Asserted as a share of the prediction, not in milliseconds: the test
+	// profile's constants are not the production ones, and what has to hold is
+	// that the understatement is large enough to matter against a gate the
+	// prediction sits within a few percent of. In production this was 8.7 ms on a
+	// 46.3 ms prediction against a 45.0 ms gate.
+	assert.Greater(t, (full-partial)/full, 0.05,
+		"counting only the running batch understates the decode cost by enough to "+
+			"decide feasibility")
 }

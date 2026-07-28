@@ -10,6 +10,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"llumnix/cmd/scheduler/app/options"
+	"llumnix/pkg/cms"
 	"llumnix/pkg/consts"
 	"llumnix/pkg/metrics"
 	"llumnix/pkg/types"
@@ -390,6 +391,39 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 	p.baseDispatchPolicy.calculateMetrics(inferType, request, instanceViews)
 }
 
+// decodeBatchOf is the decode batch as the latency model counts it: the KV in
+// logical tokens and the number of requests producing them.
+//
+// It exists as one function because it is needed in two places -- to PREDICT an
+// iteration and to MEASURE one -- and the two must count the same thing. They did
+// not. The measurement used SchedulerRunningToDecodeTokensNum and
+// SchedulerRunningToDecodeRequestsNum alone while the prediction summed five
+// fields, so the decode-only cost subtracted during the measurement was computed
+// for a smaller batch than the engine was actually running, and the difference
+// was attributed to prefill.
+//
+// Measured at 80 req/s that put the prefill duty cycle at 0.20 on instances the
+// engine reported as carrying no prefill at all (all_prefills_tokens_num = 0,
+// waiting_requests = 0). The projection added 8.7 ms to a predicted iteration of
+// 46.3 against an observed 37.6, and the gate is 45.0, so no instance was ever
+// feasible: 84% of decisions became holds, and deep research spent 8.5 s of its
+// 10 s budget waiting for a fleet that was running at 21% KV.
+func decodeBatchOf(st *cms.InstanceStatus, view *cms.InstanceView) (kv, n float64) {
+	kv = float64(st.HybridSchedulerWaitingToDecodeTokensNum +
+		st.SchedulerWaitingToDecodeTokensNum +
+		st.SchedulerRunningToDecodeTokensNum +
+		st.NumTokensLoadingRequests)
+	n = float64(st.HybridSchedulerWaitingToDecodeRequestsNum +
+		st.NumLoadingRequests +
+		st.SchedulerWaitingToDecodeRequestsNum +
+		st.SchedulerRunningToDecodeRequestsNum)
+	if view != nil {
+		kv += float64(view.NumTokensInflightDispatchDecodeRequests)
+		n += float64(view.NumInflightDispatchDecodeRequests)
+	}
+	return kv, n
+}
+
 // stepObservation is the previous status seen from one instance, kept so that
 // the mean iteration time can be measured across the interval between two
 // statuses.
@@ -451,11 +485,12 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	st := view.cmsView.Status
 	id := view.GetInstanceId()
 
+	curKv, curN := decodeBatchOf(st, view.cmsView)
 	cur := stepObservation{
 		stepID:      int64(st.StepId),
 		timestampMs: st.TimestampMs,
-		kvLogical:   float64(st.SchedulerRunningToDecodeTokensNum),
-		nDecode:     float64(st.SchedulerRunningToDecodeRequestsNum),
+		kvLogical:   curKv,
+		nDecode:     curN,
 		pending: float64(st.NumUncomputedTokensAllWaitingPrefills +
 			st.NumUncomputedTokensSchedulerRunningPrefills),
 	}
@@ -605,16 +640,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	// each request's computed tokens), which is what the engine's own decode
 	// accounting reports and what prefix-cache sharing inflates past the
 	// physical pool. Queries have to use the same quantity as the fit.
-	f.kvLogical = float64(st.HybridSchedulerWaitingToDecodeTokensNum +
-		st.SchedulerWaitingToDecodeTokensNum +
-		st.SchedulerRunningToDecodeTokensNum +
-		st.NumTokensLoadingRequests +
-		view.cmsView.NumTokensInflightDispatchDecodeRequests)
-	f.nDecode = float64(st.HybridSchedulerWaitingToDecodeRequestsNum +
-		st.NumLoadingRequests +
-		st.SchedulerWaitingToDecodeRequestsNum +
-		st.SchedulerRunningToDecodeRequestsNum +
-		view.cmsView.NumInflightDispatchDecodeRequests)
+	f.kvLogical, f.nDecode = decodeBatchOf(st, view.cmsView)
 	f.pendingPrefill = math.Max(0, float64(
 		st.NumUncomputedTokensAllWaitingPrefills+
 			st.NumUncomputedTokensSchedulerRunningPrefills+
