@@ -12,9 +12,9 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 
 | 읽을 것 | 무엇이 있나 |
 |---|---|
-| [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) **§13** | **자족적으로 작성된 현재 상태.** 버전 이력 v9~v18, 반증된 가정 |
-| 같은 문서 **§15~§20** | v19(투영을 엔진 관측으로), v20(효과 없음·제거 후보), v21(지평 소수 올림), 여유 HBM 검토, EXP-25/27 결과. **§20이 현재 결론** |
-| 같은 문서 **마지막 절** | 그 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
+| [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **여기부터 읽는다.** v0.1의 자족적 명세 — 결정 규칙, 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
+| [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | 시간순 경위. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
+| implementation.md **마지막 절** | v0.1 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
 | `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
 
 **2. 지금 클러스터에서 뭐가 도는지 확인한다**
@@ -70,6 +70,7 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 |---|---|
 | [POLYSERVE_DESIGN_KO.md](POLYSERVE_DESIGN_KO.md) | PolyServe 이식 설계 (정본) |
 | [POLYSERVE_PROGRESS.md](POLYSERVE_PROGRESS.md) | PolyServe 구현 시간순 기록, 함정 |
+| [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **FluidServe v0.1 명세 (정본)** |
 | [ms_dev/notes/fluidserve-design.md](ms_dev/notes/fluidserve-design.md) | FluidServe 설계 원안 |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | FluidServe 구현 결정 기록 |
 | [deploy/profiling/README.md](deploy/profiling/README.md) | 지연 프로파일 테이블의 출처·신뢰도 |
