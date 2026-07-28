@@ -163,6 +163,53 @@ func newSloDispatchFullMode(p *options.SchedulerConfig) *sloDispatchPolicy {
 	// requests that fail to meet SLO targets for SloDispatchPolicy and Adaptive PD.
 	policy := &sloDispatchPolicy{
 		baseDispatchPolicy: baseDispatchPolicy{
+			// Co-located (neutral) instances, which is what this fleet is. The
+			// upstream policy defines only Prefill and Decode because it assumes a
+			// disaggregated deployment where an instance does one or the other, and
+			// baseDispatchPolicy is a map of pointers, so a neutral request against
+			// the policy as shipped is a nil dereference rather than a fallback.
+			//
+			// The RULE is unchanged: keep only the instances predicted to meet the
+			// budget, then take the best among them. What has to be combined is that
+			// a neutral instance serves both phases, so both predictions constrain
+			// it at once and both filters apply, where upstream each branch applies
+			// one. Ordering is by predicted TPOT with predicted TTFT as the
+			// tie-break, because the decode budget is the one that binds for the
+			// whole of a request's life while the prefill budget binds once.
+			consts.InferTypeNeutral: {
+				metrics: map[string]func() instanceSchedulingMetric{
+					consts.SchedulingMetricPredictedTtft: getSchedulingMetric(p, consts.SchedulingMetricPredictedTtft),
+					consts.SchedulingMetricPredictedTpot: getSchedulingMetric(p, consts.SchedulingMetricPredictedTpot),
+				},
+				globalFilters: []globalFilter{
+					&failoverFilter{
+						failoverDomain: p.FailoverDomain,
+					},
+				},
+				singleInstanceFilters: []singleInstanceFilter{
+					&schedulabilityFilter{},
+					&stalenessFilter{
+						instanceStalenessSeconds: p.InstanceStalenessSeconds,
+					},
+					&metricBasedFilter{
+						metricName:          consts.SchedulingMetricPredictedTtft,
+						threshold:           p.TtftSlo * p.TtftSloDispatchThreshold,
+						notSkipWhenFallback: true,
+					},
+					&metricBasedFilter{
+						metricName:          consts.SchedulingMetricPredictedTpot,
+						threshold:           p.TpotSlo * p.TpotSloDispatchThreshold,
+						notSkipWhenFallback: true,
+					},
+				},
+				selectors: &metricBasedSelector{
+					topK: p.DispatchTopK,
+					metricNames: []string{
+						consts.SchedulingMetricPredictedTpot,
+						consts.SchedulingMetricPredictedTtft,
+					},
+				},
+			},
 			consts.InferTypePrefill: {
 				metrics: map[string]func() instanceSchedulingMetric{
 					consts.SchedulingMetricPredictedTtft: getSchedulingMetric(p, consts.SchedulingMetricPredictedTtft),
