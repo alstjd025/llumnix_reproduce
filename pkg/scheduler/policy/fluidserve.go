@@ -464,8 +464,17 @@ type stepObservation struct {
 	// the milliseconds over which arrivals accumulate.
 	meanMs float64
 	// prefillDuty is the share of this instance's engine time spent on prefill,
-	// smoothed over recent intervals. See notePrefillDuty.
+	// smoothed over recent intervals. It is the RATIO of the two smoothed times
+	// below rather than a smoothed ratio; see observeInstance for why.
 	prefillDuty float64
+	// prefillMsEwma and totalMsEwma are the two times the duty cycle is the
+	// ratio of, each smoothed separately: milliseconds the engine spent beyond
+	// what the decode law accounts for, and milliseconds it spent in total.
+	// Kept as times rather than as a ratio because the quantity wanted is a
+	// share of engine TIME, and an interval that covers three times as much time
+	// is three times as much evidence about that share.
+	prefillMsEwma float64
+	totalMsEwma   float64
 }
 
 const (
@@ -594,20 +603,62 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 	// decode law accounts for is prefill work, by the same attribution
 	// notePrefill uses; the difference is that this is kept per instance and as
 	// a rate, which is what the projection below needs.
-	duty := 0.0
-	if measured > decodeOnly && measured > 0 {
-		duty = (measured - decodeOnly) / measured
-		if duty > 1 {
-			duty = 1
-		}
-	}
+	// The duty cycle is a ratio of two accumulated TIMES, smoothed separately
+	// and divided at the end, rather than a smoothed average of per-interval
+	// ratios clamped at zero.
+	//
+	// The previous form computed max(0, (measured - decodeOnly) / measured) for
+	// each interval and smoothed that. Two things were wrong with it and they
+	// pull in opposite directions, which is why the error was not visible as a
+	// consistent bias:
+	//
+	//   the clamp   Half the intervals carry no prefill at all, and on those the
+	//               measurement scatters either side of the decode law. Clamping
+	//               each sample at zero keeps the intervals that ran slower than
+	//               the law and discards the ones that ran faster, so the average
+	//               of the clamped samples is the average of the POSITIVE PART,
+	//               not the average. Measured at 80 req/s the instantaneous duty
+	//               had mean 0.099 and median -0.007, and the smoothed value sat
+	//               at 0.163 -- 65% above the quantity it claims to estimate,
+	//               entirely from rectified noise.
+	//   equal weight  A prefill-carrying interval covers several hundred
+	//               milliseconds and a decode-only one about forty. Averaging the
+	//               two intervals' ratios with equal weight answers "what share
+	//               of a typical interval is prefill", which is not what the
+	//               projection needs; carriedPrefillTokens multiplies this by a
+	//               horizon in milliseconds, so it needs the share of engine TIME.
+	//               Time-weighted, the same run reads 0.32.
+	//
+	// The two errors are not small and do not cancel: rectification raised the
+	// estimate by half, equal weighting halved it. What came out sat between the
+	// median observed iteration (38.7 ms) and the mean (57.5 ms), which is why
+	// comparing the prediction against one statistic said it was 8 ms high and
+	// against the other said it was 6 ms low.
+	//
+	// Rectifying the RATIO rather than each sample keeps the guarantee that
+	// matters -- no negative prefill time is ever projected -- without discarding
+	// the intervals that carry the evidence the law is not biased.
+	prefillMs := (measured - decodeOnly) * float64(steps)
+	totalMs := measured * float64(steps)
 
 	p.obsMu.Lock()
 	if o, ok := p.lastObs[id]; ok && o.stepID == cur.stepID {
 		o.meanMs = measured
-		if prev.prefillDuty > 0 || duty > 0 {
-			o.prefillDuty = prev.prefillDuty + fsPrefillDutyAlpha*(duty-prev.prefillDuty)
+		o.prefillMsEwma = prev.prefillMsEwma +
+			fsPrefillDutyAlpha*(prefillMs-prev.prefillMsEwma)
+		o.totalMsEwma = prev.totalMsEwma +
+			fsPrefillDutyAlpha*(totalMs-prev.totalMsEwma)
+		duty := 0.0
+		if o.totalMsEwma > 0 {
+			duty = o.prefillMsEwma / o.totalMsEwma
 		}
+		if duty < 0 {
+			duty = 0
+		}
+		if duty > 1 {
+			duty = 1
+		}
+		o.prefillDuty = duty
 		p.lastObs[id] = o
 	}
 	p.obsMu.Unlock()
