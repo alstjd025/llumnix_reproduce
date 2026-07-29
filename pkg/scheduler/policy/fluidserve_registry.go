@@ -162,6 +162,21 @@ const (
 	// It has to outlive the gateway's hold-and-retry window so that a request
 	// retried near the end of that window is still known to have been waiting.
 	fsArrivalTTLMs = 5 * 60 * 1000
+
+	// Weight of one placement-to-first-token sample. Faster than the capacity
+	// correction because this quantity follows the offered load rather than
+	// drift between the offline law and the hardware: it has to be right within
+	// a burst, not over a run. At the rate these samples arrive -- one per
+	// placement, so hundreds a second at high load -- 0.01 is a time constant of
+	// well under a second.
+	fsPlacementDelayAlpha = 0.01
+	// Samples required before the measured bound replaces the modelled prefill
+	// time. Below this the standard deviation is not yet meaningful and using it
+	// would make the first decisions of a process worse than the fallback.
+	fsMinPlacementDelaySamples = 50
+	// A sample beyond this straddles an engine restart or a record that outlived
+	// the request it describes; the gateway's own hold window is 35 s.
+	fsMaxPlacementDelayMs = 60 * 1000
 )
 
 type requestRegistry struct {
@@ -192,6 +207,32 @@ type requestRegistry struct {
 	// instance since the last time the measurement read it, which is what the
 	// prefill-fraction estimate is measured against.
 	promptTokensSince map[string]float64
+
+	// The time between placing a request and its first output token, measured.
+	//
+	// canWait decides whether a held request can afford to keep waiting, and to
+	// do that it has to subtract what will still happen after it is placed. That
+	// subtraction used a point estimate of the prefill compute time plus a fixed
+	// safety constant, and the estimate left out everything else that stands
+	// between a placement and a first token: the engine's own queue, the tail of
+	// whatever iteration is running when the request lands, and the variance of
+	// both. Measured at 80 req/s the two together came to about 375 ms while the
+	// realised delay was around 500 ms with a tail past 2 s, and the whole of
+	// chat's 15.5% violation rate was requests that had been held until 4.1 s of
+	// a 5.0 s budget and then took longer than 900 ms to produce a token.
+	//
+	// Every other place in this policy that subtracts an uncertain quantity
+	// takes a one-sided bound rather than a mean -- expectedOutflow uses
+	// mean - z*sd with the same z. This is the one that did not, and it is where
+	// the violations were.
+	//
+	// Mean and mean-square are smoothed separately so the standard deviation
+	// comes out of the same two accumulations, for the same reason the duty
+	// cycle is a ratio of accumulations: a smoothed ratio is not the ratio of
+	// the smoothed parts.
+	delayMean   float64
+	delayMeanSq float64
+	delaySeen   int64
 	// The offered rate: prompt tokens per millisecond ARRIVING at the gateway,
 	// counted once per request rather than once per retry, and smoothed.
 	//
@@ -379,6 +420,7 @@ func (r *requestRegistry) reconcile(
 			// budget be measured against elapsed time rather than a modelled
 			// step time.
 			rec.decodeStartMs = nowMs
+			r.notePlacementDelayLocked(float64(nowMs - rec.dispatchedMs))
 		}
 		rec.lastJ = j
 		prof := r.lengths.forTier(rec.tier)
@@ -406,6 +448,56 @@ func (r *requestRegistry) reconcile(
 		out = append(out, r.liveViewLocked(e.rec, e.j, nowMs))
 	}
 	return out
+}
+
+// notePlacementDelayLocked folds one realised placement-to-first-token time
+// into the running mean and mean-square. Called with r.mu held.
+//
+// The sample is quantised by the status interval, because the first token is
+// detected when the engine's step counter has advanced past the prefill steps
+// and statuses arrive every 500 ms. It also inherits whatever error is in the
+// prefill-step count that j is computed from. Both are real limits and both are
+// in the optimistic direction -- a delay detected late reads long, one detected
+// early reads short -- but it is a realised quantity with a measurable spread,
+// and the spread is the thing that was missing.
+func (r *requestRegistry) notePlacementDelayLocked(ms float64) {
+	if ms < 0 || ms > fsMaxPlacementDelayMs {
+		// Straddles an engine restart or a record that outlived its request.
+		return
+	}
+	if r.delaySeen == 0 {
+		r.delayMean, r.delayMeanSq = ms, ms*ms
+	} else {
+		r.delayMean += fsPlacementDelayAlpha * (ms - r.delayMean)
+		r.delayMeanSq += fsPlacementDelayAlpha * (ms*ms - r.delayMeanSq)
+	}
+	r.delaySeen++
+}
+
+// PlacementDelayBound is the time to reserve for what happens after a placement,
+// as a one-sided upper bound rather than a mean. Returns -1 before anything has
+// been measured, which the caller reads as "fall back to the modelled prefill
+// time", so a fresh process behaves as it did before rather than refusing to
+// wait at all.
+func (r *requestRegistry) PlacementDelayBound(z float64) (float64, int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.delaySeen < fsMinPlacementDelaySamples {
+		return -1, r.delaySeen
+	}
+	variance := r.delayMeanSq - r.delayMean*r.delayMean
+	if variance < 0 {
+		variance = 0
+	}
+	return r.delayMean + z*math.Sqrt(variance), r.delaySeen
+}
+
+// PlacementDelayMean is the centre of the same distribution, for telemetry. The
+// bound is what decisions use.
+func (r *requestRegistry) PlacementDelayMean() float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.delayMean
 }
 
 // liveViewLocked turns a record into the decision path's view of it, including

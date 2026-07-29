@@ -404,6 +404,18 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 				// projection.
 				metrics.Gauge("scheduler_fluidserve_offered_rate_tokens_per_ms",
 					metrics.Labels{}).Set(p.registry.offeredRate())
+				// What canWait now reserves for everything that happens after a
+				// placement, and the mean it is bounded from. Published as a
+				// pair because the gap between them IS the correction: the
+				// modelled version this replaced had no spread at all, so a run
+				// where the two are close is a run where this change could not
+				// have mattered.
+				if b, n := p.registry.PlacementDelayBound(p.cfg.zSafety); n >= fsMinPlacementDelaySamples {
+					metrics.Gauge("scheduler_fluidserve_placement_delay_bound_ms",
+						metrics.Labels{}).Set(b)
+					metrics.Gauge("scheduler_fluidserve_placement_delay_mean_ms",
+						metrics.Labels{}).Set(p.registry.PlacementDelayMean())
+				}
 				// The two fleet-wide scalars -- the multiplicative correction and
 				// the prefill fraction -- are already published by reportLoop as
 				// scheduler_fluidserve_capacity_correction and
@@ -1391,10 +1403,33 @@ func classShare(f *instanceFlux, tier int) float64 {
 //
 // The interval is MEASURED, not configured, so this stays correct whatever
 // cadence the gateway is set to and adds no constant of its own.
+// What is subtracted for "everything that still happens after the placement" is
+// a MEASURED one-sided upper bound, not a modelled prefill time plus a constant.
+//
+// The modelled version priced the prefill compute and nothing else: not the
+// engine's own queue, not the tail of the iteration running when the request
+// lands, and not the spread of either. At 80 req/s it came to about 375 ms
+// including the 300 ms safety constant, against a realised 500 ms median with a
+// tail past 2 s. The consequence is visible directly in the time-to-first-token
+// distribution, which is bimodal: a flat stretch up to 3.5 s of requests placed
+// while waiting, and a spike of 70% of all admitted chat requests at 3.75-5.25 s
+// -- the deadline pile-up. Every violation was the part of that spike that
+// overshot the 5.0 s budget, so the failures were not misjudged feasibility,
+// they were the deadline being set with no room for the variance of what
+// follows it.
+//
+// Using mean + z*sd here makes this the same treatment expectedOutflow gives the
+// KV it expects back, with the same z. It also removes ttftSafetyMs: that
+// constant existed to stand in for exactly this quantity and is now measured.
 func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveRequest) bool {
 	waited := float64(req.nowMs - req.arrivedMs)
-	prefillMs := best.prefillMs
-	if math.IsInf(prefillMs, 0) {
+	after, samples := p.registry.PlacementDelayBound(p.cfg.zSafety)
+	if samples < fsMinPlacementDelaySamples {
+		// Nothing measured yet. Fall back to what this did before, so the first
+		// decisions of a process are no worse rather than arbitrarily cautious.
+		after = best.prefillMs + p.cfg.ttftSafetyMs
+	}
+	if math.IsInf(after, 0) {
 		return false
 	}
 	var deadline float64
@@ -1403,13 +1438,12 @@ func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveReques
 		if math.IsInf(pace, 0) || pace <= 0 {
 			return false
 		}
-		deadline = req.budgetMs - prefillMs -
-			req.expectedToks*pace - p.cfg.ttftSafetyMs - req.recheckMs
+		deadline = req.budgetMs - after - req.expectedToks*pace - req.recheckMs
 	} else {
 		if req.ttftSloMs <= 0 {
 			return false
 		}
-		deadline = req.ttftSloMs - prefillMs - p.cfg.ttftSafetyMs - req.recheckMs
+		deadline = req.ttftSloMs - after - req.recheckMs
 	}
 	return waited < deadline
 }
