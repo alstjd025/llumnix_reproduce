@@ -97,6 +97,15 @@ by timestamp. It has happened twice. Bump the prefix, and if it has already
 happened, record the exact directories to exclude in the experiment file
 immediately — not at analysis time.
 
+**Cleaning up an interrupted run's directory needs the runner pod.** The runner
+chowns its output to the host user on its last line, so a run killed before that
+leaves root-owned files that the host cannot delete:
+
+```bash
+POD=$(kubectl -n llumnix get pods -o name | grep bench-runner | head -1 | cut -d/ -f2)
+kubectl -n llumnix exec "$POD" -- rm -rf /work/results/<dir>
+```
+
 ## 6. Judging results
 
 - **Never judge from one measurement per condition.** Within-session spread on
