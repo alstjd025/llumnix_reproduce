@@ -54,6 +54,21 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
   `set_scheduler_profiling.py`가 자동으로 대조하고 `verified: …`를 출력한다.
   그 줄이 없으면 그 run은 무효다.
 
+## 스킬 — 실험/기록/그림은 스킬을 먼저 부른다
+
+`.claude/skills/`에 셋이 있다. 각 항목은 **실제로 한 번씩 실패한 것**만 담았다.
+
+| 스킬 | 언제 |
+|---|---|
+| `exp-run` | 실험을 걸기 전, **설정을 바꾸기 전**, 결과를 판정할 때 |
+| `exp-record` | 결과·설계변경·반증·실수를 적을 때, compaction 직전 |
+| `exp-plot` | 그림이나 표를 만들 때 |
+
+`exp-run`의 첫 항목이 가장 비쌌던 실수다: **설정을 바꾸기 전에 그 값이 upstream
+기본값인지 먼저 확인한다.** `--wait-scheduling-timeout` 5000ms를 "불공정한 비대칭"으로
+보고 고쳤는데, grep 한 번이면 그게 게이트웨이 자체 기본값이고 오히려 FluidServe만
+비기본값을 쓰고 있었다는 것을 알 수 있었다.
+
 ## 서술 규칙 (문서·커밋 메시지·사용자 보고 전부)
 
 **비유나 관용구를 쓰지 말고 일반적으로 통용되는 기술 용어로 쓴다.** 문장이 길어져도
