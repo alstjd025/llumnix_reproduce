@@ -130,6 +130,33 @@ kubectl -n llumnix exec "$POD" -- rm -rf /work/results/<dir>
   Write the refutation condition before the run, and treat mid-path numbers as
   refutation only.
 
+## 6b. Cross-check a client-side metric against what the server reports
+
+A metric the load generator computes is a second implementation of a quantity
+the system already measures, and the two can disagree without anything erroring.
+
+`tbt_mean_ms` was recorded at 1/1.92 of the true inter-token time for every run
+up to 2026-07-30, because the client divided each inter-chunk gap by a per-chunk
+token estimate obtained by tokenising the chunk out of context, which
+roughly doubles the count. The scheduler's `observed_step_ms` (50.5 ms) and its
+model's `predicted_step_ms` (50.2 ms) agreed with each other and with the true
+per-token time; only the client number (26.1 ms) was wrong, and it was the one
+the SLO rule was applied to. Every attainment figure on record was judged
+against roughly twice its intended per-token budget.
+
+Before trusting a client-side latency, reconcile it three ways: the client's
+own raw events (`tbt_events.jsonl` has per-chunk arrival offsets), the server's
+gauge for the same thing, and a derivation from independent columns
+(`(e2e - ttft) / (tokens - 1)`). If they disagree by a clean constant factor,
+look for a count on one side of a division.
+
+**Do not fix the collection code while a sweep is running.** `/work` is a
+hostPath mount of the experiment repository and each condition starts a Job that
+re-reads the source, so editing `workloads/` mid-sweep measures different
+conditions with different code — the same rule as `bin/`. `analysis_scripts/` is
+not on the measurement path and is safe to change, which is also the better
+place for a scoring fix because it applies to every run already recorded.
+
 ## 7. Cost discipline
 
 A counter computed inside the run beats an A/B arm when the effect is smaller

@@ -59,6 +59,24 @@ Images over 2000 px cannot be read back; downscale a copy to inspect one.
 - **A run that failed its health check does not go in a figure.** Check
   `run_health.py` first; a condition that ran on three engines plots normally.
 
+## One aggregation, and it is per request
+
+Attainment is aggregated **per request**: every request counts once, no weight
+applied. Report it on both denominators, with the rejection rate and token
+goodput, and with the three per-class numbers beside it.
+
+Do not print the class-equal average as a headline. It is the unweighted mean of
+the three per-class numbers, so it carries nothing they do not, while hiding
+which class produced it and giving a class that is 7.7% of the requests one
+third of the score. `equal_mix()` stays in the code because results recorded
+before 2026-07-30 are stated in it.
+
+Two scripts disagreed on this for three days: `exp23_rate_sweep.py` drew the
+class-equal average under the title "attainment" while `exp27_figures.py` drew
+the per-request one, so the same run produced two headline figures that did not
+match and neither said which it was. When adding a panel, name the aggregation
+in the title.
+
 ## Verify what got drawn
 
 `collect()` filters by a filename pattern, and a variant suffix silently drops
