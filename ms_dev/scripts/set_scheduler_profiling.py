@@ -120,6 +120,23 @@ GATEWAY_FLAGS_BY_POLICY = {
         "--wait-scheduling-timeout": "35000ms",
     },
 }
+# These two ARE the gateway's upstream defaults (cmd/gateway/app/options/config.go:
+# 1000 ms and 5000 ms), so every arm except FluidServe runs the gateway as
+# shipped. FluidServe overrides them above because its hold is a computed
+# deadline rather than a fixed patience: canWait derives waits of up to twenty
+# seconds from the agent class's 30 s end-to-end budget, and a 5 s ceiling
+# truncates them before the scheduler's own logic can end them, which removes
+# the mechanism rather than testing it. That override is part of FluidServe's
+# design and has to be stated as one, not hidden.
+#
+# 2026-07-29: briefly changed so that every arm got FluidServe's window, on the
+# reasoning that the gateway is infrastructure and an asymmetry here is unfair.
+# Reverted for two reasons. The 5 s ceiling is what Llumnix ships, so raising it
+# measures a baseline nobody runs; and every result recorded from EXP-27 to
+# EXP-36 used the per-policy setting, so changing it would leave one sweep
+# incomparable with all of them. Running the uniform-window variant as a
+# separate arm is worth doing -- it answers "what if the baseline could hold as
+# long as you do" -- but as an appendix, not as the main comparison.
 GATEWAY_DEFAULTS = {
     "--wait-scheduling-retry-interval": "1000ms",
     "--wait-scheduling-timeout": "5000ms",
