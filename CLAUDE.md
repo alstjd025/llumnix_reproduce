@@ -14,8 +14,11 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 |---|---|
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **여기부터 읽는다.** v0.1의 자족적 명세 — 결정 규칙, 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | 시간순 경위. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
+| implementation.md **§31** | **2026-07-30 현재 상태 요약. compaction 후 여기부터 읽으면 된다** |
 | implementation.md **마지막 절** | 그 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
-| **미해결** | 80 req/s에서 예측이 실측보다 8ms 높아 결정의 84%가 보유. §24.2에 다음 단계(계측 노출)까지 적혀 있다 |
+| **정책 상태** | **EXP-27 이후 바뀌지 않았다.** v25~v28 네 개를 시도해 전부 기각(§31.1) |
+| **닫힌 미해결** | §24의 "8ms 과대예측"은 **존재하지 않았다**(§27) — 통계량 불일치. 추정기 정확도는 구속 조건이 아니다 |
+| **남은 방향** | 정상상태에서는 스냅샷이 이미 좋은 예측치(자기상관 0.82). **투영 기계를 정상상태에서만 시험해왔다**(§31.2). → 버스트성 sweep, Azure trace |
 | `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
 
 **2. 지금 클러스터에서 뭐가 도는지 확인한다**
