@@ -1014,6 +1014,33 @@ type candidate struct {
 	// still miss the budget the request itself is judged by.
 	missesOwnBudget bool
 	prefillMs       float64
+
+	// snapFeasible is what the SAME test would have returned had the instance
+	// been judged on the KV it holds right now instead of on the projection.
+	// Nothing reads it; it exists to be counted.
+	//
+	// The projection enters the decision at exactly one place, newKv = proj +
+	// cost, and everything downstream follows from that. Measured at 80 req/s
+	// the projection sits 48,501 tokens below the snapshot, which through the
+	// decode law's KV coefficient is 0.68 ms on a predicted iteration of about
+	// 46 against a gate of 45. So it can only change a decision when the
+	// prediction lands within 0.68 ms of the gate, and how often that happens is
+	// a fact about the workload that no amount of reasoning settles.
+	//
+	// Counted here rather than measured by running the ablation as a separate
+	// arm, because that arm's effect reaches the score only after passing
+	// through the feedback the change itself causes: fewer placements, a lighter
+	// engine, a lower measured iteration time, and a correction factor that
+	// follows it down. v25 was lost to exactly that loop. Computing both answers
+	// from the same state at the same instant measures the projection where it
+	// enters, before any of that.
+	//
+	// What this does NOT measure: the trajectory a snapshot-only policy would
+	// have followed from the start. It is the marginal effect, not the system
+	// effect, and it is meant to decide whether the system-effect experiment is
+	// worth its two hours.
+	snapFeasible bool
+	snapRoom     float64
 }
 
 func (s *fluidserveSelector) selectInstance(
@@ -1046,6 +1073,35 @@ func (s *fluidserveSelector) selectInstance(
 	if len(cands) == 0 {
 		return nil
 	}
+	// Would the projection have changed what happens to THIS request, as opposed
+	// to what one instance looked like? Two different answers count separately:
+	// whether the request gets placed at all, and if it does, whether it goes
+	// somewhere else.
+	anyFeasible, anySnap := false, false
+	for i := range cands {
+		anyFeasible = anyFeasible || cands[i].feasible
+		anySnap = anySnap || cands[i].snapFeasible
+	}
+	metrics.Counter("scheduler_fluidserve_flux_evaluations_total",
+		metrics.Labels{{Name: "level", Value: "decision"}}).Inc()
+	if anyFeasible != anySnap {
+		metrics.Counter("scheduler_fluidserve_flux_flips_total",
+			metrics.Labels{{Name: "level", Value: "decision"}}).Inc()
+	} else if anyFeasible {
+		snap := make([]candidate, len(cands))
+		copy(snap, cands)
+		for i := range snap {
+			snap[i].feasible = snap[i].snapFeasible
+			snap[i].room = snap[i].snapRoom
+		}
+		sortCandidates(snap)
+		sortCandidates(cands)
+		if snap[0].flux.id != cands[0].flux.id {
+			metrics.Counter("scheduler_fluidserve_flux_flips_total",
+				metrics.Labels{{Name: "level", Value: "target"}}).Inc()
+		}
+	}
+
 	sortCandidates(cands)
 
 	best := cands[0]
@@ -1220,6 +1276,24 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	// and dividing by a quantity that changes sign makes the comparison
 	// meaningless exactly where it matters most.
 	c.room = c.headroomAfter / math.Max(f.capMem, 1)
+
+	// The same test on the snapshot. Only newKv differs; the gate, the tightest
+	// allowance and the memory capacity are properties of the instance and the
+	// request, not of the projection.
+	snapKv := f.kvLogical + cost
+	snapMean := p.capacity.meanStepMs(snapKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
+	c.snapFeasible = !math.IsInf(snapMean, 0) &&
+		snapMean <= c.gateAfter &&
+		snapMean <= f.tightestAllowance &&
+		snapKv <= f.capMem
+	c.snapRoom = (math.Min(f.capKv, f.capMem) - snapKv) / math.Max(f.capMem, 1)
+	if c.feasible != c.snapFeasible {
+		metrics.Counter("scheduler_fluidserve_flux_flips_total",
+			metrics.Labels{{Name: "level", Value: "candidate"}}).Inc()
+	}
+	metrics.Counter("scheduler_fluidserve_flux_evaluations_total",
+		metrics.Labels{{Name: "level", Value: "candidate"}}).Inc()
+
 	return c
 }
 
