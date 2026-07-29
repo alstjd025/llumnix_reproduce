@@ -409,7 +409,7 @@ func TestProgressComesFromTheStepCounter(t *testing.T) {
 	r.noteArrival("a", 0, now)
 	// A 16k prompt needs two iterations at an 8192-token budget before the
 	// request produces anything.
-	r.onDispatch("e0", "a", 50, 16384, 8192, 1000, now)
+	r.onDispatch("e0", "a", 50, 16384, 8192, 1000, now, 0)
 
 	live := r.reconcile("e0", 1, 1002, now+100)
 	require.Len(t, live, 1)
@@ -428,9 +428,9 @@ func TestReconcileTrimsToTheEngineCount(t *testing.T) {
 		r.noteArrival(id, 0, now)
 	}
 	// Dispatched at different times, so they have made different progress.
-	r.onDispatch("e0", "a", 50, 1000, 8192, 1000, now)
-	r.onDispatch("e0", "b", 50, 1000, 8192, 1100, now)
-	r.onDispatch("e0", "c", 50, 1000, 8192, 1200, now)
+	r.onDispatch("e0", "a", 50, 1000, 8192, 1000, now, 0)
+	r.onDispatch("e0", "b", 50, 1000, 8192, 1100, now, 0)
+	r.onDispatch("e0", "c", 50, 1000, 8192, 1200, now, 0)
 
 	// The engine says only two are decoding, so the one furthest along is the
 	// one presumed finished.
@@ -451,7 +451,7 @@ func TestRecordsDropWhenTheEngineRestarts(t *testing.T) {
 	r := testRegistry(t)
 	now := int64(1_000_000)
 	r.noteArrival("a", 0, now)
-	r.onDispatch("e0", "a", 50, 1000, 8192, 5000, now)
+	r.onDispatch("e0", "a", 50, 1000, 8192, 5000, now, 0)
 	// A restarted engine reports a step counter below what we recorded.
 	live := r.reconcile("e0", 1, 3, now+1000)
 	assert.Empty(t, live)
@@ -462,7 +462,7 @@ func TestRequestsPastEveryObservedLengthAreRetired(t *testing.T) {
 	r := testRegistry(t)
 	now := int64(1_000_000)
 	r.noteArrival("a", 0, now)
-	r.onDispatch("e0", "a", 50, 100, 8192, 1000, now)
+	r.onDispatch("e0", "a", 50, 100, 8192, 1000, now, 0)
 	// The 50 ms tier tops out at 400 tokens in the test profile.
 	live := r.reconcile("e0", 5, 1000+1+500, now+20000)
 	assert.Empty(t, live)
@@ -474,7 +474,7 @@ func TestDecodeBudgetCarriesCreditForward(t *testing.T) {
 	r := testRegistry(t)
 	now := int64(1_000_000)
 	r.noteArrival("a", 0, now)
-	r.onDispatch("e0", "a", 50, 100, 8192, 1000, now)
+	r.onDispatch("e0", "a", 50, 100, 8192, 1000, now, 0)
 
 	// First observation with progress starts the decode clock.
 	r.reconcile("e0", 1, 1001, now+1000)
@@ -502,14 +502,14 @@ func TestEndToEndBudgetCountsQueueingTime(t *testing.T) {
 	// Tier 25 is scored end to end, so time spent before dispatch is spent
 	// budget, unlike the decode-mode tiers.
 	r.noteArrival("s", 0, now)
-	r.onDispatch("e0", "s", 25, 20000, 8192, 1000, now+5000)
+	r.onDispatch("e0", "s", 25, 20000, 8192, 1000, now+5000, 0)
 
 	early := r.reconcile("e0", 1, 1010, now+6000)
 	require.Len(t, early, 1)
 
 	r2 := testRegistry(t)
 	r2.noteArrival("s", 0, now)
-	r2.onDispatch("e0", "s", 25, 20000, 8192, 1000, now+5000)
+	r2.onDispatch("e0", "s", 25, 20000, 8192, 1000, now+5000, 0)
 	late := r2.reconcile("e0", 1, 1010, now+20000)
 	require.Len(t, late, 1)
 

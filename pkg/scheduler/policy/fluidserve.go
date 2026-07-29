@@ -1423,11 +1423,17 @@ func classShare(f *instanceFlux, tier int) float64 {
 // constant existed to stand in for exactly this quantity and is now measured.
 func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveRequest) bool {
 	waited := float64(req.nowMs - req.arrivedMs)
-	after, samples := p.registry.PlacementDelayBound(p.cfg.zSafety)
-	if samples < fsMinPlacementDelaySamples {
-		// Nothing measured yet. Fall back to what this did before, so the first
-		// decisions of a process are no worse rather than arbitrarily cautious.
-		after = best.prefillMs + p.cfg.ttftSafetyMs
+	// Two parts, because they are two quantities. The prefill scales with THIS
+	// request's prompt and the capacity model predicts it per request; the queue
+	// residual does not depend on the prompt and is measured with its spread.
+	// Collapsing both into one fleet-wide number made it an average over a class
+	// mix that is 76.9% chat, and applying chat's number to an agent request with
+	// a ten-times-longer prompt moved that class the wrong way.
+	after := best.prefillMs
+	if queue, samples := p.registry.PlacementDelayBound(p.cfg.zSafety); samples >= fsMinPlacementDelaySamples {
+		after += queue
+	} else {
+		after += p.cfg.ttftSafetyMs
 	}
 	if math.IsInf(after, 0) {
 		return false
@@ -1494,7 +1500,7 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 
 func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, kind string) {
 	p.registry.onDispatch(c.flux.id, req.id, req.tier, req.promptTokens,
-		c.flux.chunk, c.flux.stepID, req.nowMs)
+		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs)
 
 	metrics.Counter("scheduler_fluidserve_decisions_total",
 		metrics.Labels{{Name: "decision", Value: kind}}).Inc()

@@ -124,7 +124,14 @@ type dispatchRecord struct {
 	firstSeenMs    int64 // when the gateway first asked us to place it
 	dispatchedMs   int64
 	decodeStartMs  int64 // set the first time progress is seen; 0 until then
-	lastJ          int
+	// prefillEstMs is what the decision path predicted this request's prefill
+	// would cost on the instance it was sent to. Kept so that the realised
+	// placement-to-first-token time can be split into the part that depends on
+	// the prompt and the part that does not: subtracting it leaves the engine's
+	// own queue and the tail of whatever iteration was running, which is what
+	// the modelled prefill never included and what has to be measured.
+	prefillEstMs float64
+	lastJ        int
 }
 
 // liveRequest is the per-request view the decision path consumes.
@@ -344,7 +351,7 @@ func (r *requestRegistry) gcLocked(nowMs int64) {
 // onDispatch records that a request was placed on an instance.
 func (r *requestRegistry) onDispatch(
 	instanceID, requestID string, tier, promptTokens int,
-	chunk float64, stepID int64, nowMs int64) {
+	chunk float64, stepID int64, nowMs int64, prefillEstMs float64) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -374,6 +381,7 @@ func (r *requestRegistry) onDispatch(
 		stepAtDispatch: stepID,
 		firstSeenMs:    arrived,
 		dispatchedMs:   nowMs,
+		prefillEstMs:   prefillEstMs,
 	}
 }
 
@@ -420,7 +428,11 @@ func (r *requestRegistry) reconcile(
 			// budget be measured against elapsed time rather than a modelled
 			// step time.
 			rec.decodeStartMs = nowMs
-			r.notePlacementDelayLocked(float64(nowMs - rec.dispatchedMs))
+			// The RESIDUAL, not the whole delay: what happened between the
+			// placement and the first token beyond the prefill the decision
+			// path had already priced. See notePlacementDelayLocked.
+			r.notePlacementDelayLocked(
+				float64(nowMs-rec.dispatchedMs) - rec.prefillEstMs)
 		}
 		rec.lastJ = j
 		prof := r.lengths.forTier(rec.tier)
@@ -450,18 +462,37 @@ func (r *requestRegistry) reconcile(
 	return out
 }
 
-// notePlacementDelayLocked folds one realised placement-to-first-token time
-// into the running mean and mean-square. Called with r.mu held.
+// notePlacementDelayLocked folds one realised QUEUE residual into the running
+// mean and mean-square: the time between a placement and its first token, minus
+// the prefill the decision path had already priced for that request.
 //
-// The sample is quantised by the status interval, because the first token is
-// detected when the engine's step counter has advanced past the prefill steps
-// and statuses arrive every 500 ms. It also inherits whatever error is in the
-// prefill-step count that j is computed from. Both are real limits and both are
-// in the optimistic direction -- a delay detected late reads long, one detected
-// early reads short -- but it is a realised quantity with a measurable spread,
-// and the spread is the thing that was missing.
+// The residual rather than the whole delay, because the whole delay is not one
+// quantity. It is a prompt-dependent part -- the prefill compute, which scales
+// with the prompt and which the capacity model already predicts per request --
+// and a prompt-independent part -- the engine's own queue and the tail of the
+// iteration running when the request lands. Folding both into one fleet-wide
+// scalar makes that scalar an average over the class mix, and the mix here is
+// 76.9% chat, so the scalar comes out at chat's value and is then applied to an
+// agent request whose prompt is ten times longer.
+//
+// Measured, that is what happened: the fleet-wide version read 424 ms with 111
+// of standard deviation, which is larger than the 375 ms the model gave a chat
+// request and smaller than what it gave an agent one. Chat and deep research
+// were held less and served better, rejection up 8 points each and attainment up;
+// the agent class was held MORE, rejection down 20 points, and the extra
+// requests it then admitted were marginal ones, so its attainment fell 6.
+//
+// Splitting it keeps the prompt-dependent part per request and measures only the
+// part that has no reason to depend on the prompt.
 func (r *requestRegistry) notePlacementDelayLocked(ms float64) {
-	if ms < 0 || ms > fsMaxPlacementDelayMs {
+	if ms < 0 {
+		// The prefill was priced above what the whole placement took. Real
+		// evidence that the queue cost nothing, so it counts as zero rather than
+		// being discarded, which would keep only the samples that argue for
+		// waiting less.
+		ms = 0
+	}
+	if ms > fsMaxPlacementDelayMs {
 		// Straddles an engine restart or a record that outlived its request.
 		return
 	}
@@ -474,11 +505,10 @@ func (r *requestRegistry) notePlacementDelayLocked(ms float64) {
 	r.delaySeen++
 }
 
-// PlacementDelayBound is the time to reserve for what happens after a placement,
-// as a one-sided upper bound rather than a mean. Returns -1 before anything has
-// been measured, which the caller reads as "fall back to the modelled prefill
-// time", so a fresh process behaves as it did before rather than refusing to
-// wait at all.
+// PlacementDelayBound is the queue residual to reserve on TOP of this request's
+// own modelled prefill, as a one-sided upper bound rather than a mean. Returns
+// -1 before enough has been measured, which the caller reads as "use the old
+// fixed margin", so a fresh process behaves as it did before.
 func (r *requestRegistry) PlacementDelayBound(z float64) (float64, int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
