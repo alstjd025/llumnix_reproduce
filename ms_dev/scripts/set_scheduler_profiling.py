@@ -110,19 +110,33 @@ FLUIDSERVE_ABLATIONS = {
 # end-to-end budget of 30 s, so the ceiling is set above it; every shorter hold
 # ends in a placement or a rejection well before this fires, and reaching it at
 # all means the scheduler stopped answering.
-GATEWAY_FLAGS_BY_POLICY = {
-    "fluidserve": {
-        # Matched to --cms-pull-status-interval-ms, which is how often the
-        # instance state the decision reads is refreshed.  Re-deciding faster
-        # than the state changes cannot reach a different answer and only costs
-        # scheduling calls, so the re-decision period is the state period.
-        "--wait-scheduling-retry-interval": "500ms",
-        "--wait-scheduling-timeout": "35000ms",
-    },
-}
+# 2026-07-29: these were per-policy and are now identical for every arm.
+#
+# FluidServe alone got a 500 ms re-decision period and a 35 s ceiling while
+# PolyServe and the SLO arm got 1,000 ms and 5 s.  The reasoning above for the
+# wide ceiling is right and applies to any policy that holds a request: the hold
+# has to end because the scheduler decided it should, not because the gateway
+# lost patience.  Giving it to one arm made it a property of that arm.
+#
+# It also invalidated a conclusion.  The SLO arm was measured giving up at 5.5 s
+# regardless of class, and that was read as the policy having no model of how
+# long it could afford to wait.  Its ceiling was 5 s.  The measurement showed the
+# gateway's patience, not the policy's.
+#
+# The SLO arm holds and retries too -- it returns ErrorNoAvailableEndpoint when
+# no instance passes its filter, which the gateway treats as hold-and-retry --
+# so the wide window is what lets each policy's own logic decide when a hold
+# ends.  If a policy has no such logic, that is a result rather than a setting.
+GATEWAY_FLAGS_BY_POLICY = {}
 GATEWAY_DEFAULTS = {
-    "--wait-scheduling-retry-interval": "1000ms",
-    "--wait-scheduling-timeout": "5000ms",
+    # Matched to --cms-pull-status-interval-ms, which is how often the instance
+    # state the decision reads is refreshed.  Re-deciding faster than the state
+    # changes cannot reach a different answer and only costs scheduling calls,
+    # so the re-decision period is the state period.
+    "--wait-scheduling-retry-interval": "500ms",
+    # Above the longest deadline any scheduler here computes, which is the agent
+    # class's 30 s end-to-end budget.
+    "--wait-scheduling-timeout": "35000ms",
 }
 
 # Applied to every policy, because it is a property of the gateway rather than
