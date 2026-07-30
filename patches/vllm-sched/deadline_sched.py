@@ -74,6 +74,40 @@ _C_PT = _env_float("DEADLINE_BT_CPT", 3.087e-02)    # ms per prefill token
 _C_ND = _env_float("DEADLINE_BT_CND", 3.170e-02)    # ms per decode request
 _CHUNK_SAFETY = _env_float("DEADLINE_CHUNK_SAFETY", 1.2)   # Niyama pred_thres
 _MIN_PREFILL = int(_env_float("DEADLINE_MIN_PREFILL", 128))  # never fully stall
+# Cost of the already-computed prefix a prefilling request carries, per token of
+# that prefix. NOT fitted here: our per-step captures have no prefill-token
+# signal, which is the same gap that stops the decode law being corrected online
+# (see the note above newCapacityModel). Transferred from Niyama's own
+# >512-token model, where the prefill-context coefficient is 2.727223e-6 s/token
+# against 6.863043e-5 s/token for prefill tokens, a ratio of 0.0397; that ratio
+# is applied to our fitted _C_PT. Hardware-independent only to the extent that
+# the ratio of two attention costs is, so it is a stated estimate and not a
+# measurement. Set DEADLINE_BT_CPCTX=0 to recover the previous behaviour, which
+# priced prefill tokens and ignored the prefix they attend over.
+_C_PCTX = _env_float("DEADLINE_BT_CPCTX", 3.087e-02 * 0.0397)  # ms per prefix tok
+# Niyama searches a fixed grid and never schedules a step larger than its top
+# entry, 2552 total tokens (deadline_scheduler.py TOKEN_SEARCH_SPACE). The port
+# previously clamped to the engine's max_num_batched_tokens, 8192 here, which
+# lets a single step prefill a whole 5.5k-token agent prompt -- about 436 ms, the
+# tail that makes the observed iteration time bimodal (implementation.md 29).
+# Niyama would spread the same prompt over at least three steps.
+_GRID = [128] + list(range(256, 2049, 256)) + [2552]
+_GRID_LOW_MEM = list(range(128, 513, 128))
+# Niyama's low-memory branch: free KV tokens // 32 below this switches to the
+# restricted grid, so the next few steps cannot exhaust the pool.
+_LOW_MEM_TOKENS = _env_float("DEADLINE_LOW_MEM_TOKENS", 1000.0)
+USE_GRID = _env_flag("DEADLINE_USE_GRID", True)
+# unit 2: Niyama's `deadline` policy is NOT pure EDF. Sequence.__lt__ orders by
+# `ttft_deadline + arrival_time + param * remaining_prefill_tokens` with
+# param = 0.008 s/token, a deliberate blend of EDF and shortest-remaining-prefill
+# that keeps a long prompt from blocking the head of the queue. `edf` and `srpf`
+# are separate scheduler_type values there. Set to 0 for pure EDF.
+# Niyama's 0.008 is added to values in SECONDS, so it is 8 ms per token, not per
+# thousand. On our mix that is 5.2 s for a 649-token chat prompt and 44.5 s for a
+# 5,557-token agent prompt, against deadlines of 5 s and 11.8 s -- the term does
+# not adjust the order, it dominates it, and `deadline` is in practice
+# shortest-prompt-first with the deadline as a tiebreak. Kept at the paper value.
+_HYBRID_PARAM_MS = _env_float("DEADLINE_HYBRID_PARAM_MS", 8.0)  # ms per token
 # Token budget reserved per running decode so shrinking the step budget never
 # starves a decode of its 1 token (async scheduling can ask for 2).
 _DECODE_RESERVE = int(_env_float("DEADLINE_DECODE_RESERVE", 2))
@@ -109,15 +143,18 @@ class DeadlineScheduler(AsyncScheduler):
         # aggregate token-throughput EMA, used by relegation's completion estimate
         self._prefill_tps = INIT_PREFILL_TPS
         self._last_sched_t = None
-        self._last_total_computed = 0
+        self._last_prefill_tokens = 0
         self._logged = 0
         # Save the engine's static chunk knobs; unit 4 mutates them per step and
         # restores these as the "no constraint" / ceiling values.
         self._orig_long_prefill = self.scheduler_config.long_prefill_token_threshold
         self._orig_max_batched = self.max_num_scheduled_tokens
         logger.info(
-            "[deadline] relegation=%s dynamic_chunk=%s tbt_s=%.3f init_tps=%.0f max_batched=%d",
-            RELEGATION_ENABLED, DYNAMIC_CHUNK, TBT_S, INIT_PREFILL_TPS,
+            "[deadline] relegation=%s dynamic_chunk=%s grid=%s grid_top=%d "
+            "hybrid_ms_per_tok=%.3f c_pctx=%.3e tbt_s=%.3f init_tps=%.0f "
+            "max_batched=%d",
+            RELEGATION_ENABLED, DYNAMIC_CHUNK, USE_GRID, _GRID[-1],
+            _HYBRID_PARAM_MS, _C_PCTX, TBT_S, INIT_PREFILL_TPS,
             self._orig_max_batched,
         )
 
@@ -142,7 +179,13 @@ class DeadlineScheduler(AsyncScheduler):
         self._meta[request.request_id] = {
             "ttft_deadline": ttft_deadline, "tbt_s": tbt_s, "drop": 0,
         }
-        request.priority = int(ttft_deadline * 1000.0)  # EDF admission order
+        # unit 2: Niyama's hybrid prioritization, not plain EDF. The remaining
+        # prefill of a WAITING request is its whole prompt (nothing computed
+        # yet), so the term is fixed at admission and the priority stays static,
+        # which is what vLLM's live heap needs -- recomputing a key per step
+        # would be least-laxity-first, a different algorithm.
+        hybrid = _HYBRID_PARAM_MS * float(request.num_prompt_tokens)
+        request.priority = int(ttft_deadline * 1000.0 + hybrid)
 
         if self._logged < 8:
             self._logged += 1
@@ -170,15 +213,23 @@ class DeadlineScheduler(AsyncScheduler):
 
     # ---- unit 5: eager relegation of requests that cannot meet their deadline
     def _update_tps(self, now: float) -> None:
-        total_computed = sum(r.num_computed_tokens for r in self.running)
+        """EMA of PREFILL throughput, in tokens per second.
+
+        Niyama accumulates `last_prefill_size` -- the prefill tokens it actually
+        scheduled -- and divides by the elapsed time
+        (deadline_scheduler.py, `expected_prefill_throughput`). This previously
+        differenced `sum(num_computed_tokens)` over all running requests, which
+        counts decode tokens too: at our operating point roughly 250 decode
+        against 800 prefill tokens per step, so the estimate ran about 30% high
+        and relegation fired later than the original's would.
+        """
         if self._last_sched_t is not None:
             dt = now - self._last_sched_t
-            dtok = total_computed - self._last_total_computed
-            if dt > 1e-4 and dtok > 0:
-                obs = dtok / dt
+            if dt > 1e-4 and self._last_prefill_tokens > 0:
+                obs = self._last_prefill_tokens / dt
                 self._prefill_tps = _TPS_DECAY * self._prefill_tps + (1 - _TPS_DECAY) * obs
         self._last_sched_t = now
-        self._last_total_computed = total_computed
+        self._last_prefill_tokens = 0
 
     def _relegate_waiting(self, now: float) -> None:
         """Bump the priority of any WAITING request whose prefill cannot finish
@@ -240,16 +291,91 @@ class DeadlineScheduler(AsyncScheduler):
             ndec += 1
             tbt_deadline = m["ttft_deadline"] + m["tbt_s"] * (_output_tokens(r) + 1)
             min_slack_ms = min(min_slack_ms, (tbt_deadline - now) * 1000.0)
+
+        grid = _GRID
+        if self._free_kv_tokens() / 32.0 < _LOW_MEM_TOKENS:
+            # Niyama's memory branch: with little free KV, cap the step so the
+            # next few steps cannot exhaust the pool.
+            grid = _GRID_LOW_MEM
+        ceiling = min(self._orig_max_batched, grid[-1]) if USE_GRID \
+            else self._orig_max_batched
+
         if ndec == 0:
-            return self._orig_max_batched  # no decode to protect -> full budget
-        decode_only_ms = _C0 + _C_KV * kv + _C_ND * ndec
-        headroom_ms = min_slack_ms - decode_only_ms * _CHUNK_SAFETY
-        max_prefill = headroom_ms / _C_PT if _C_PT > 0 else self._orig_max_batched
-        prefill_budget = max(_MIN_PREFILL, min(max_prefill, self._orig_max_batched))
-        # Reserve every running decode's tokens first, then allow prefill_budget
-        # on top; decodes sort ahead of prefills (unit 3) so they draw first.
-        total = ndec * _DECODE_RESERVE + prefill_budget
-        return int(max(_MIN_PREFILL, min(total, self._orig_max_batched)))
+            return int(ceiling)  # no decode to protect -> full budget
+
+        # Prefix the prefilling requests already carry. Niyama estimates this
+        # from the head of its prefill queue and calls it a conservative
+        # estimate; the V1 equivalent is the largest computed prefix among the
+        # requests currently prefilling, plus the head of the waiting queue if
+        # one is about to be admitted.
+        pctx = self._prefill_context_estimate()
+
+        def predict(prefill_tokens: float) -> float:
+            return (_C0 + _C_KV * kv + _C_ND * ndec
+                    + _C_PT * prefill_tokens + _C_PCTX * pctx)
+
+        if not USE_GRID:
+            headroom_ms = min_slack_ms - (_C0 + _C_KV * kv + _C_ND * ndec
+                                          + _C_PCTX * pctx) * _CHUNK_SAFETY
+            max_prefill = headroom_ms / _C_PT if _C_PT > 0 else ceiling
+            total = ndec * _DECODE_RESERVE + max(_MIN_PREFILL, min(max_prefill, ceiling))
+            return int(max(_MIN_PREFILL, min(total, ceiling)))
+
+        # Niyama's binary search over the grid: the largest TOTAL token count
+        # whose predicted time, inflated by pred_thres, still fits the tightest
+        # decode's slack. The grid entry is a total, so the prefill share is what
+        # remains after the decodes have drawn their tokens.
+        best = grid[0]
+        if min_slack_ms > 0:
+            lo, hi = 0, len(grid) - 1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                total_tokens = grid[mid]
+                prefill_tokens = max(0.0, total_tokens - ndec * _DECODE_RESERVE)
+                if predict(prefill_tokens) * _CHUNK_SAFETY <= min_slack_ms:
+                    best = total_tokens
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+        total = ndec * _DECODE_RESERVE + max(
+            _MIN_PREFILL, best - ndec * _DECODE_RESERVE)
+        return int(max(_MIN_PREFILL, min(total, ceiling)))
+
+    def _free_kv_tokens(self) -> float:
+        """Free KV capacity in tokens, or +inf when the accessor is not there.
+
+        Returning infinity rather than zero on an unknown API keeps the
+        low-memory branch off by default: a wrong clamp to 512 tokens would
+        throttle prefill on every step and would be hard to distinguish from the
+        mechanism under test.
+        """
+        for path in (("kv_cache_manager", "block_pool", "get_num_free_blocks"),
+                     ("kv_cache_manager", "get_num_free_blocks")):
+            obj = self
+            for attr in path:
+                obj = getattr(obj, attr, None)
+                if obj is None:
+                    break
+            if callable(obj):
+                try:
+                    blocks = float(obj())
+                except Exception:
+                    return float("inf")
+                bs = getattr(getattr(self, "cache_config", None), "block_size", 0)
+                return blocks * float(bs) if bs else float("inf")
+        return float("inf")
+
+    def _prefill_context_estimate(self) -> float:
+        """Computed prefix carried by whatever will be prefilled this step."""
+        best = 0.0
+        for r in self.running:
+            if _remaining_prefill(r) > 0:
+                best = max(best, float(r.num_computed_tokens))
+        heap = getattr(self.waiting, "_heap", None)
+        if heap:
+            head = heap[0]
+            best = max(best, float(getattr(head, "num_computed_tokens", 0)))
+        return best
 
     def schedule(self):
         now = time.monotonic()
@@ -264,7 +390,17 @@ class DeadlineScheduler(AsyncScheduler):
         # attribute (L661), so a per-step overwrite is safe.
         if DYNAMIC_CHUNK:
             self.max_num_scheduled_tokens = self._budget_by_slack(now)
+        # Which requests are still prefilling must be read BEFORE the step, since
+        # super().schedule() advances num_computed_tokens.
+        prefilling = {r.request_id for r in self.running if _remaining_prefill(r) > 0}
+        heap = getattr(self.waiting, "_heap", None)
+        if heap:
+            prefilling.update(r.request_id for r in heap
+                              if _remaining_prefill(r) > 0)
         out = super().schedule()
+        sched = getattr(out, "num_scheduled_tokens", None) or {}
+        self._last_prefill_tokens += sum(
+            n for rid, n in sched.items() if rid in prefilling)
         self._prune_meta()
         return out
 
