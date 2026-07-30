@@ -4,6 +4,13 @@
 **날짜**: 2026-07-28
 **바이너리**: `scheduler-exp07-v22` (`md5 57af20bfb26e681b67f050336b80f3d9`)
 
+> **⚠ 이 문서의 attainment 수치는 정정 전 지표로 계산된 것이다 (2026-07-30).**
+> 기록된 `tbt_mean_ms`가 실제 토큰 간 지연의 1/1.92였고, 규칙이 `TTFT AND 평균 TBT`
+> 이므로 chat은 50ms 대신 실질 96ms, deepresearch는 100ms 대신 192ms로 판정되었다
+> (implementation.md §32). 재측정은 필요 없고 `exp23_rate_sweep.py`를 다시 돌리면
+> 되지만, **아래 표를 아직 갱신하지 않았다.** 정정된 수치는 EXP-38 §4에 있다.
+> agent 클래스(E2E 판정), 거절률, 결정 구성, 배치 크기는 영향이 없다.
+
 이 문서는 **시간순 기록이 아니라 현재 상태의 명세**다. 어떻게 여기까지 왔는지는
 [fluidserve-implementation.md](fluidserve-implementation.md)에 있고, 이 문서는
 "지금 무엇이 구현되어 있고, 무엇에 의존하며, 무엇이 아직 아닌가"만 답한다.
