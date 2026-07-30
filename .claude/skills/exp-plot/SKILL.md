@@ -21,6 +21,32 @@ For dynamic traces add the per-segment and transition breakdown
 answer what the run was for, because an adaptation cost lives in the seconds
 after each boundary and is diluted by the steady stretches either side.
 
+## The engine-layer set, when the question is what the fleet did
+
+The rate sweep above answers "which policy scored better". These answer "what
+were the four engines actually doing", which is where a partition failure, a
+queue and a stalled engine live. All three are glob-driven and take any sweep.
+
+| Figure | Panels | Script |
+|---|---|---|
+| **engine layer, one condition** | running batch, engine-side queue, KV occupancy, fleet prefill and decode throughput, prefix hit rate, queueing time — four engines per panel | `plot_ratesweep_split.py` → `engine_rpm_*.png` |
+| **per-engine throughput and latency** | one column per engine, rows prefill tok/s, decode tok/s, mean TTFT, mean ITL | same → `tokens_rpm_*.png` |
+| **control plane** | gateway current / pending / being-inferred, and completed / rejected / errored per second | same → `llumnix_rpm_*.png` |
+| **policies side by side, one rate** | one policy per column, rows running batch, engine queue, KV, fleet decode | `exp38_policy_compare.py` |
+
+**Produce the per-condition figure and the side-by-side one, not one of them.**
+Six panels of one run is the right shape for reading that run and the wrong
+shape for comparing policies; three columns of four rows is the reverse. They
+cost the same to generate.
+
+**Rows in a side-by-side figure share a y axis across columns.** Without that, a
+column that looks calm is calm only relative to itself, and the reader draws the
+opposite conclusion from the one the data supports.
+
+These panels come from the engine's own Prometheus series and the gateway's, so
+they are unaffected by defects in what the load generator computes — which is
+worth knowing when a client-side metric is under suspicion.
+
 ## Axes and units
 
 - x axis in **req/s**, not rpm. Ticks at the measured rates.
@@ -76,6 +102,44 @@ class-equal average under the title "attainment" while `exp27_figures.py` drew
 the per-request one, so the same run produced two headline figures that did not
 match and neither said which it was. When adding a panel, name the aggregation
 in the title.
+
+## A corrected metric has to reach the figure scripts too
+
+When a measurement defect is fixed in analysis, the fix lands in one loader and
+every other script keeps reading the raw column. `tbt_mean_ms` was found to be
+half the true inter-token latency and corrected inside
+`exp22_fluidserve.load_run`; three older scripts —
+`plot_slo_vs_throughput.py`, `plot_per_engine_attainment.py`,
+`exp14_per_class_slo.py` — read the column directly, so running them on the same
+sweep would have drawn the pre-correction numbers under the same titles as the
+corrected tables in the same experiment file.
+
+`load_run` now publishes the corrected value as an **`itl_ms`** column. Use it.
+Before drawing latency or attainment with a script you did not just write,
+`grep -n "tbt_mean_ms"` it.
+
+After any such refactor, re-run one condition through the table script and check
+the numbers are unchanged before regenerating figures — the 60 req/s FluidServe
+condition should still read 55.3 admitted, 34.6 offered, 12,171 goodput.
+
+## Line style carries the arm; the legend is built from what was drawn
+
+When colour already encodes one dimension, style encodes the other, and there
+must be **one style per arm, not one for the arm of interest and one for the
+rest**. `fig_latency` drew FluidServe solid and everything else dashed while its
+legend named only PolyServe, so the Llumnix SLO arm was invisible as a distinct
+line and mislabelled where it was visible. Build the legend from the arms
+present in the data, never from a hardcoded list.
+
+A legend of seven entries does not fit above the axes beside a two-line title;
+it wraps and overlaps. Put it below.
+
+## A figure script takes a glob
+
+`exp27_figures.main()` hardcoded EXP-27's pass patterns, so every later sweep
+either edited that file or went without figures. It takes `--runs` now. A new
+plotting script should take the run glob and the output directory and nothing
+about which experiment it is.
 
 ## Verify what got drawn
 
