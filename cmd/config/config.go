@@ -274,6 +274,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveEnableAffinity bool
 	FluidserveEnableFlux     bool
 	FluidserveClassHarm      bool
+	FluidserveForceMargin    bool
 
 	// Adaptive PD
 	EnableAdaptivePD             bool
@@ -406,6 +407,15 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 	flags.BoolVar(&c.FluidserveEnableFlux, "fluidserve-enable-flux", true,
 		"Project occupancy over the horizon. Disabling it judges instances on their "+
 			"current occupancy alone, which is the level-based baseline.")
+	flags.BoolVar(&c.FluidserveForceMargin, "fluidserve-force-margin", false,
+		"Apply the same allowance margin to the forced-placement test that routing "+
+			"already applies. Routing requires the predicted pace to be within 90% "+
+			"of the budget; without this flag the test that decides between "+
+			"rejecting and forcing compares against the budget itself, so a request "+
+			"predicted to land between the two is refused a routed placement and "+
+			"then given a forced one. Measured at 60 req/s, 62% of admitted chat "+
+			"then missed, at a predicted pace accurate to 0.1 ms. Off by default "+
+			"until EXP-42 judges it.")
 	flags.BoolVar(&c.FluidserveClassHarm, "fluidserve-class-harm", true,
 		"When no instance can take a request at its promised pace, charge each "+
 			"candidate for the share of it that belongs to OTHER classes. Disabling "+

@@ -105,6 +105,7 @@ type fluidserveConfig struct {
 	enableAffinity bool
 	enableFlux     bool
 	classHarm      bool
+	forceMargin    bool
 }
 
 // fluidserveRequest is the per-request context the selector needs. Filters and
@@ -1319,7 +1320,29 @@ func (p *fluidserveDispatchPolicy) missesOwnBudget(
 	if req.ttftSloMs > 0 && waited+c.prefillMs > req.ttftSloMs {
 		return true
 	}
-	return req.nominalMs > 0 && c.meanAfter > req.nominalMs
+	// The pace this is compared against is the same quantity `feasible` compares,
+	// and until now the two comparisons used different thresholds: routing
+	// required the predicted pace to be within fsAllowanceUtilisation of the
+	// budget, while this test compared against the budget itself. A request whose
+	// predicted pace sits between the two was therefore refused a routed
+	// placement and then given a forced one.
+	//
+	// That gap is where the failures were. Measured at 60 req/s, chat's realised
+	// mean inter-token latency has a median of 49.9 ms against a 50 ms budget and
+	// 62% of admitted chat missed on it, while the prediction itself was accurate
+	// to within 0.1 ms of the engine's own observation. The threshold, not the
+	// prediction, was what let those placements through.
+	//
+	// Placing a request that then misses is not free: it holds a decode slot and
+	// its KV for its whole life and returns nothing, and under the offered
+	// denominator a rejection and a miss score the same. The margin is the one
+	// already in use rather than a new constant, so this makes the two paths ask
+	// the same question instead of introducing a second answer.
+	budget := req.nominalMs
+	if p.cfg.forceMargin {
+		budget *= fsAllowanceUtilisation
+	}
+	return req.nominalMs > 0 && c.meanAfter > budget
 }
 
 // harmToIncumbents prices what placing this request does to the requests
@@ -1636,6 +1659,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		enableAffinity: p.FluidserveEnableAffinity,
 		enableFlux:     p.FluidserveEnableFlux,
 		classHarm:      p.FluidserveClassHarm,
+		forceMargin:    p.FluidserveForceMargin,
 	}
 	if cfg.horizonSteps <= 0 {
 		panic("--fluidserve-horizon-steps must be positive")
@@ -1675,10 +1699,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, flux=%v, classharm=%v, "+
-		"budgets %q",
+		"forcemargin=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, cfg.enableFlux, cfg.classHarm,
-		p.FluidserveClassBudgets)
+		cfg.forceMargin, p.FluidserveClassBudgets)
 
 	go policy.reportLoop()
 	return policy

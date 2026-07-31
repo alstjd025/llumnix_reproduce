@@ -98,6 +98,9 @@ FLUIDSERVE_ABLATIONS = {
     "FS_CLASS_HARM": "--fluidserve-class-harm",
     "FS_HORIZON": "--fluidserve-horizon-steps",
     "FS_Z": "--fluidserve-z-safety",
+    # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
+    # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.
+    "FS_FORCE_MARGIN": "--fluidserve-force-margin",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -308,15 +311,37 @@ def main():
         args = set_flag(args, k, v)
     for k, v in POLYSERVE_FLAGS.items():
         args = set_flag(args, k, v)
-    args = drop_flags(args, set(FLUIDSERVE_FLAGS) | set(FLUIDSERVE_ABLATIONS.values()),
-                      "--fluidserve-")
+    # An ablation flag that this invocation does NOT set is REMOVED, so the
+    # scheduler falls back to its compiled default. Keeping it instead was a
+    # defect: a flag written by one arm survived into every condition that ran
+    # afterwards, because nothing here put it back. Measured on 2026-08-01,
+    # --fluidserve-class-harm=false was written by one ablation arm on
+    # 2026-07-28 10:28 (exp27p2r1_fluidserveflat_m1) and was still in the
+    # deployment 61 conditions later, spanning EXP-27 pass 2 to EXP-41. Every
+    # one of those ran with the class term in the damage estimate disabled,
+    # which is not what any of them intended and not what the documents record.
+    #
+    # The start-up line always said so. What was missing was a comparison
+    # between what the line said and what the arm meant, which is exactly the
+    # comparison this file exists to make, so it is made for the ablations too.
+    keep = set(FLUIDSERVE_FLAGS)
+    for env_key, flag in FLUIDSERVE_ABLATIONS.items():
+        if os.environ.get(env_key):
+            keep.add(flag)
+    args = drop_flags(args, keep, "--fluidserve-")
     for k, v in FLUIDSERVE_FLAGS.items():
         args = set_flag(args, k, v)
+    unset = []
     for env_key, flag in FLUIDSERVE_ABLATIONS.items():
         val = os.environ.get(env_key)
         if val:
             args = set_flag(args, flag, val)
             print(f"  ablation: {flag}={val}")
+        elif flag not in FLUIDSERVE_FLAGS:
+            unset.append(env_key)
+    if unset:
+        print("  ablations left at the compiled default (env unset): "
+              + " ".join(sorted(unset)))
     c["args"] = args
 
     vols = spec.setdefault("volumes", [])
@@ -427,6 +452,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-enable-affinity", "affinity"),
         ("--fluidserve-enable-flux", "flux"),
         ("--fluidserve-class-harm", "classharm"),
+        ("--fluidserve-force-margin", "forcemargin"),
         ("--fluidserve-z-safety", "z"),
     ]
     bad = []
