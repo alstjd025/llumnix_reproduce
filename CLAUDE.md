@@ -16,11 +16,14 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | 시간순 경위. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
 | implementation.md **§32** | **여기부터 읽는다. 기록된 TBT가 실제의 1/1.92였다 — §1~§31의 모든 attainment가 예산 약 2배로 판정된 것이다.** 세 방향 검증과 반증 시도는 §32.2·§32.7 |
 | implementation.md **§33** | 설계 검토 — 포화에서 정책이 하는 일, `gate_allowance` 50ms 고정, agent 클래스 실패의 원인 |
+| implementation.md **§34** | 60 req/s에서 무엇이 무너지는가. 배치는 45와 같고 페이스만 4.5ms 올라 chat 예산을 넘는다. **1ms = 총계 7.7점의 절벽.** 34.4는 배포된 `c_kv`가 실측의 1/1.6이라는 부수 발견 |
+| implementation.md **§35** | EXP-40 — 우위가 엔진 때문인지. **아니다**(격차 변화가 산포 안). 사전 예상이 틀렸고 그 이유가 §33.1을 뒷받침한다 |
 | implementation.md **§31** | 그 이전의 상태 요약(정책 불변, 반증된 가정 여섯 개). **§31.7의 다음 계획은 §32와 EXP-39가 대체했다** |
 | implementation.md **마지막 절** | 그 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
 | **정책 상태** | **EXP-27 이후 바뀌지 않았다.** v25~v28 네 개를 시도해 전부 기각(§31.1) |
 | **닫힌 미해결** | §24의 "8ms 과대예측"은 **존재하지 않았다**(§27) — 통계량 불일치. §32가 같은 결론을 다른 방향에서 확인한다: 엔진 50.5ms와 모델 50.2ms가 처음부터 맞았고 `capacity_correction`이 0.995다 |
-| **남은 방향** | ① EXP-38에 36·40 req/s를 추가해 knee 확정(약 2.8h, 헤드라인 숫자에 직접 영향) ② **EXP-39** 실제 60분 구간 재생 + `slo-hold35` arm. **버스트성 sweep은 철회**했다 — 실제 trace가 초 단위로 버스트하지 않는다(Poisson의 1.24~1.96배) |
+| **남은 방향** | ① **knee 확정(36·40 req/s, 약 2.8h)** — §35.6에서 45의 산포가 11.4점으로 드러나 더 급해졌다 ② **EXP-39** 실제 60분 구간 재생(`azcode_w60_m1` 준비 완료) + `slo-hold35` arm ③ §34.4 프로파일 재적합(`c_kv` 1.6배). **버스트성 sweep은 철회** — 실제 trace가 초 단위로 버스트하지 않는다(Poisson의 1.24~1.96배) |
+| **엔진 스케줄러** | QoServe(Niyama) 이식은 `patches/vllm-sched/deadline_sched.py`, 원본 대조는 `ms_dev/notes/qoserve-niyama-fidelity.md`. `SCHED_EXTRA_ARGS`로 켠다. **우리 정책이 엔진 큐를 비워 두므로 unit 4(동적 청킹) 하나만 작동한다** |
 | `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
 
 **2. 지금 클러스터에서 뭐가 도는지 확인한다**
@@ -100,6 +103,7 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **FluidServe v0.1 명세 (정본)** |
 | [ms_dev/notes/fluidserve-design.md](ms_dev/notes/fluidserve-design.md) | FluidServe 설계 원안 |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | FluidServe 구현 결정 기록 |
+| [ms_dev/notes/qoserve-niyama-fidelity.md](ms_dev/notes/qoserve-niyama-fidelity.md) | QoServe(Niyama) 이식의 원본 대조·수정·한계 |
 | [deploy/profiling/README.md](deploy/profiling/README.md) | 지연 프로파일 테이블의 출처·신뢰도 |
 | [ms_dev/notes/](ms_dev/notes/) | 클러스터 셋업/배포/장애 기록 |
 | `Agent_applications/agent_motivation_experiment/experiments/` | 실험 기록 정본 (EXP-NN) |
