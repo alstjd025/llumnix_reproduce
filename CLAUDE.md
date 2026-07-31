@@ -18,11 +18,12 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 | implementation.md **§33** | 설계 검토 — 포화에서 정책이 하는 일, `gate_allowance` 50ms 고정, agent 클래스 실패의 원인 |
 | implementation.md **§34** | 60 req/s에서 무엇이 무너지는가. 배치는 45와 같고 페이스만 4.5ms 올라 chat 예산을 넘는다. **1ms = 총계 7.7점의 절벽.** 34.4는 배포된 `c_kv`가 실측의 1/1.6이라는 부수 발견 |
 | implementation.md **§35** | EXP-40 — 우위가 엔진 때문인지. **아니다**(격차 변화가 산포 안). 사전 예상이 틀렸고 그 이유가 §33.1을 뒷받침한다 |
+| implementation.md **§36** | **여기부터 읽는다. EXP-41(한 시간 동적 trace 두 개).** 두 trace 모두 +21.2/+26.4점. **클래스 packing이 작동한다는 첫 직접 증거**(azcode에서 chat 전용 엔진 두 개, chat ITL 26.6~32.6ms, chat 45.3→85.4)와 **그 대가**(dr 전용 엔진이 preemption 5,513회). 설계 결함 둘의 원인이 36.3(`capMem`에 전방 모델 없음)·36.4(포화에서 게이트 50 고정)이고 **36.3은 판정 규칙까지 미리 적어 뒀다.** 36.5는 36.3의 원인을 처음에 잘못 귀속한 것의 정정 |
 | implementation.md **§31** | 그 이전의 상태 요약(정책 불변, 반증된 가정 여섯 개). **§31.7의 다음 계획은 §32와 EXP-39가 대체했다** |
 | implementation.md **마지막 절** | 그 이후에 일어난 일. 항상 문서 끝이 가장 최신이다 |
 | **정책 상태** | **EXP-27 이후 바뀌지 않았다.** v25~v28 네 개를 시도해 전부 기각(§31.1) |
 | **닫힌 미해결** | §24의 "8ms 과대예측"은 **존재하지 않았다**(§27) — 통계량 불일치. §32가 같은 결론을 다른 방향에서 확인한다: 엔진 50.5ms와 모델 50.2ms가 처음부터 맞았고 `capacity_correction`이 0.995다 |
-| **남은 방향** | ① **knee 확정(36·40 req/s, 약 2.8h)** — §35.6에서 45의 산포가 11.4점으로 드러나 더 급해졌다 ② **EXP-39** 실제 60분 구간 재생(`azcode_w60_m1` 준비 완료) + `slo-hold35` arm ③ §34.4 프로파일 재적합(`c_kv` 1.6배). **버스트성 sweep은 철회** — 실제 trace가 초 단위로 버스트하지 않는다(Poisson의 1.24~1.96배) |
+| **남은 방향** | ① **§36.3 `capMem` 전방 모델** — 다음에 고칠 것이 처음으로 **값이 매겨졌다**(azcode에서 약 4.3점). 판정 규칙은 §36.3에 미리 적혀 있다 ② **knee 확정(36·40 req/s, 약 2.8h)** — §36.1의 azcode 밴드가 Llumnix SLO knee를 35~40으로 묶었으나 ramping trace라 정적 측정은 아직 ③ §34.4 프로파일 재적합(`c_kv` 1.6배). **EXP-39와 버스트성 sweep은 완료·철회** — 전자는 EXP-41 `azcode`가 됐고, 후자는 실제 trace가 초 단위로 버스트하지 않는다(Poisson의 1.24~1.96배) |
 | **엔진 스케줄러** | QoServe(Niyama) 이식은 `patches/vllm-sched/deadline_sched.py`, 원본 대조는 `ms_dev/notes/qoserve-niyama-fidelity.md`. `SCHED_EXTRA_ARGS`로 켠다. **우리 정책이 엔진 큐를 비워 두므로 unit 4(동적 청킹) 하나만 작동한다** |
 | `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
 
@@ -186,6 +187,13 @@ go build -buildvcs=false \
   모델의 `predicted_step_ms`(50.2ms)는 서로 맞았고 클라이언트 값(26.1ms)만 이상치였다.
   **두 계층이 같은 이름으로 다른 양을 부르고 있는지 먼저 확인한다.** 분석은
   `(e2e − ttft)/(output_tokens − 1)`로 고쳤고 `FS_LEGACY_TBT=1`로 과거 수치를 재현한다.
+- **한 시간짜리 trace에서는 `(task_id, call_index)`가 요청을 식별하지 못한다.** 같은
+  task가 수백 번 replay되므로 `request_engine.csv` 106,116행 중 **95,558행이 그 쌍을
+  공유한다.** 그 쌍으로만 조인하면 행이 10배로 불어난다(179,418 → 1,240,040).
+  `start_time`을 2초 nearest로 붙여 구분하고, **거절된 요청은 dispatch 기록이 없어
+  이웃의 id에 잘못 붙으므로 조인 왼쪽에서 빼야 한다.** 그렇게 하면 admitted 전량이
+  100% 매칭된다(`exp41_engine_view.py:attribute_engines`). 8분짜리 정적 조건에서는
+  중복이 없어 이 함정이 안 보인다.
 - 선재 문제: `pkg/cms/cms_read_client_test.go`가 `NewCMSReadClient` 인자 개수 불일치로
   `go vet ./...`을 실패시킨다. 이 저장소 작업과 무관하며 미수정 상태다. 빌드/테스트는
   패키지를 지정해서 돌린다(`go test ./pkg/scheduler/...`).
