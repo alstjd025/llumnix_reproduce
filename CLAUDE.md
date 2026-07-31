@@ -185,6 +185,16 @@ go build -buildvcs=false \
   읽으므로, 실행 도중 앞부분에 줄을 넣으면 엉뚱한 블록으로 점프한다. 실제로
   `run_exp22_fluidserve.sh`에 case 하나를 추가했다가 실행 중이던 smoke가 sweep 블록으로
   넘어가 의도치 않은 arm이 시작됐다. 편집은 실행이 끝난 뒤에 한다.
+  **2026-08-01에 또 걸렸다** — EXP-42가 도는 중에 `run_exp27_mixsweep.sh`에 `fsah` arm을
+  추가했더니 실행 중이던 인스턴스가 `syntax error near unexpected token 'do'`로 죽었다.
+  그 run은 오류가 조건이 끝난 뒤에 났고 보관된 배포 spec으로 플래그가 맞았음을 확인해서
+  **데이터는 살았지만 그건 운이었다.** 다음 실험을 미리 준비해야 하면 **스크립트를
+  스냅샷으로 복사해 그 사본을 실행한다**(`exp43_class_harm.sh`가 그 예: `cp` 후 `bash -n`으로
+  파싱 확인하고 사본을 돌린다). 그러면 원본을 언제 고쳐도 도는 실험에 영향이 없다.
+- **대기 중인 연쇄 스크립트도 실행 중인 스크립트다.** `sleep` 루프에서 기다리는 중이어도
+  bash는 그 뒤를 아직 안 읽었으므로 편집하면 같은 문제가 난다. 고쳐야 하면 **먼저 죽이고,
+  고치고, 다시 띄운다**(`pkill -f "exp43_clas[s]_harm.sh"` — 대괄호는 자기 자신을 죽이지
+  않기 위한 것).
 - **끝난 Job이 k8s에 남는다.** `kubectl delete job`을 안 하면 `Complete` 상태로 계속
   조회된다. 연쇄 스크립트에서 "앞 실험이 끝났나"를 `kubectl get jobs | grep -q
   "bench-runner-exp"`로 물으면 **8일 전 끝난 `bench-runner-exp13-sweep`에 걸려 영원히
