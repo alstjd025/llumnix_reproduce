@@ -804,3 +804,62 @@ func TestTheBatchIsCountedTheSameWayWhenPredictingAndWhenMeasuring(t *testing.T)
 		"counting only the running batch understates the decode cost by enough to "+
 			"decide feasibility")
 }
+
+func TestTheForcedPlacementTestUsesTheSameMarginAsRouting(t *testing.T) {
+	// Two places compare the same predicted quantity -- the mean time to produce
+	// one token on the instance after this request is placed there -- against the
+	// same request's budget, and they used different thresholds. Routing required
+	// the prediction to be within fsAllowanceUtilisation of the budget; the test
+	// that decides between rejecting and forcing compared against the budget
+	// itself. A request predicted to land between the two was refused a routed
+	// placement and then given a forced one.
+	//
+	// Measured at 60 req/s, chat's realised mean inter-token latency had a median
+	// of 49.9 ms against a 50 ms budget and 62% of admitted chat missed on it,
+	// with the prediction accurate to within 0.1 ms of the engine's own
+	// observation. The threshold, not the prediction, is what let those
+	// placements through.
+	chat := &fluidserveRequest{
+		id: "chat", tier: 50, ttftSloMs: 5000, promptTokens: 666,
+		expectedToks: 400, nominalMs: 50,
+	}
+	// 47.5 ms sits between 45.0 (50 x 0.90) and 50.0, which is the band the two
+	// thresholds disagree about. prefillMs is small enough that the
+	// time-to-first-token branch above cannot be what decides the outcome.
+	between := candidate{prefillMs: 50, meanAfter: 47.5}
+
+	off := fsPolicy(t, "25:e2e:30000,50:decode", func(c *fluidserveConfig) {
+		c.forceMargin = false
+	})
+	on := fsPolicy(t, "25:e2e:30000,50:decode", func(c *fluidserveConfig) {
+		c.forceMargin = true
+	})
+
+	assert.False(t, off.missesOwnBudget(chat, between),
+		"without the flag a prediction under the raw budget is placed, which is "+
+			"the shipped behaviour EXP-42 measures against")
+	assert.True(t, on.missesOwnBudget(chat, between),
+		"with the flag the same prediction is refused, because routing would "+
+			"also have refused it")
+
+	// Either side of the band both settings have to agree, or the change is
+	// doing something other than closing the gap between the two thresholds.
+	comfortable := candidate{prefillMs: 50, meanAfter: 40}
+	assert.False(t, off.missesOwnBudget(chat, comfortable))
+	assert.False(t, on.missesOwnBudget(chat, comfortable))
+
+	hopeless := candidate{prefillMs: 50, meanAfter: 60}
+	assert.True(t, off.missesOwnBudget(chat, hopeless))
+	assert.True(t, on.missesOwnBudget(chat, hopeless))
+
+	// The margin applies to the pace comparison only. A request judged end to
+	// end goes down a different branch, and leaving that branch alone is what
+	// keeps EXP-42's result attributable to one change.
+	swe := &fluidserveRequest{
+		id: "swe", tier: 25, ttftSloMs: 11800, promptTokens: 6812,
+		expectedToks: 500, nominalMs: 57, isE2E: true, budgetMs: 30000,
+	}
+	e2e := candidate{prefillMs: 400, meanAfter: 47.5}
+	assert.Equal(t, off.missesOwnBudget(swe, e2e), on.missesOwnBudget(swe, e2e),
+		"the end-to-end branch is untouched by this flag")
+}
