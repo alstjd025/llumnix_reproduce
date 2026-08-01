@@ -103,6 +103,8 @@ FLUIDSERVE_ABLATIONS = {
     "FS_FORCE_MARGIN": "--fluidserve-force-margin",
     # EXP-46 candidate C.
     "FS_OWN_BUDGET_GATE": "--fluidserve-own-budget-gate",
+    # EXP-49 candidate H2.
+    "FS_KV_SLOPE": "--fluidserve-kv-slope-projection",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -456,6 +458,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-class-harm", "classharm"),
         ("--fluidserve-force-margin", "forcemargin"),
         ("--fluidserve-own-budget-gate", "ownbudgetgate"),
+        ("--fluidserve-kv-slope-projection", "kvslope"),
         ("--fluidserve-z-safety", "z"),
     ]
     bad = []
