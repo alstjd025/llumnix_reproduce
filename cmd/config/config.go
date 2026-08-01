@@ -275,6 +275,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveEnableFlux     bool
 	FluidserveClassHarm      bool
 	FluidserveForceMargin    bool
+	FluidserveOwnBudgetGate  bool
 
 	// Adaptive PD
 	EnableAdaptivePD             bool
@@ -416,6 +417,14 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"then given a forced one. Measured at 60 req/s, 62% of admitted chat "+
 			"then missed, at a predicted pace accurate to 0.1 ms. Off by default "+
 			"until EXP-42 judges it.")
+	flags.BoolVar(&c.FluidserveOwnBudgetGate, "fluidserve-own-budget-gate", false,
+		"Judge an arriving request's pace against its OWN class budget rather "+
+			"than against the tightest nominal budget on the instance. The "+
+			"instance minimum is redundant -- the requests already there are "+
+			"protected on the next line by their REMAINING budgets -- and it "+
+			"becomes chat's 50 ms on every instance within seconds, so a deep "+
+			"research request with a 100 ms budget cannot route onto a fleet "+
+			"running at 55.6 ms. Off by default until EXP-46 judges it.")
 	flags.BoolVar(&c.FluidserveClassHarm, "fluidserve-class-harm", true,
 		"When no instance can take a request at its promised pace, charge each "+
 			"candidate for the share of it that belongs to OTHER classes. Disabling "+

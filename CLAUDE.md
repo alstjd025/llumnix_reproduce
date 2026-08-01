@@ -14,6 +14,7 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 |---|---|
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **여기부터 읽는다.** v0.1의 자족적 명세 — 결정 규칙, 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | 시간순 경위. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
+| implementation.md **§44~§47** | **여기부터 읽는다. 지금 상태의 정본.** §44 50~56분 격차는 전부 deepresearch. §45 **"후보 A가 preemption을 0으로 유지한다"는 철회** — 0/0/1,899. §46 EXP-47: **한 상태 읽기 안에서 뷰는 갱신된다**(두 번째 이후 배치의 headroom이 평균 −57k) → in-flight 가설 반증. §47 **preemption의 진짜 원인** — FORCE가 아니라 **엔진이 채워지는 동안** 일어난다(arm 셋·엔진 다섯에서 예외 없음). 재고 조건으로 유량을 통제하는 오류이고 **§47.5의 후보 H가 다음이다** |
 | implementation.md **§39~§43** | **여기부터 읽는다.** §39 **후보 A 채택 — EXP-27 이후 첫 정책 변경**(60 req/s에서 offered 36.1→49.3, goodput +33%). §40 §36.3의 원인 설명 **철회**(평균끼리 나눈 값이었다). §41 한 갱신 주기에 여러 건이 나간다는 측정. §42 §41.4 **정정**(in-flight 계정은 설계상 그 창을 덮는다). §43 EXP-43 null + **후보 여섯 개의 현황표(43.4)** |
 | implementation.md **§32** | **여기부터 읽는다. 기록된 TBT가 실제의 1/1.92였다 — §1~§31의 모든 attainment가 예산 약 2배로 판정된 것이다.** 세 방향 검증과 반증 시도는 §32.2·§32.7 |
 | implementation.md **§33** | 설계 검토 — 포화에서 정책이 하는 일, `gate_allowance` 50ms 고정, agent 클래스 실패의 원인 |
@@ -25,7 +26,8 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 | implementation.md **§37** | **다음에 무엇을 고칠지가 여기 있다.** 세 실패(높은 rate에서의 하락 / 8003 과부하 / 후반부 역전)의 원인 규명. 셋이 만나는 곳은 **route 결정 비율**(15 req/s에서 99.7% → 60에서 1.5%). §37.5는 ROUTE와 FORCE가 같은 예산에 다른 기준을 쓴다는 코드 불일치. **§37.6에 후보 넷과 판정 규칙이 실행 전에 적혀 있다** |
 | **정책 상태** | **후보 A가 들어갔다**(`--fluidserve-force-margin`, 코드 기본값은 아직 off, 실험에서 on). 그 전에는 EXP-27 이후 불변이었고 v25~v28 네 개를 전부 기각했다(§31.1) |
 | **닫힌 미해결** | §24의 "8ms 과대예측"은 **존재하지 않았다**(§27) — 통계량 불일치. §32가 같은 결론을 다른 방향에서 확인한다: 엔진 50.5ms와 모델 50.2ms가 처음부터 맞았고 `capacity_correction`이 0.995다 |
-| **남은 방향** | 후보 현황은 **§43.4가 정본**. ① **후보 B**(SHED에 KV 점유 부담, 사용자 제안) — A 이후 근거가 강해졌다(§43.3: dr이 도착의 15.4%인데 KV의 73.5%) ② **후보 F 진단**(§42.4의 계측: 같은 `stepID` 안에서 headroom이 단조 감소하는지) ③ **후보 C**(`gateAllowance` 삭제) — 가장 큰 지렛대이나 §40 이후 미해결인 실패를 재현할 위험 ④ **knee 확정(36·40·45 req/s, 반복 4회+)** — EXP-42에서 45가 산포가 아니라 **두 운전 상태**임이 드러났고 A가 그것을 없앨 수 있다. §36.1의 azcode 밴드는 Llumnix SLO knee를 35~40으로 묶었으나 ramping trace라 정적 측정은 아직이다 ⑤ §34.4 프로파일 재적합(`c_kv` 1.6배). **EXP-39와 버스트성 sweep은 완료·철회** — 전자는 EXP-41 `azcode`가 됐고, 후자는 실제 trace가 초 단위로 버스트하지 않는다(Poisson의 1.24~1.96배) |
+| **남은 방향** | **후보 H(§47.5)가 다음** — `costOf`와 `inflow`를 `expectedToks`로(새 상수 없음). 전제가 §47.2에서 측정됐다. 그다음 ① H가 되면 **후보 C를 다시 얹는다**(정적 +23.7이었고 기각 사유가 오직 preemption) ② 후보 B(SHED에 KV 부담, 사용자 제안) — H 이후 전제 재측정 필요 ③ knee 확정(36·40·45 req/s, 반복 4회+) |
+| **후보 현황** | **A** 정적 채택(60에서 +13.1)·동적 무효(산포 6.4). **C** 정적 채택(+23.7, 최대)·동적 기각(preemption 6,583). **E** null. **D·F·G** 전제 반증으로 폐기. **B·H** 미착수 |
 | **엔진 스케줄러** | QoServe(Niyama) 이식은 `patches/vllm-sched/deadline_sched.py`, 원본 대조는 `ms_dev/notes/qoserve-niyama-fidelity.md`. `SCHED_EXTRA_ARGS`로 켠다. **우리 정책이 엔진 큐를 비워 두므로 unit 4(동적 청킹) 하나만 작동한다** |
 | `Agent_applications/.../experiments/EXP-NN_*.md` 중 번호가 가장 큰 것 | 지금 돌고 있거나 마지막으로 돌린 실험의 설계·판정 규칙 |
 
