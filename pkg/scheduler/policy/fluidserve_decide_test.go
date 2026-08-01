@@ -912,3 +912,76 @@ func TestTheGateCanBeTheRequestsOwnBudgetRatherThanTheInstanceMinimum(t *testing
 		on.evaluate(f, nil, chat).gateAfter, 0.01)
 	assert.InDelta(t, 45.0, on.evaluate(f, nil, chat).gateAfter, 0.01)
 }
+
+func TestTheProjectionCanBeTheOccupancyTheEngineIsObservedMovingAt(t *testing.T) {
+	// Candidate H2. The modelled balance is `current occupancy + the resident
+	// set's growth over the horizon - what completions are expected to release`.
+	// Occupancy one horizon ahead has a fourth term the model does not carry:
+	// the requests the scheduler places during that same horizon. Measured on
+	// the hour-long trace, that omission plus an over-predicted release term
+	// left the projection below the occupancy the engine actually reported one
+	// horizon later in 88.5% of 14,676 paired samples.
+	//
+	// The alternative projects from the rate the occupancy is observed to be
+	// moving at, which contains all four terms because it is the difference of
+	// two numbers the engine reported. Two properties are asserted, and the
+	// second is why the fleet-wide offered-rate projection was removed in v19:
+	// the value has to be per instance, so that an instance filling up is
+	// distinguished from one that is not.
+	p := fsPolicy(t, "25:e2e:16000,50:decode", func(c *fluidserveConfig) {
+		c.kvSlopeProjection = true
+	})
+	const startKv = 400_000
+	views := map[string]*instanceViewScheduling{
+		"filling": fsView(fsViewOpts{id: "filling", decodeReqs: 20,
+			decodeTokens: startKv, usedGpu: 120_000, stepID: 5000}),
+		"steady": fsView(fsViewOpts{id: "steady", decodeReqs: 20,
+			decodeTokens: startKv, usedGpu: 120_000, stepID: 5000}),
+	}
+	probe := fsRequest("probe", 50, 5000, 1000)
+	now := nowMillis()
+	for id, v := range views {
+		fill(p, id, 50, 1000, 20, 4990, now)
+		v.cmsView.Status.TimestampMs = now
+	}
+
+	// First status. No interval has elapsed, so no rate has been measured and
+	// the projection is the occupancy itself -- the permissive direction, and
+	// the first measurement arrives one status interval later.
+	p.calculateMetrics(consts.InferTypeNeutral, probe, views)
+	first := views["filling"].schedulingCtx.fluidserveFlux
+	require.NotNil(t, first)
+	assert.Equal(t, float64(startKv), first.proj,
+		"nothing measured yet, so nothing is projected")
+
+	// Second status, 500 ms later. Both engines ran the same iterations; one
+	// gained 50,000 logical KV tokens over the interval and the other did not.
+	decodeOnly := p.capacity.decodeStepMs(startKv, 20)
+	const steps = 100
+	for id, v := range views {
+		v.cmsView.Status.StepId = 5100
+		v.cmsView.Status.TimestampMs = now + int64(decodeOnly*steps)
+		if id == "filling" {
+			// Physical occupancy is raised in the same proportion. The memory
+			// capacity is expressed in logical tokens by dividing through the
+			// measured physical-to-logical ratio, so raising only the logical
+			// count would move the limit as well as the projection and the two
+			// instances would no longer differ in one thing.
+			v.cmsView.Status.SchedulerRunningToDecodeTokensNum = startKv + 50_000
+			v.cmsView.Status.NumUsedGpuTokens = 135_000
+		}
+	}
+	p.calculateMetrics(consts.InferTypeNeutral, probe, views)
+	filling := views["filling"].schedulingCtx.fluidserveFlux
+	steady := views["steady"].schedulingCtx.fluidserveFlux
+	require.NotNil(t, filling)
+	require.NotNil(t, steady)
+
+	assert.Greater(t, filling.proj, filling.kvLogical,
+		"an instance whose occupancy is rising is projected above where it is now")
+	assert.Equal(t, steady.kvLogical, steady.proj,
+		"and one whose occupancy is not moving is projected where it is")
+	assert.Less(t, filling.headroom, steady.headroom,
+		"so the two instances are ordered by which of them is filling, which a "+
+			"fleet-wide projection cannot do")
+}

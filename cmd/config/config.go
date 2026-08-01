@@ -264,18 +264,19 @@ type FullModeSchedulingConfig struct {
 	PolyserveDecodeTokens     int
 
 	// FluidServe
-	FluidserveProfilePath    string
-	FluidserveClassBudgets   string
-	FluidserveHorizonSteps   int
-	FluidserveZSafety        float64
-	FluidserveTtftSafetyMs   int
-	FluidserveEnablePend     bool
-	FluidserveEnableShed     bool
-	FluidserveEnableAffinity bool
-	FluidserveEnableFlux     bool
-	FluidserveClassHarm      bool
-	FluidserveForceMargin    bool
-	FluidserveOwnBudgetGate  bool
+	FluidserveProfilePath       string
+	FluidserveClassBudgets      string
+	FluidserveHorizonSteps      int
+	FluidserveZSafety           float64
+	FluidserveTtftSafetyMs      int
+	FluidserveEnablePend        bool
+	FluidserveEnableShed        bool
+	FluidserveEnableAffinity    bool
+	FluidserveEnableFlux        bool
+	FluidserveClassHarm         bool
+	FluidserveForceMargin       bool
+	FluidserveOwnBudgetGate     bool
+	FluidserveKvSlopeProjection bool
 
 	// Adaptive PD
 	EnableAdaptivePD             bool
@@ -425,6 +426,19 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"becomes chat's 50 ms on every instance within seconds, so a deep "+
 			"research request with a 100 ms budget cannot route onto a fleet "+
 			"running at 55.6 ms. Off by default until EXP-46 judges it.")
+	flags.BoolVar(&c.FluidserveKvSlopeProjection, "fluidserve-kv-slope-projection",
+		false,
+		"Project an instance's KV occupancy from the rate that occupancy is "+
+			"observed to be moving at, instead of from a modelled balance of the "+
+			"resident set's growth against what completions are expected to "+
+			"release. The modelled balance has three terms where the quantity has "+
+			"four: it omits the requests the scheduler places during the horizon "+
+			"itself, which at saturation is about 48 placements and 83,000 tokens "+
+			"per engine. Scored against what the engines actually held one horizon "+
+			"later, over 14,676 paired samples of the hour-long trace, the modelled "+
+			"balance under-predicts 88.5% of the time by a mean of 101,633 tokens "+
+			"while the observed slope is unbiased and has a third of the absolute "+
+			"error. Off by default until EXP-49 judges it.")
 	flags.BoolVar(&c.FluidserveClassHarm, "fluidserve-class-harm", true,
 		"When no instance can take a request at its promised pace, charge each "+
 			"candidate for the share of it that belongs to OTHER classes. Disabling "+

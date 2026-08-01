@@ -107,6 +107,9 @@ type fluidserveConfig struct {
 	classHarm      bool
 	forceMargin    bool
 	ownBudgetGate  bool
+	// kvSlopeProjection replaces the modelled inflow/outflow balance with the
+	// instance's own observed rate of change of KV occupancy. Candidate H2.
+	kvSlopeProjection bool
 }
 
 // fluidserveRequest is the per-request context the selector needs. Filters and
@@ -517,6 +520,20 @@ type stepObservation struct {
 	// intervals reads 58.7, and the median reads 38.7.
 	elapsedEwma float64
 	stepsEwma   float64
+	// kvSlope is the rate at which this instance's logical KV occupancy has
+	// recently been changing, in tokens per millisecond, smoothed over status
+	// intervals. Candidate H2 projects with this instead of modelling the growth
+	// of the resident set and the release from completions separately.
+	//
+	// It is not the same quantity as inflow minus outflow, and the difference is
+	// the point. Those two terms describe what the requests already resident will
+	// do; the measured slope also contains the requests the scheduler places
+	// during the interval, which is the term the modelled balance omits. Measured
+	// over 14,676 paired samples of the `full` hour, the modelled balance
+	// under-predicted the occupancy one horizon later 88.5% of the time by a mean
+	// of 101,633 tokens, while the slope projection was unbiased (+1,393) with a
+	// mean absolute error of 29,106 against the modelled balance's 106,416.
+	kvSlope float64
 }
 
 const (
@@ -716,6 +733,16 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 		// report, and no change to any other term could move it: measured at
 		// 80 req/s, halving the duty cycle simply drove the correction up by the
 		// same amount and left the prediction where it was.
+		// The rate this instance's occupancy is moving at, for candidate H2.
+		// Smoothed with the same constant and for the same reason as the duty
+		// cycle: one status interval is about 500 ms and a single interval is a
+		// noisy estimate, while the feedback through it is negative -- a rising
+		// slope raises the projection, which lowers the headroom, which places
+		// less here, which lowers the slope -- so a fast filter settles rather
+		// than running away.
+		o.kvSlope = prev.kvSlope +
+			fsPrefillDutyAlpha*((cur.kvLogical-prev.kvLogical)/elapsed-prev.kvSlope)
+
 		o.elapsedEwma = prev.elapsedEwma + fsPrefillDutyAlpha*(elapsed-prev.elapsedEwma)
 		o.stepsEwma = prev.stepsEwma +
 			fsPrefillDutyAlpha*(float64(steps)-prev.stepsEwma)
@@ -745,6 +772,19 @@ func (p *fluidserveDispatchPolicy) prefillDutyOf(id string) float64 {
 	defer p.obsMu.Unlock()
 	if o, ok := p.lastObs[id]; ok {
 		return o.prefillDuty
+	}
+	return 0
+}
+
+// kvSlopeOf is the rate instance `id`'s logical KV occupancy is moving at, in
+// tokens per millisecond. Zero before anything has been measured, which makes
+// the projection fall back to the current occupancy -- the permissive direction,
+// and the first measurement arrives within one status interval.
+func (p *fluidserveDispatchPolicy) kvSlopeOf(id string) float64 {
+	p.obsMu.Lock()
+	defer p.obsMu.Unlock()
+	if o, ok := p.lastObs[id]; ok {
+		return o.kvSlope
 	}
 	return 0
 }
@@ -921,6 +961,44 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 
 	f.inflow = f.nDecode * float64(p.cfg.horizonSteps)
 	f.outflow = p.expectedOutflow(f.live, p.cfg.horizonSteps)
+	if p.cfg.kvSlopeProjection {
+		// Candidate H2. Project with the rate the engine's occupancy is actually
+		// moving at instead of with the two modelled terms.
+		//
+		// The modelled balance has three terms where the quantity it estimates
+		// has four. Occupancy one horizon ahead is the current occupancy, plus
+		// the growth of the requests already resident, minus what completions
+		// release, PLUS the footprint of the requests the scheduler places
+		// during that horizon. The fourth is deliberately absent, because the
+		// projection is meant to describe the instance before this one request is
+		// added -- but at saturation about 48 placements go to an engine inside
+		// one horizon (EXP-47 measured 5.24 per 500 ms status interval), which at
+		// a mix-weighted footprint of some 1,732 tokens is about 83,000 tokens
+		// the projection does not contain.
+		//
+		// The observed slope contains all four terms by construction, because it
+		// is the difference of two occupancies the engine reported. What it gives
+		// up is the ability to say WHY the occupancy is moving, which nothing in
+		// the decision needs: the tests downstream compare a projected occupancy
+		// against a capacity.
+		//
+		// The three properties that made the offered-rate projection wrong in v18
+		// (section 15.3-15.4) are all absent here. The value differs per instance,
+		// so it contributes to ordering candidates rather than shifting every
+		// gate by the same amount. It is measured from the engine, so the loop is
+		// negative and settles. And it counts requests that were actually placed
+		// rather than requests that arrived, so a rising rejection rate cannot
+		// feed back into a tighter gate.
+		//
+		// inflow and outflow are still published, as the positive and negative
+		// part of the same movement, so the existing series keep a meaning.
+		delta := p.kvSlopeOf(f.id) * horizonMs
+		if delta >= 0 {
+			f.inflow, f.outflow = delta, 0
+		} else {
+			f.inflow, f.outflow = 0, -delta
+		}
+	}
 	if !p.cfg.enableFlux {
 		// Ablation: fall back to judging the instance on its current occupancy
 		// alone, which is what a level-based controller does.
@@ -1310,10 +1388,40 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		gate = req.nominalMs
 	}
 	c.gateAfter = gate * fsAllowanceUtilisation
-	c.feasible = !math.IsInf(c.meanAfter, 0) &&
-		c.meanAfter <= c.gateAfter &&
-		c.meanAfter <= f.tightestAllowance &&
-		newKv <= f.capMem
+	unpredictable := math.IsInf(c.meanAfter, 0)
+	overGate := c.meanAfter > c.gateAfter
+	overIncumbents := c.meanAfter > f.tightestAllowance
+	overMemory := newKv > f.capMem
+	c.feasible = !unpredictable && !overGate && !overIncumbents && !overMemory
+
+	// Which of the four conditions refused this placement. Instrumentation only;
+	// no decision reads it.
+	//
+	// `feasible` is a conjunction and every analysis so far has had to infer from
+	// the outside which term was binding -- §37 read it from the share of
+	// decisions that routed, §47 from when preemptions began. Those inferences
+	// were right about the shape and could not name the term. Each failing
+	// condition is counted separately rather than only the first, so that two
+	// conditions failing together is visible as such instead of being attributed
+	// to whichever the code happens to test first.
+	if !c.feasible {
+		reason := func(v string) {
+			metrics.Counter("scheduler_fluidserve_infeasible_total",
+				metrics.Labels{{Name: "reason", Value: v}}).Inc()
+		}
+		if unpredictable {
+			reason("unpredictable")
+		}
+		if overGate {
+			reason("gate")
+		}
+		if overIncumbents {
+			reason("incumbents")
+		}
+		if overMemory {
+			reason("memory")
+		}
+	}
 
 	c.missesOwnBudget = p.missesOwnBudget(req, c)
 
@@ -1750,6 +1858,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		classHarm:      p.FluidserveClassHarm,
 		forceMargin:    p.FluidserveForceMargin,
 		ownBudgetGate:  p.FluidserveOwnBudgetGate,
+
+		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 	}
 	if cfg.horizonSteps <= 0 {
 		panic("--fluidserve-horizon-steps must be positive")
@@ -1789,10 +1899,11 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, flux=%v, classharm=%v, "+
-		"forcemargin=%v, ownbudgetgate=%v, budgets %q",
+		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, cfg.enableFlux, cfg.classHarm,
-		cfg.forceMargin, cfg.ownBudgetGate, p.FluidserveClassBudgets)
+		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection,
+		p.FluidserveClassBudgets)
 
 	go policy.reportLoop()
 	return policy
