@@ -238,6 +238,19 @@ go build -buildvcs=false \
   bash는 그 뒤를 아직 안 읽었으므로 편집하면 같은 문제가 난다. 고쳐야 하면 **먼저 죽이고,
   고치고, 다시 띄운다**(`pkill -f "exp43_clas[s]_harm.sh"` — 대괄호는 자기 자신을 죽이지
   않기 위한 것).
+- **`kubectl wait --for=condition=complete`는 Job이 *실패*하면 영원히 안 돌아온다 (2026-08-02).**
+  Failed는 `complete` 조건을 만족시키지 않으므로 자기 `--timeout`(우리 스크립트에서 300m)을
+  다 채운다. EXP-48 repeat 2에서 엔진 8002가 cold restart 뒤 1200초 안에 안 올라와 러너가
+  rc=1로 끝났는데, sweep 스크립트는 **이미 Failed 상태인 Job을 다섯 시간 기다릴 참이었다.**
+  두 드라이버에 `wait_job`을 넣어 `Complete`와 `Failed`를 **둘 다** 폴링하고, Failed면 1을
+  반환해 연쇄가 다음으로 넘어가게 했다. 데이터 오염은 없다 — 그 조건은 부하를 만들기 전에
+  죽어서 결과 디렉토리 자체가 안 생겼다.
+- **엔진 넷 중 하나가 cold restart에서 안 돌아오는 일이 있다 (2026-08-02).** `neutral-0`의
+  API 서버 넷 중 8002만 `Application startup complete`를 안 찍고 멈췄다(나머지 셋은 찍었다).
+  러너의 `llumnix_deploy.restart_llumnix`가 1200초를 기다리다 `engines NOT serving: [8002]`로
+  포기한다. 우리 변경과 무관한 기동 실패이고, **그 조건을 다시 돌리면 된다.** 로그에 잔뜩
+  나오는 `PeerManager._main: AttributeError: 'KVCacheConfig' object has no attribute 'list'`는
+  migration을 껐는데도 계속 나오는 별개의 잡음이라 이것과 무관하다.
 - **끝난 Job이 k8s에 남는다.** `kubectl delete job`을 안 하면 `Complete` 상태로 계속
   조회된다. 연쇄 스크립트에서 "앞 실험이 끝났나"를 `kubectl get jobs | grep -q
   "bench-runner-exp"`로 물으면 **8일 전 끝난 `bench-runner-exp13-sweep`에 걸려 영원히
