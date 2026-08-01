@@ -238,6 +238,20 @@ go build -buildvcs=false \
   bash는 그 뒤를 아직 안 읽었으므로 편집하면 같은 문제가 난다. 고쳐야 하면 **먼저 죽이고,
   고치고, 다시 띄운다**(`pkill -f "exp43_clas[s]_harm.sh"` — 대괄호는 자기 자신을 죽이지
   않기 위한 것).
+- **드라이버에 고정하는 플래그는 그 드라이버가 돌릴 바이너리에 있어야 한다 (2026-08-02).**
+  EXP-48이 도는 중에 EXP-49용 `fskv` arm을 추가하면서 대조군 arm에도
+  `FS_KV_SLOPE=false`를 고정했는데, `--fluidserve-kv-slope-projection`은 **아직 배포되지
+  않은 EXP-49 바이너리에만 있다.** pflag는 모르는 플래그를 만나면 종료하므로 스케줄러가
+  CrashLoopBackOff에 빠졌고, 그 뒤 모든 조건이 기동 줄을 못 읽어 실패했다. 드라이버는
+  그것을 `scheduler pod ... reported no policy`로 보고하는데 **롤아웃이 느린 경우와
+  구분이 안 된다.** 플래그를 켜지 않으면(env 미설정) `set_scheduler_profiling.py`가
+  명령줄에서 아예 빼므로 두 바이너리 모두에서 동작한다 — **새 플래그는 그 바이너리를
+  배포하는 실험에서만 고정한다.**
+- **측정 경로는 `bin/`과 `workloads/`만이 아니다 — 도는 sweep이 호출하는 것 전부다 (2026-08-02).**
+  드라이버 스크립트의 arm 정의와 `set_scheduler_profiling.py`가 여기 들어간다. **스냅샷
+  패턴은 이걸 막아 주지 않는다**: 스냅샷은 연쇄 시작 때 한 번 뜨지만 그 안의 arm 정의는
+  조건마다 다시 읽히고, `set_scheduler_profiling.py`는 스냅샷이 아니라 원본을 부른다.
+  실험이 도는 동안에는 **다음 실험용 arm 추가도 하지 않는다.**
 - **`kubectl wait --for=condition=complete`는 Job이 *실패*하면 영원히 안 돌아온다 (2026-08-02).**
   Failed는 `complete` 조건을 만족시키지 않으므로 자기 `--timeout`(우리 스크립트에서 300m)을
   다 채운다. EXP-48 repeat 2에서 엔진 8002가 cold restart 뒤 1200초 안에 안 올라와 러너가
