@@ -106,6 +106,7 @@ type fluidserveConfig struct {
 	enableFlux     bool
 	classHarm      bool
 	forceMargin    bool
+	ownBudgetGate  bool
 }
 
 // fluidserveRequest is the per-request context the selector needs. Filters and
@@ -210,6 +211,22 @@ type fluidserveDispatchPolicy struct {
 	// fluxMu guards the per-instance view cache. See flux().
 	fluxMu    sync.Mutex
 	fluxCache map[string]cachedFlux
+
+	// probeMu guards the placement probe below, which exists to answer one
+	// question and is instrumentation only -- it changes no decision.
+	//
+	// §40.3 measured an engine taking 3.2 times its own headroom of new work in
+	// one minute, and §41 measured that 50.4% of 500 ms status intervals carry
+	// more than one placement to the same engine. Whether the second placement
+	// in an interval SEES the first is the difference between a defect and a
+	// design working as intended, and §42 could not settle it from a 1 Hz gauge.
+	//
+	// By design it should: onDispatch increments dispatchVersion and flux()
+	// rebuilds the view when that changes. The probe records what actually
+	// happened -- how many placements go out per status step, and whether the
+	// headroom the decision read moved between them.
+	probeMu   sync.Mutex
+	lastProbe map[string]placementProbe
 }
 
 // cachedFlux is one instance's state as of a particular engine status and a
@@ -1257,7 +1274,42 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	// but outside the slack its requests still have once they are running.
 	// Requests already past saving are excluded from it, so a broken instance
 	// does not become permanently unusable.
-	c.gateAfter = math.Min(f.gateAllowance, req.nominalMs) * fsAllowanceUtilisation
+	// Candidate C. The instance minimum in this expression is redundant
+	// protection and it is the binding one at saturation.
+	//
+	// Two things are being protected. The arriving request must be able to run
+	// at the pace ITS class was promised, which is req.nominalMs. The requests
+	// already here must not be pushed past what they can still meet, which is
+	// f.tightestAllowance on the next line and which uses each incumbent's
+	// REMAINING budget. f.gateAllowance protects the incumbents a second time,
+	// using their nominal budgets instead, and because it is a minimum over
+	// every class present it becomes chat's 50 ms within seconds of a run
+	// starting -- chat is 76.9% of arrivals.
+	//
+	// Measured over minutes 50-56 of EXP-41's `full` trace: gateAllowance read
+	// exactly 50.0 on all four instances while the delivered pace was 55.6 and
+	// tightestAllowance was 68.3-72.7. A deep research request with a 100 ms
+	// budget was therefore tested against 45.0, failed on every instance, was
+	// held for 8.85 s of its 10 s budget and then shed 15.7% of the time -- while
+	// the fleet it could not enter was running at 55.6, inside its budget. The
+	// Llumnix SLO arm dispatches the same requests at 0.44 s and scores 100 on
+	// that class.
+	//
+	// With the instance minimum removed the arriving request is judged on its
+	// own promise and the incumbents on what they have left. Deep research
+	// passes 55.6 <= 90 and 55.6 <= 68.3 and routes; chat still fails 55.6 <=
+	// 45.0 and does not, which is correct -- that instance cannot serve chat at
+	// 50 ms.
+	//
+	// The risk is on the second line: tightestAllowance excludes incumbents
+	// already past their budgets, so the protection weakens exactly when a class
+	// has begun to miss. EXP-46's acceptance conditions require chat not to get
+	// worse for that reason.
+	gate := math.Min(f.gateAllowance, req.nominalMs)
+	if p.cfg.ownBudgetGate {
+		gate = req.nominalMs
+	}
+	c.gateAfter = gate * fsAllowanceUtilisation
 	c.feasible = !math.IsInf(c.meanAfter, 0) &&
 		c.meanAfter <= c.gateAfter &&
 		c.meanAfter <= f.tightestAllowance &&
@@ -1595,7 +1647,44 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 	return steps*per + queued
 }
 
+// placementProbe is the previous placement on one instance: which engine step it
+// was judged against, how many placements that step has now carried, and the
+// headroom the decision read.
+type placementProbe struct {
+	stepID   int64
+	ordinal  int
+	headroom float64
+}
+
+// noteePlacement publishes the two quantities §42.4 asked for.
+//
+//	dispatch_ordinal_in_step  how many placements this engine step has carried.
+//	                          1 everywhere means each placement gets a fresh
+//	                          view; a long tail means several are judged against
+//	                          the same status pull.
+//	headroom_move_in_step     for the second and later placement in a step, the
+//	                          change in the headroom the decision read. Negative
+//	                          means the view moved and the earlier placement was
+//	                          accounted for. ZERO IS THE DEFECT: it means the
+//	                          same capacity was offered twice.
 func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, kind string) {
+	p.probeMu.Lock()
+	if p.lastProbe == nil {
+		p.lastProbe = map[string]placementProbe{}
+	}
+	prev, seen := p.lastProbe[c.flux.id]
+	ord := 1
+	if seen && prev.stepID == c.flux.stepID {
+		ord = prev.ordinal + 1
+		metrics.Histogram("scheduler_fluidserve_headroom_move_in_step",
+			metrics.Labels{}).Observe(c.flux.headroom - prev.headroom)
+	}
+	p.lastProbe[c.flux.id] = placementProbe{
+		stepID: c.flux.stepID, ordinal: ord, headroom: c.flux.headroom}
+	p.probeMu.Unlock()
+	metrics.Histogram("scheduler_fluidserve_dispatch_ordinal_in_step",
+		metrics.Labels{}).Observe(float64(ord))
+
 	p.registry.onDispatch(c.flux.id, req.id, req.tier, req.promptTokens,
 		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs)
 
@@ -1660,6 +1749,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		enableFlux:     p.FluidserveEnableFlux,
 		classHarm:      p.FluidserveClassHarm,
 		forceMargin:    p.FluidserveForceMargin,
+		ownBudgetGate:  p.FluidserveOwnBudgetGate,
 	}
 	if cfg.horizonSteps <= 0 {
 		panic("--fluidserve-horizon-steps must be positive")
@@ -1699,10 +1789,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, flux=%v, classharm=%v, "+
-		"forcemargin=%v, budgets %q",
+		"forcemargin=%v, ownbudgetgate=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, cfg.enableFlux, cfg.classHarm,
-		cfg.forceMargin, p.FluidserveClassBudgets)
+		cfg.forceMargin, cfg.ownBudgetGate, p.FluidserveClassBudgets)
 
 	go policy.reportLoop()
 	return policy

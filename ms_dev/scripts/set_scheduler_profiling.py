@@ -101,6 +101,8 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
     # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.
     "FS_FORCE_MARGIN": "--fluidserve-force-margin",
+    # EXP-46 candidate C.
+    "FS_OWN_BUDGET_GATE": "--fluidserve-own-budget-gate",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -453,6 +455,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-enable-flux", "flux"),
         ("--fluidserve-class-harm", "classharm"),
         ("--fluidserve-force-margin", "forcemargin"),
+        ("--fluidserve-own-budget-gate", "ownbudgetgate"),
         ("--fluidserve-z-safety", "z"),
     ]
     bad = []

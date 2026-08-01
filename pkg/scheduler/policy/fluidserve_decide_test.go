@@ -863,3 +863,52 @@ func TestTheForcedPlacementTestUsesTheSameMarginAsRouting(t *testing.T) {
 	assert.Equal(t, off.missesOwnBudget(swe, e2e), on.missesOwnBudget(swe, e2e),
 		"the end-to-end branch is untouched by this flag")
 }
+
+func TestTheGateCanBeTheRequestsOwnBudgetRatherThanTheInstanceMinimum(t *testing.T) {
+	// Candidate C. Two things are protected in the feasibility test and one of
+	// them is protected twice. The arriving request must be able to run at the
+	// pace its class was promised; the incumbents must not be pushed past what
+	// they can still meet. The second is what tightestAllowance does, using each
+	// incumbent's REMAINING budget. gateAllowance protects them again using
+	// their nominal budgets, and being a minimum over every class present it
+	// becomes chat's 50 ms on every instance within seconds of a run starting.
+	//
+	// The state below is the one measured over minutes 50-56 of EXP-41's full
+	// trace: every instance reporting a gate of 50.0 while delivering 55.6 and
+	// holding incumbents whose remaining allowance is 68.3.
+	f := &instanceFlux{
+		id: "i1", chunk: 8192, meanStep: 55.6,
+		gateAllowance: 50.0, tightestAllowance: 68.3,
+		capKv: 4e6, capMem: 4e6, kvLogical: 1e5, nDecode: 200,
+	}
+	deep := &fluidserveRequest{
+		id: "dr", tier: 100, ttftSloMs: 10000, promptTokens: 4639,
+		expectedToks: 840, nominalMs: 100,
+	}
+	chat := &fluidserveRequest{
+		id: "c", tier: 50, ttftSloMs: 5000, promptTokens: 666,
+		expectedToks: 400, nominalMs: 50,
+	}
+
+	off := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.ownBudgetGate = false
+	})
+	on := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.ownBudgetGate = true
+	})
+
+	// The gate itself, which is what the change touches.
+	assert.InDelta(t, 45.0, off.evaluate(f, nil, deep).gateAfter, 0.01,
+		"without the flag the instance minimum wins and even a 100 ms class is "+
+			"held to chat's 50 ms")
+	assert.InDelta(t, 90.0, on.evaluate(f, nil, deep).gateAfter, 0.01,
+		"with the flag the request is judged on its own 100 ms budget")
+
+	// Chat is unaffected either way: its own budget IS the instance minimum
+	// here, so the change cannot let chat onto an instance that is too slow
+	// for it. That is the property that makes this a deletion of redundancy
+	// rather than a loosening.
+	assert.InDelta(t, off.evaluate(f, nil, chat).gateAfter,
+		on.evaluate(f, nil, chat).gateAfter, 0.01)
+	assert.InDelta(t, 45.0, on.evaluate(f, nil, chat).gateAfter, 0.01)
+}
