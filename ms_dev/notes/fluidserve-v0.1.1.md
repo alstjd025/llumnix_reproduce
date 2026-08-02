@@ -1,5 +1,6 @@
 # FluidServe v0.1.1 — 무엇인가, 무엇이 아닌가
 
+**태그**: `fluidserve-v0.1.1` (llumnix, Agent_applications 양쪽)
 **날짜**: 2026-08-02
 **바이너리**: `scheduler-exp49-H2` (`md5 c3c6a3518092ea80eb7bb4dc1725ae5b`)
 **프로파일**: `deploy/profiling/llama31-70b-b200-tp2/fluidserve.json`, `classes[]`는 2026-08-02판
