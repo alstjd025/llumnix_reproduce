@@ -105,6 +105,9 @@ FLUIDSERVE_ABLATIONS = {
     "FS_OWN_BUDGET_GATE": "--fluidserve-own-budget-gate",
     # EXP-49 candidate H2.
     "FS_KV_SLOPE": "--fluidserve-kv-slope-projection",
+    # EXP-52. Not a boolean: the value is passed through as a float, so the
+    # set_flag path must not turn it into --flag=true.
+    "FS_GATE_SLACK": "--fluidserve-gate-slack",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -459,6 +462,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-force-margin", "forcemargin"),
         ("--fluidserve-own-budget-gate", "ownbudgetgate"),
         ("--fluidserve-kv-slope-projection", "kvslope"),
+        ("--fluidserve-gate-slack", "gateslack"),
         ("--fluidserve-z-safety", "z"),
     ]
     bad = []
