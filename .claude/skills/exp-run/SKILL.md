@@ -89,6 +89,56 @@ A port that never came up still produces a metrics file — one record per tick
 with every field `None`. Any check must require two numbers, not just "did it
 increase".
 
+## 4b. Every derived number is a place to be wrong, and it has happened three times in one week
+
+The three below are the same mistake in three costumes: **a quantity was derived
+from a text table without the source table being looked at once.** Each was
+caught, two of them only because the result was implausible.
+
+| what was written | what was true | how it happened |
+|---|---|---|
+| "preemptions fell 2,794 → 2" | 2,609, in line with three previous runs | `awk '{s+=$2}'` on the per-engine table read `2,609` as `2` — the thousands separator terminates the number |
+| "EXP-48 part 2 finished, start the next experiment" | it had run nothing; the scheduler was in CrashLoopBackOff | `grep -q "PART 2 DONE"` matched a marker printed by an attempt that failed. **Logs are append-only: match on the COUNT, or put a per-run id in the marker** |
+| "every EXP-53 condition is unhealthy" | all fourteen were fine | a watcher read `run_health` columns one position off, comparing the delivered rate against the request count |
+
+**The rule: before a derived number is reported or acted on, print the source
+rows it came from and read them.** For a check that runs unattended, run it once
+against data whose answer is already known — the watcher above would have been
+caught in ten seconds by running it on conditions that were known good.
+
+And **`run_health` output is not a fixed-width table you can index blind.** A
+condition still running prints a short `EMPTY` row. Require the full column
+count before parsing (`NF==9`).
+
+## 4c. A watcher that greps only for success is silent through a crash
+
+Silence then reads as "still running", which is exactly wrong. A monitor over a
+long sweep has to emit on every terminal state:
+
+1. a condition that failed to start its engines
+2. a condition that finished but not on 4/4 engines, or that `run_health` flagged
+3. a delivered rate far from the target — load never applied, but the condition
+   looks complete
+4. **the chain script itself disappearing without its DONE marker**
+
+`kubectl wait --for=condition=complete` never returns on a job that FAILS; it
+sits until its own `--timeout`, which was 300m here and nearly held the cluster
+idle for five hours on an already-dead job. Poll for **either** terminal
+condition (`wait_job` in the sweep drivers).
+
+## 4d. One failed condition should not take the rest of its arm with it
+
+The sweep drivers pass a whole rate list to one runner Job, and the runner exits
+on the first condition whose engines do not come up. In EXP-53 that cost two arms
+their top two rates — six conditions ran, the seventh failed, the eighth never
+started. Engine restarts fail often enough to plan around: **four times in one
+week**, always the same way (one of four ports never reports serving inside
+1200 s).
+
+For a sweep long enough that losing an arm matters, either run one rate per Job
+or plan a top-up pass that fills only the (arm, rate) cells short of their
+repeats. Do not re-run whole arms to recover two cells.
+
 ## 5. Never reuse a session prefix across a restart
 
 Stopping a sweep and relaunching with the same `SESSION_PREFIX` leaves two sets

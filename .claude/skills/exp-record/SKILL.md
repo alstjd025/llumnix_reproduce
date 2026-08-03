@@ -43,6 +43,27 @@ Five estimator changes were each correct by definition and each failed to
 improve anything. What made that legible rather than confusing was that the
 refutation condition was written down first every time.
 
+## Before writing a mechanism, read the code that produces the quantity
+
+Five sections of `implementation.md` are corrections of a mechanism written from
+the shape of a number rather than from what makes it. The pattern is always the
+same: **two quantities carried the same name and were not the same quantity.**
+
+- §32 — the client's `tbt_mean_ms` was 1/1.92 of the real inter-token latency,
+  because it divided by tokens counted out of context.
+- §40 — a "collapse in sharing" was a per-minute mean divided by another
+  per-minute mean during a ramp.
+- §42 — "the in-flight account is empty" was judged from a gauge's magnitude
+  without reading the code that increments it.
+- §45 — "candidate A holds preemptions at zero" treated a two-state outcome as a
+  distribution and read its spread.
+- §55 — "the deployed `c_kv` is 1/1.6 of measured" compared a coefficient fitted
+  on decode-only steps against one fitted on samples that include prefill, and
+  quoted a "deployed" value that was not in the file.
+
+**So: open the file, read the function, and check that both sides of a
+comparison were built the same way. A matching name is not evidence.**
+
 ## Correction discipline
 
 Corrections are a large fraction of what gets recorded here, and they are the
