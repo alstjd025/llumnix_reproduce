@@ -145,6 +145,7 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 | [POLYSERVE_DESIGN_KO.md](POLYSERVE_DESIGN_KO.md) | PolyServe 이식 설계 (정본) |
 | [POLYSERVE_PROGRESS.md](POLYSERVE_PROGRESS.md) | PolyServe 구현 시간순 기록, 함정 |
 | [ms_dev/notes/polyserve-fidelity.md](ms_dev/notes/polyserve-fidelity.md) | **PolyServe 이식의 원문 대조 (정본).** "Isolation의 대표주자로 세울 수 있는가"에 대한 답 — **세울 수 있으나 이름을 "고정 fleet 위의 정적 클래스 파티션"으로 좁혀야 한다.** ⚠ **§2가 필수 수정**: `set_scheduler_profiling.py`의 `--polyserve-tier-decode-tokens`가 `25:728,50:386,100:275`인데 실측은 `494/428/985`로 **dr이 3.58배 과소**다. §48·§49와 같은 오류가 기준선 쪽에만 남아 있어, 고치기 전 EXP-53의 PolyServe 수치는 인용하면 안 된다 |
+| [ms_dev/notes/fluidserve-how-it-works.md](ms_dev/notes/fluidserve-how-it-works.md) | **시스템 전체를 위에서 아래로 설명한 문서.** 처음 이해할 때 여기부터 — 문제 정의, 유연한 격리, 시간·메모리 모델, 결정 사다리, 클래스 분리, 무엇을 측정하고 무엇을 설정하는가, 실측 결과, 미해결. 각 설계 결정에 그것을 정하게 만든 측정이 붙어 있다 |
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **FluidServe v0.1 명세 (정본)** |
 | [ms_dev/notes/fluidserve-design.md](ms_dev/notes/fluidserve-design.md) | FluidServe 설계 원안 |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | FluidServe 구현 결정 기록 |
