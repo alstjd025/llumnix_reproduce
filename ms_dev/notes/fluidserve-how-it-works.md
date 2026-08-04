@@ -8,7 +8,8 @@
 > | 문서 | 무엇이 있나 | 언제 보나 |
 > |---|---|---|
 > | **이 문서** | 전체를 위에서 아래로 | **시스템을 처음 이해할 때** |
-> | `fluidserve-v0.1.md` | 결정 규칙·용량 모델·상수의 정본 | 정확한 규칙을 인용할 때 |
+> | **`paper-outline.md`** | **논문 구성 — 주장과 증거의 대응, 그림 목록, 미확보 항목** | **논문에 쓸 때** |
+| `fluidserve-v0.1.md` | 결정 규칙·용량 모델·상수의 정본 | 정확한 규칙을 인용할 때 |
 > | `fluidserve-v0.1.1.md` | 지금 상태의 자족적 명세, 미해결 목록 | 지금 무엇이 안 되어 있나 |
 > | `fluidserve-implementation.md` | 일어난 순서대로의 기록, 반증과 정정 | 왜 이렇게 됐나 / 이미 시도했나 |
 > | `fluidserve-design.md` | 구현 **전에** 쓴 원안 | 수식(Part 3)과 한계 예측(Part 11) |
@@ -1218,6 +1219,7 @@ FluidServe 2,965(반복 1) 대 2,922(반복 2)인데 반복 1은 한 엔진에, 
 | `fluidserve-implementation.md` | 시간순 기록. 문서 끝이 항상 최신 |
 | `fluidserve-design.md` | 구현 전 원안. Part 3(수식)과 Part 11(한계)만 유효, 부록 B에 대조표 |
 | `why-the-routing-layer.md` | **엔진에 목표 인식 스케줄러가 있는데 왜 라우팅 계층이 필요한가** |
+| **`paper-outline.md`** | **논문 구성. 이 문서의 어느 절이 논문의 어느 절이 되는지가 거기 있다** |
 | `related-works-review.md` | 관련 연구 일곱 편 검토 |
 | `qoserve-niyama-fidelity.md` | 엔진 스케줄러 이식의 원본 대조 |
 | `deploy/profiling/README.md` | 프로파일 표의 출처와 신뢰도 |
