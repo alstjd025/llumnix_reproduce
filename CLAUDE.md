@@ -15,7 +15,8 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 | [ms_dev/notes/fluidserve-v0.1.1.md](ms_dev/notes/fluidserve-v0.1.1.md) | **여기부터 읽는다.** 현재 상태의 자족적 명세 — v0.1에서 **결정 규칙은 한 줄도 안 바뀌었고** 바뀐 것은 길이 프로파일 하나와 계측. 실측 표(정적·한 시간), **v0.1.1이 아닌 것**, 그리고 **미해결 일곱 개를 우선순위로**(1순위가 45 req/s의 두 상태 산포) |
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | 앞 버전. **결정 규칙·용량 모델·상수 아홉 개는 여기가 정본.** v0.1의 자족적 명세 — 결정 규칙, 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | 시간순 경위. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
-| implementation.md **§57** | **여기부터 읽는다. 지금 상태의 정본.** EXP-53 네 정책 정적 sweep(2반복 64조건). offered 45 req/s에서 **FluidServe 90.2 / Llumnix SLO 52.4 / Llumnix 32.1 / PolyServe 27.5**, 70에서 **51.9 / 21.4 / 3.9 / 14.4**, goodput 70에서 **19,435 / 11,737 / 802 / 3,965**. **총 생산량은 37% 차이인데 goodput은 24배** — 프로젝트 출발 주장이 정책 비교로 재현됨. **확인 필요 둘**: migration arm 구분이 주장대로가 아닐 수 있음(스케줄러 재배치 루프가 엔진 설정과 무관하게 돎), Llumnix SLO의 admitted 상승은 chat만 88%까지 거절해 분모가 바뀐 것 |
+| implementation.md **§58** | **여기부터 읽는다. 지금 상태의 정본.** EXP-54 네 정책 **한 시간 동적 trace**(§57의 동적 짝). 반복 1에서 offered **FluidServe 70.0 / Llumnix SLO 38.8 / PolyServe 17.6**, goodput **18,073 / 11,490 / 3,198**인데 **총 처리량은 18,944 / 16,163 / 18,150** — 생산량 4% 차이에 goodput 5.7배. **58.3이 클래스 packing의 가장 직접적인 증거**: FluidServe가 dr을 엔진 8001에 모으고(그 엔진의 67.5%) chat만 남은 세 엔진이 chat을 **40~42ms**(예산 50)에 돌려 97~99%, PolyServe는 chat 엔진 둘이 **96.4·101.0ms**에 큐 445·1,121. 엔진 불균형 4.5배 대 **48배**. **58.4: Llumnix 기본 arm은 중단** — 거절하지 않으니 40분에 포화되고 **부하 생성기가 임시 포트를 고갈**(Errno 99 62,114건, 다른 arm 0건), 클라이언트 수정 전에는 못 잰다. **58.6: preemption 수치는 반복 2 전에 인용 금지.** 반복 2는 세 arm으로 진행 중 |
+| implementation.md **§57** | 그 앞. EXP-53 네 정책 정적 sweep(2반복 64조건). offered 45 req/s에서 **FluidServe 90.2 / Llumnix SLO 52.4 / Llumnix 32.1 / PolyServe 27.5**, 70에서 **51.9 / 21.4 / 3.9 / 14.4**, goodput 70에서 **19,435 / 11,737 / 802 / 3,965**. **총 생산량은 37% 차이인데 goodput은 24배** — 프로젝트 출발 주장이 정책 비교로 재현됨. **확인 필요 둘**: migration arm 구분이 주장대로가 아닐 수 있음(스케줄러 재배치 루프가 엔진 설정과 무관하게 돎), Llumnix SLO의 admitted 상승은 chat만 88%까지 거절해 분모가 바뀐 것 |
 | implementation.md **§51~§56** | 그 앞. §51 후보 C 재측정(정적 +10.6·preemption −33%인데 동적 −4.4로 기각). §52 45 req/s **쌍안정**과 상태 변수(chat 없는 엔진 유무, 24대24 예외 없음). §53 C가 붕괴를 없앰(0/8 대 8/20)—affinity가 feasible 안에서만 도니 게이트가 닫히면 분리가 안 생긴다. §54 게이트를 **축(gateSlack)** 으로. §55 `c_kv` 1/1.6 주장 정정(실제 1/1.26). §56 축은 단조롭지 않고 양 끝으로 붕괴 |
 | implementation.md **§51(구)** | EXP-50 — 후보 C를 수정 프로파일 위에서 다시. **정적 +10.6점**(60 req/s에서 58.6 → 69.2, 산포 0.1, 거절률 하락, goodput +15%, dr 84.7→100.0, swe 22.0→82.9). **EXP-46의 기각 사유였던 preemption 6,583은 철회된다** — 올바른 입력 위에서 C는 2,794 → **1,873으로 33% 줄인다.** **새 기각 사유는 chat이다**: 한 시간에서 offered 69.7 → 65.3, 거절 27.0 → 30.7, chat **−14.4**(요청의 76.9%), dr +16.9, swe +48.0. **게이트는 두 일을 겸하고 있었다 — 서빙 가능한 dr을 거절하는 일과 가장 빡빡한 클래스를 위해 용량을 남기는 일. C는 둘 다 없앤다.** 다음은 §51.5의 둘(후보 B, 게이트에 클래스별 하한) |
 | implementation.md **§50** | 그 앞의 정본. EXP-49 — **H2 기각**(preemption 2,724 → 1,748로 36% 줄지만 offered 2.4점·goodput 3.4% 손해, 규칙은 500 미만을 요구). **투영 자체는 고쳐졌다**(배포된 투영 평균오차 −26,841 → +13,341, MAE −28%) — 그런데 점수가 나빠졌다. 그리고 계수기가 처음으로 **무엇이 배치를 막는지**를 세었다: **페이스 게이트 90.8%, memory 7.2%**. **§47.3의 "재고 조건으로 유량을 통제한다"는 진단은 구속력 없는 항을 겨냥하고 있었다.** 게이트를 바꾸는 유일한 제안이 **후보 C**이고 EXP-50이 수정 프로파일 위에서 다시 잰다 |
@@ -145,6 +146,7 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **FluidServe v0.1 명세 (정본)** |
 | [ms_dev/notes/fluidserve-design.md](ms_dev/notes/fluidserve-design.md) | FluidServe 설계 원안 |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | FluidServe 구현 결정 기록 |
+| [ms_dev/notes/related-works-review.md](ms_dev/notes/related-works-review.md) | **관련 연구 검토 (일곱 편)** — §0~§7 SLOs-Serve/PolyServe/AdaGen/Scorpio, §8~§10 JITServe/QoServe/Simple is Better. **§9가 "엔진 레벨 SLO 스케줄러가 있는데 왜 라우팅 계층이 필요한가"에 대한 답이고 논문 motivation의 정본**(순서 대 구성의 구분, 단순 조합 일곱 개의 해부, EXP-40·EXP-25 근거, 최소 조건 셋, §9.7의 미측정 ablation). 원문은 `related_works/*.pdf` |
 | [ms_dev/notes/qoserve-niyama-fidelity.md](ms_dev/notes/qoserve-niyama-fidelity.md) | QoServe(Niyama) 이식의 원본 대조·수정·한계 |
 | [deploy/profiling/README.md](deploy/profiling/README.md) | 지연 프로파일 테이블의 출처·신뢰도 |
 | [ms_dev/notes/](ms_dev/notes/) | 클러스터 셋업/배포/장애 기록 |
@@ -288,6 +290,25 @@ go build -buildvcs=false \
   포기한다. 우리 변경과 무관한 기동 실패이고, **그 조건을 다시 돌리면 된다.** 로그에 잔뜩
   나오는 `PeerManager._main: AttributeError: 'KVCacheConfig' object has no attribute 'list'`는
   migration을 껐는데도 계속 나오는 별개의 잡음이라 이것과 무관하다.
+- **거절하지 않는 정책을 포화까지 밀면 부하 생성기가 먼저 무너진다 (2026-08-04, EXP-54).**
+  Llumnix load-balance arm이 40분에 네 엔진을 포화시키자 오래 큐에 있던 스트림이 끊겼고,
+  클라이언트가 그 실패를 **연결 수준 실패로 인식하지 못해**(서버 종료 키워드 목록에
+  `cannot assign requested address`가 없다) 비스트리밍 재시도로 **연결을 하나 더 열었다.**
+  그렇게 임시 포트 약 28,000개가 고갈되어 `[Errno 99] Cannot assign requested address`가
+  62,114건 나왔고, 실패가 즉시 돌아오니 **시도율이 170/s로 읽혔다 — trace의 도착률이 아니라
+  클라이언트가 헛도는 속도다.** 다른 세 arm에는 이 오류가 0건이다.
+  → **거절률 0%인 arm에서는 `error_msg`를 종류별로 세고, "시작된 호출/초"가 trace의
+  도착률을 넘는지 본다.** 넘으면 그 구간은 정책이 아니라 부하 생성기를 재고 있다.
+  고치려면 키워드 목록에 `cannot assign requested address`·`max retries exceeded`를 넣고
+  러너의 `net.ipv4.ip_local_port_range`를 넓힌다. **거절은 재시도되지 않는다** — 처리기가
+  거절을 먼저 분기하고 어댑터는 `max_retries=0`이다. 메시지의 "Max retries exceeded"는
+  requests가 연결 실패에 붙이는 기본 문구다. 자세한 것은 implementation.md §58.4.
+- **그림 스크립트가 조용히 한 종류의 run을 통째로 건너뛴다 (2026-08-04).**
+  `plot_ratesweep_split.py`·`exp38_policy_compare.py`가 디렉토리 이름의 `_rpm_(\d+)`로
+  조건을 찾는데, 한 시간 동적 trace 디렉토리에는 그게 없다. 앞의 것은 `ValueError`로 죽고
+  뒤의 것은 **아무 말 없이 빈 결과를 낸다.** 그래서 EXP-41 이후 모든 한 시간 trace가
+  **엔진 레이어 그림 없이** 기록됐다. 셋 다 고쳤다(rate 파싱 실패 시 디렉토리 이름을 태그로).
+  → **그림을 만든 뒤 arm 이름과 점 개수가 의도대로인지 확인한다**(exp-plot 스킬의 마지막 절).
 - **끝난 Job이 k8s에 남는다.** `kubectl delete job`을 안 하면 `Complete` 상태로 계속
   조회된다. 연쇄 스크립트에서 "앞 실험이 끝났나"를 `kubectl get jobs | grep -q
   "bench-runner-exp"`로 물으면 **8일 전 끝난 `bench-runner-exp13-sweep`에 걸려 영원히

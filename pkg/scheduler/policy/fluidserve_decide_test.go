@@ -33,6 +33,10 @@ func fsPolicy(t *testing.T, budgets string, mutate func(*fluidserveConfig)) *flu
 		enableAffinity: true,
 		enableFlux:     true,
 		classHarm:      true,
+		// The production default. Zero would make the gate zero and nothing
+		// feasible, so the helper has to carry it rather than rely on the
+		// zero value.
+		gateSlack: 1.0,
 	}
 	if mutate != nil {
 		mutate(&cfg)

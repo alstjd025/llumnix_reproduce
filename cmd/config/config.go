@@ -277,6 +277,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveForceMargin       bool
 	FluidserveOwnBudgetGate     bool
 	FluidserveKvSlopeProjection bool
+	FluidserveGateSlack         float64
 
 	// Adaptive PD
 	EnableAdaptivePD             bool
@@ -439,6 +440,21 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"balance under-predicts 88.5% of the time by a mean of 101,633 tokens "+
 			"while the observed slope is unbiased and has a third of the absolute "+
 			"error. Off by default until EXP-49 judges it.")
+	flags.Float64Var(&c.FluidserveGateSlack, "fluidserve-gate-slack", 1.0,
+		"How far past the tightest per-token budget promised to anything live on "+
+			"an instance that instance may be driven, in order to serve a class "+
+			"whose own budget is looser. 1 holds the instance to that promise, "+
+			"which is the shipped behaviour; a value at or above the largest ratio "+
+			"between two class budgets removes the instance minimum entirely and "+
+			"is the same policy as --fluidserve-own-budget-gate. The two ends fail "+
+			"in opposite directions and both are measured: at 1 a fleet delivering "+
+			"45 ms refuses a request promised 100, and 5 of 14 runs at 45 req/s "+
+			"end with every gate at 45.0 ms and 15%% of decisions routing; at the "+
+			"far end the hour-long trace loses 4.4 points because the capacity "+
+			"freed for the loose-budget classes comes out of chat, which is 76.9%% "+
+			"of arrivals. Requests already on the instance are protected on the "+
+			"next condition regardless, by what each has left rather than by what "+
+			"its class was promised.")
 	flags.BoolVar(&c.FluidserveClassHarm, "fluidserve-class-harm", true,
 		"When no instance can take a request at its promised pace, charge each "+
 			"candidate for the share of it that belongs to OTHER classes. Disabling "+

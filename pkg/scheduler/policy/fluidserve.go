@@ -110,6 +110,10 @@ type fluidserveConfig struct {
 	// kvSlopeProjection replaces the modelled inflow/outflow balance with the
 	// instance's own observed rate of change of KV occupancy. Candidate H2.
 	kvSlopeProjection bool
+	// gateSlack is how far past the tightest promise on an instance that
+	// instance may be driven in order to serve a class promised more. 1 is the
+	// shipped behaviour; large enough is candidate C. See evaluate().
+	gateSlack float64
 }
 
 // fluidserveRequest is the per-request context the selector needs. Filters and
@@ -1383,9 +1387,42 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	// already past their budgets, so the protection weakens exactly when a class
 	// has begun to miss. EXP-46's acceptance conditions require chat not to get
 	// worse for that reason.
-	gate := math.Min(f.gateAllowance, req.nominalMs)
-	if p.cfg.ownBudgetGate {
-		gate = req.nominalMs
+	// The instance minimum and the request's own budget are not two options but
+	// the two ends of one axis, and gateSlack is where on it this fleet sits.
+	//
+	//	gateSlack = 1      the instance minimum binds as promised. An instance
+	//	                   carrying chat is held to chat's 50 ms for every
+	//	                   arriving request whatever that request was promised.
+	//	gateSlack = 1/0.90 the instance minimum binds at exactly chat's budget
+	//	                   rather than at the margin below it, so foreign work may
+	//	                   use the whole of what chat was promised and none of the
+	//	                   safety margin.
+	//	gateSlack = k      an instance may be driven to k times the tightest
+	//	                   promise it carries in order to serve a class whose own
+	//	                   promise is looser.
+	//	gateSlack >= max class-budget ratio, or ownBudgetGate
+	//	                   the instance minimum never binds and every request is
+	//	                   judged against its own budget alone. For this workload
+	//	                   the ratio is 100/50 = 2, so gateSlack >= 2 and
+	//	                   ownBudgetGate are the same policy.
+	//
+	// The axis is worth naming because the two ends fail in opposite directions
+	// and both failures are measured. At 1, deep research with a 100 ms budget is
+	// refused by a fleet delivering 45 ms, and at 45 req/s that produces a
+	// bistability: 5 of 14 runs end with chat on all four engines, every gate at
+	// 45.0 ms, and 15% of decisions routing (implementation.md section 52). At
+	// the far end, EXP-50 measured the whole hour losing 4.4 points because the
+	// capacity freed for the loose-budget classes comes out of chat, which is
+	// 76.9% of arrivals. Neither end is the right answer and the choice of
+	// default is a statement about which aggregation the fleet is scored on.
+	//
+	// The incumbents are protected on the next line regardless, by what each of
+	// them has LEFT rather than by what its class was promised.
+	gate := req.nominalMs
+	if !p.cfg.ownBudgetGate {
+		if inst := f.gateAllowance * p.cfg.gateSlack; inst < gate {
+			gate = inst
+		}
 	}
 	c.gateAfter = gate * fsAllowanceUtilisation
 	unpredictable := math.IsInf(c.meanAfter, 0)
@@ -1860,9 +1897,14 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		ownBudgetGate:  p.FluidserveOwnBudgetGate,
 
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
+		gateSlack:         p.FluidserveGateSlack,
 	}
 	if cfg.horizonSteps <= 0 {
 		panic("--fluidserve-horizon-steps must be positive")
+	}
+	if cfg.gateSlack < 1 {
+		panic("--fluidserve-gate-slack must be at least 1: below 1 the gate " +
+			"would refuse work the tightest resident class was promised")
 	}
 
 	policy := &fluidserveDispatchPolicy{
@@ -1899,10 +1941,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, flux=%v, classharm=%v, "+
-		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, budgets %q",
+		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, cfg.enableFlux, cfg.classHarm,
-		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection,
+		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
 		p.FluidserveClassBudgets)
 
 	go policy.reportLoop()

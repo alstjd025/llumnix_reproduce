@@ -126,6 +126,37 @@ sits until its own `--timeout`, which was 300m here and nearly held the cluster
 idle for five hours on an already-dead job. Poll for **either** terminal
 condition (`wait_job` in the sweep drivers).
 
+## 4e. An arm that rejects nothing can break the load generator instead of the system
+
+Reported failures are attributed to the policy by default, and that default is
+wrong for any arm with no admission control. In EXP-54 the Llumnix load-balance
+arm saturated its four engines at minute 40; queued streams were then cut, and
+because the client's server-termination keyword list does not contain
+`cannot assign requested address`, each cut fell through to the generic branch
+and **opened one more connection for a non-streaming retry**. That exhausted the
+roughly 28,000 ephemeral ports (a closed port is held 60 s in `TIME_WAIT`), after
+which every attempt failed in microseconds and the recorded attempt rate read
+**170/s against a trace that offered 50** — the client spinning, not the load.
+62,114 such calls; the other three arms had zero.
+
+**On any arm whose rejection rate is 0, check two things before reading its
+numbers:**
+
+```python
+df['error_msg'].value_counts()          # by kind, not just is_error.sum()
+df.groupby(df.start_time//300).size()   # calls started per window
+```
+
+If the started-call rate exceeds what the trace offers, that window measures the
+client. Errors concentrated in the last segments with none earlier is the
+signature.
+
+**Rejections are not retried**, so do not reach for that explanation: the
+handler branches on rejection before the fallback, and the HTTPAdapter is
+mounted `max_retries=0`. The string "Max retries exceeded" inside a
+`ConnectionError` is requests' standard wording for a failed connection, not
+evidence of a retry.
+
 ## 4d. One failed condition should not take the rest of its arm with it
 
 The sweep drivers pass a whole rate list to one runner Job, and the runner exits

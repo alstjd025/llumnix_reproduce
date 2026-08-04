@@ -134,6 +134,24 @@ present in the data, never from a hardcoded list.
 A legend of seven entries does not fit above the axes beside a two-line title;
 it wraps and overlaps. Put it below.
 
+## A script that parses the condition out of the directory name skips a whole class of run
+
+`plot_ratesweep_split.py` and `exp38_policy_compare.py` located the condition
+with `_rpm_(\d+)` on the directory name. A dynamic trace has no single rate, so
+its directories carry no such token: the first raised `ValueError` and the
+second **produced an empty result and said nothing**. Every hour-long trace from
+EXP-41 to EXP-54 was therefore recorded with no engine-layer figures at all, and
+nobody noticed because the request-level figures were there.
+
+Both now fall back to the directory name as the tag. When writing or reusing a
+script, assume the run set will one day include a shape the naming convention
+did not anticipate, and **make the no-match case loud** — a script that plots
+nothing must say which paths it rejected and why.
+
+The same defect in a third form: `exp53_class_goodput.py` had its three
+comparison runs written into `__main__`, so it could only ever draw EXP-52. It
+takes `--hour label|colour|dir` now.
+
 ## A figure script takes a glob
 
 `exp27_figures.main()` hardcoded EXP-27's pass patterns, so every later sweep
@@ -148,3 +166,96 @@ every run of one arm — `mix_of` required `_m1_rpm_` and dropped every `_m1f_`
 run, so a figure carried a note naming an arm that was not on it. After
 generating, confirm the arms and the point count are what was intended before
 reporting the figure as done.
+
+## Figures that go in the paper
+
+Exploratory figures live in `results/aggregate_analysis/<exp>/` as PNG. Paper
+figures live in `Agent_applications/agent_motivation_experiment/paper_figures/`
+as PDF, one script per figure, with `paper_style.py` holding the shared
+constants and `README.md` recording what data each figure is drawn from. A paper
+figure is not an exploratory figure exported — the constraints below only apply
+to the paper one, and they change the drawing.
+
+**Import the metrics, never reimplement them.** A paper script imports
+`collect`/`load_run` from the experiment's analysis script so that a correction
+to the loader reaches the paper. It also means the paper figure changes silently
+when the loader changes, so re-run it and check against the recorded table after
+any change to `exp22_fluidserve.load_run`.
+
+### Physical size is the whole problem
+
+Draw the figure at the size it will occupy on the page, so `\includegraphics`
+applies a scale factor of 1.0 and 8 pt in the script is 8 pt on paper. Any
+rescaling in LaTeX multiplies every font size by the same factor.
+
+- USENIX `usenix2019_v3.sty`: `\textwidth=7in`, `\columnsep=0.33in`, so one
+  column is **3.335 in** and the full width is **7.0 in**. ACM `sigconf` is
+  3.33 / 7.0, close enough that one figure serves both.
+- Single column is one of the two columns. A 7 in figure dropped into one column
+  is scaled by 0.48 and its 8 pt type renders at **3.8 pt**. That happened.
+- To move a figure between one column and two, **redraw it at the other width**.
+  Do not stretch it: the label trimming below is only correct at one width.
+
+**Never `bbox_inches="tight"` on a paper figure.** It crops the canvas to the
+ink, so the PDF comes out narrower than the width it was designed for, and
+`width=\columnwidth` then scales it back UP — 3.12 in cropped from 3.335 became
+a 1.07x enlargement of every glyph. Pin the canvas and fit the layout inside it
+with `tight_layout(rect=...)`. Check with `pdfinfo`: the page size must be the
+width you designed at.
+
+Set `pdf.fonttype: 42`. The matplotlib default is Type 3, which several
+camera-ready checkers reject.
+
+### What has to give at 3.335 in
+
+Two panels side by side leave about 1.3 in of plotting area each, which the
+default labelling does not fit into. In order of what to cut:
+
+- one x axis label centred under both panels, not one per panel;
+- thousands as a `k` suffix on the tick labels (`6k`, not `6000`) — three
+  characters less of axis width, and it lets the y axis labels stay one line;
+- explain a line style once with a neutral key on a second legend row instead of
+  naming it per arm. Five entries need about 3.6 in; four fit in one row only
+  with `handlelength=1.3, columnspacing=0.6`;
+- with more than about five x values, label a **subset of the measured rates**
+  and give the rest an unlabelled minor tick. Do not switch to round numbers
+  that were never measured.
+- panel labels `(a)`/`(b)` go inside the axes or are dropped. Above the axes is
+  where the legend is.
+
+Two-line y axis labels are usually wrong here: a rotated label longer than the
+panel is tall gets clipped, so shorten the text instead.
+
+### Rules that only bite in a paper figure
+
+- **An arm whose two denominators coincide gets one line, not two.** Drawing a
+  dotted curve exactly on top of a solid one asserts a distinction the data does
+  not contain. Draw the offered curve only for arms that actually reject.
+- **Dropping the rejection annotations moves an obligation into the caption, it
+  does not remove it.** Attainment on an admitted denominator is uninterpretable
+  without the rejection rate — in EXP-53 the Llumnix SLO arm's admitted
+  attainment *rises* 44.0 → 69.8% between 50 and 70 req/s while its rejection
+  rate goes 20.7 → 68.9%. Produce both an `_offered` and an `_admitted` version,
+  and say in the README which one is safe to use where.
+- **A point with n=1 has no error bar and therefore reads as the most precise
+  point on the figure.** State it in the caption. Every EXP-53 cell is n=1.
+- **Do not reproduce a standing note from an analysis script without checking
+  it.** `exp53_compare.py` prints "FluidServe and PolyServe run without
+  migration" on every figure while its own counter reports 225 rescheduling
+  pairs for PolyServe and 0 for Llumnix SLO. Unresolved notes stay out.
+
+### Record what the figure is made of
+
+`paper_figures/README.md` carries, per figure: the run glob and directories, n
+per cell, which sessions, what was excluded and why, the metric definitions, the
+full table of plotted values, and the list of things the caption must state.
+This is what makes a figure re-derivable a month later, and it is where the
+uncorrected-vs-corrected comparison for a re-scored run belongs.
+
+### Refactoring these scripts
+
+Regenerate and compare against the previous PDF **rendered to PNG** before
+reporting done. A regex edit that moved figures onto the shared style module
+also deleted the `tight_layout` and x-label lines; the script still ran and
+still wrote a plausible-looking PDF. `pdftoppm -r 200` on both and `cmp` is the
+check that caught it.
