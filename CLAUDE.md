@@ -15,7 +15,8 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 | [ms_dev/notes/fluidserve-v0.1.1.md](ms_dev/notes/fluidserve-v0.1.1.md) | **여기부터 읽는다.** 현재 상태의 자족적 명세 — v0.1에서 **결정 규칙은 한 줄도 안 바뀌었고** 바뀐 것은 길이 프로파일 하나와 계측. 실측 표(정적·한 시간), **v0.1.1이 아닌 것**, 그리고 **미해결 일곱 개를 우선순위로**(1순위가 45 req/s의 두 상태 산포) |
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | 앞 버전. **결정 규칙·용량 모델·상수 아홉 개는 여기가 정본.** v0.1의 자족적 명세 — 결정 규칙, 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | 시간순 경위. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
-| implementation.md **§58** | **여기부터 읽는다. 지금 상태의 정본.** EXP-54 네 정책 **한 시간 동적 trace**(§57의 동적 짝). 반복 1에서 offered **FluidServe 70.0 / Llumnix SLO 38.8 / PolyServe 17.6**, goodput **18,073 / 11,490 / 3,198**인데 **총 처리량은 18,944 / 16,163 / 18,150** — 생산량 4% 차이에 goodput 5.7배. **58.3이 클래스 packing의 가장 직접적인 증거**: FluidServe가 dr을 엔진 8001에 모으고(그 엔진의 67.5%) chat만 남은 세 엔진이 chat을 **40~42ms**(예산 50)에 돌려 97~99%, PolyServe는 chat 엔진 둘이 **96.4·101.0ms**에 큐 445·1,121. 엔진 불균형 4.5배 대 **48배**. **58.4: Llumnix 기본 arm은 중단** — 거절하지 않으니 40분에 포화되고 **부하 생성기가 임시 포트를 고갈**(Errno 99 62,114건, 다른 arm 0건), 클라이언트 수정 전에는 못 잰다. **58.6: preemption 수치는 반복 2 전에 인용 금지.** 반복 2는 세 arm으로 진행 중 |
+| implementation.md **§59** | **여기부터 읽는다. 지금 상태의 정본.** EXP-54 반복 2. **점수가 대단히 잘 재현된다** — offered **FluidServe 69.6±0.3 / Llumnix SLO 39.0±0.2 / PolyServe 17.1±0.5**, goodput **17,967±106 / 11,545±55 / 3,192±7**, 총 처리량은 18,911 / 16,176 / 18,212로 **3.8% 차이인데 goodput 5.6배**. **59.2: 클래스 분리는 두 반복 모두 일어나고(창별 최대 점유율 99~100%) 다른 것은 어느 엔진이냐다** — 반복 1은 60분 내내 엔진 1, 반복 2는 엔진 2 → 3 → 1로 두 번 옮겨 감. **59.3은 정정 절이다**: "분리가 재현되지 않는다"고 먼저 썼는데 **한 시간 전체로 풀링한 집중도가 정체가 움직이는 양을 못 재기 때문**이었다(§40·§55·§32와 같은 계열). **그림이 표를 먼저 반증했다.** 새 규칙: **집중되는 대상의 정체가 움직일 수 있으면 전 구간 풀링으로 집중도를 재지 않는다.** §58.3의 인과 주장은 **확인도 반증도 안 된 상태**이고 재려면 `--fluidserve-enable-affinity=false` ablation이 필요하다. **59.5: preemption은 fleet 총계로는 재현되고(2,965 대 2,922) 엔진별 배분은 완전히 달라진다.** **59.7 확인 필요 둘**: 기동 줄이 50개 조건 전부 `classharm=false`인데 소스·바이너리·배포스크립트·파드args 넷 다 true; migration 켠 arm도 요청 이동 0건 |
+| implementation.md **§58** | 그 앞. EXP-54 반복 1. §58.1 총 생산량 4% 차이에 goodput 5.7배. **§58.3의 관측은 유효하나**(반복 1은 dr이 60분 내내 엔진 8001) **인과 주장은 확인도 반증도 안 된 상태**(§59.3). **58.4: Llumnix 기본 arm 중단** — 거절하지 않으니 40분에 포화되고 **부하 생성기가 임시 포트를 고갈**(Errno 99 62,114건, 다른 arm 0건), 클라이언트 수정 전에는 못 잰다. PolyServe는 chat 엔진 둘이 **96.4·101.0ms**에 큐 445·1,121, 엔진 불균형 **48배**(FluidServe 4.5배) |
 | implementation.md **§57** | 그 앞. EXP-53 네 정책 정적 sweep(2반복 64조건). offered 45 req/s에서 **FluidServe 90.2 / Llumnix SLO 52.4 / Llumnix 32.1 / PolyServe 27.5**, 70에서 **51.9 / 21.4 / 3.9 / 14.4**, goodput 70에서 **19,435 / 11,737 / 802 / 3,965**. **총 생산량은 37% 차이인데 goodput은 24배** — 프로젝트 출발 주장이 정책 비교로 재현됨. **확인 필요 둘**: migration arm 구분이 주장대로가 아닐 수 있음(스케줄러 재배치 루프가 엔진 설정과 무관하게 돎), Llumnix SLO의 admitted 상승은 chat만 88%까지 거절해 분모가 바뀐 것 |
 | implementation.md **§51~§56** | 그 앞. §51 후보 C 재측정(정적 +10.6·preemption −33%인데 동적 −4.4로 기각). §52 45 req/s **쌍안정**과 상태 변수(chat 없는 엔진 유무, 24대24 예외 없음). §53 C가 붕괴를 없앰(0/8 대 8/20)—affinity가 feasible 안에서만 도니 게이트가 닫히면 분리가 안 생긴다. §54 게이트를 **축(gateSlack)** 으로. §55 `c_kv` 1/1.6 주장 정정(실제 1/1.26). §56 축은 단조롭지 않고 양 끝으로 붕괴 |
 | implementation.md **§51(구)** | EXP-50 — 후보 C를 수정 프로파일 위에서 다시. **정적 +10.6점**(60 req/s에서 58.6 → 69.2, 산포 0.1, 거절률 하락, goodput +15%, dr 84.7→100.0, swe 22.0→82.9). **EXP-46의 기각 사유였던 preemption 6,583은 철회된다** — 올바른 입력 위에서 C는 2,794 → **1,873으로 33% 줄인다.** **새 기각 사유는 chat이다**: 한 시간에서 offered 69.7 → 65.3, 거절 27.0 → 30.7, chat **−14.4**(요청의 76.9%), dr +16.9, swe +48.0. **게이트는 두 일을 겸하고 있었다 — 서빙 가능한 dr을 거절하는 일과 가장 빡빡한 클래스를 위해 용량을 남기는 일. C는 둘 다 없앤다.** 다음은 §51.5의 둘(후보 B, 게이트에 클래스별 하한) |
@@ -143,10 +144,12 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 |---|---|
 | [POLYSERVE_DESIGN_KO.md](POLYSERVE_DESIGN_KO.md) | PolyServe 이식 설계 (정본) |
 | [POLYSERVE_PROGRESS.md](POLYSERVE_PROGRESS.md) | PolyServe 구현 시간순 기록, 함정 |
+| [ms_dev/notes/polyserve-fidelity.md](ms_dev/notes/polyserve-fidelity.md) | **PolyServe 이식의 원문 대조 (정본).** "Isolation의 대표주자로 세울 수 있는가"에 대한 답 — **세울 수 있으나 이름을 "고정 fleet 위의 정적 클래스 파티션"으로 좁혀야 한다.** ⚠ **§2가 필수 수정**: `set_scheduler_profiling.py`의 `--polyserve-tier-decode-tokens`가 `25:728,50:386,100:275`인데 실측은 `494/428/985`로 **dr이 3.58배 과소**다. §48·§49와 같은 오류가 기준선 쪽에만 남아 있어, 고치기 전 EXP-53의 PolyServe 수치는 인용하면 안 된다 |
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **FluidServe v0.1 명세 (정본)** |
 | [ms_dev/notes/fluidserve-design.md](ms_dev/notes/fluidserve-design.md) | FluidServe 설계 원안 |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | FluidServe 구현 결정 기록 |
-| [ms_dev/notes/related-works-review.md](ms_dev/notes/related-works-review.md) | **관련 연구 검토 (일곱 편)** — §0~§7 SLOs-Serve/PolyServe/AdaGen/Scorpio, §8~§10 JITServe/QoServe/Simple is Better. **§9가 "엔진 레벨 SLO 스케줄러가 있는데 왜 라우팅 계층이 필요한가"에 대한 답이고 논문 motivation의 정본**(순서 대 구성의 구분, 단순 조합 일곱 개의 해부, EXP-40·EXP-25 근거, 최소 조건 셋, §9.7의 미측정 ablation). 원문은 `related_works/*.pdf` |
+| [ms_dev/notes/related-works-review.md](ms_dev/notes/related-works-review.md) | **관련 연구 검토 (일곱 편)** — §0~§7 SLOs-Serve/PolyServe/AdaGen/Scorpio, §8~§10 JITServe/QoServe/Simple is Better. **§9가 "엔진 레벨 SLO 스케줄러가 있는데 왜 라우팅 계층이 필요한가"에 대한 답이고 논문 motivation의 정본**(순서 대 구성의 구분, 단순 조합 일곱 개의 해부, EXP-40·EXP-25 근거, 최소 조건 셋, §9.7의 미측정 ablation). §11은 SLOs-Serve 요약이고 **정본은 아래 별도 문서**. 원문은 `related_works/*.pdf` |
+| [ms_dev/notes/slosserve-comparison.md](ms_dev/notes/slosserve-comparison.md) | **SLOs-Serve 대 FluidServe (정본).** 차별점은 **두 시스템이 같은 min(인스턴스 위 가장 빡빡한 예산)을 지목하고 대응이 반대**라는 것 — 그들은 그 제약 아래에서 토큰 배분을 최적화하고 우리는 제약이 취해지는 집합을 바꾼다(게이트 50.0 → 100.0). **§6에 철회 기록**: "한 번에 평가 대 순차 질의"는 비교 축이 아니다(우리 술어도 인스턴스별 로컬이다). **§10이 baseline 계획** — 새 정책 없이 `affinity=off, pend=off` 조합, 설계서 §6.3의 미측정 칸도 함께 채운다 |
 | [ms_dev/notes/qoserve-niyama-fidelity.md](ms_dev/notes/qoserve-niyama-fidelity.md) | QoServe(Niyama) 이식의 원본 대조·수정·한계 |
 | [deploy/profiling/README.md](deploy/profiling/README.md) | 지연 프로파일 테이블의 출처·신뢰도 |
 | [ms_dev/notes/](ms_dev/notes/) | 클러스터 셋업/배포/장애 기록 |
@@ -220,6 +223,12 @@ go build -buildvcs=false \
   `ms_dev/scripts/gen_fluidserve_profile.py`를 다시 돌린다. 재생성할 때 **`classes[]`만
   갈아끼운다** — `decode_step_law`·`prefill_step_law`는 엔진의 성질이라 같이 바꾸면
   한 번에 두 가지를 바꾸는 것이 된다.
+  **⚠ 2026-08-04에 같은 오류가 PolyServe 쪽에 그대로 남아 있는 것을 발견했다.**
+  `set_scheduler_profiling.py`의 `--polyserve-tier-decode-tokens`가 `25:728,50:386,100:275`인데
+  실측은 `494/428/985`다(dr 3.58배 과소, swe 1.5배 과대). 이 값이 §4.5 admission의 최대 KV와
+  **재분할기의 tier별 수요 추정**(= 파티션 자체)에 둘 다 들어간다. **같은 양이 두 곳에 따로
+  적혀 있어서 한쪽만 갱신됐다** — 고치면서 `fluidserve.json`에서 읽도록 배관을 합칠 것.
+  자세한 것은 `ms_dev/notes/polyserve-fidelity.md` §2.
 - **모델이 내놓는 양이 맞는지는 그 양의 미래와 대조해서 잰다 (2026-08-02).** `proj`는
   "한 horizon 뒤의 KV 점유량" 예측인데 **그게 맞는지를 한 번도 재지 않은 채** 열 몇 개의
   후보를 그 위에 세웠다. 재는 방법은 있었다 — 스케줄러가 `projected_kv_tokens`와
@@ -303,6 +312,15 @@ go build -buildvcs=false \
   러너의 `net.ipv4.ip_local_port_range`를 넓힌다. **거절은 재시도되지 않는다** — 처리기가
   거절을 먼저 분기하고 어댑터는 `max_retries=0`이다. 메시지의 "Max retries exceeded"는
   requests가 연결 실패에 붙이는 기본 문구다. 자세한 것은 implementation.md §58.4.
+- **정체가 움직이는 대상의 집중도를 전 구간 풀링으로 재지 않는다 (2026-08-04, §59.3).**
+  EXP-54 반복 2에서 "각 클래스가 한 엔진에 몰린 최대 비율"을 한 시간 전체로 계산했더니
+  deepresearch가 32.6%(균등 25%)로 나와 **"분리가 재현되지 않는다"고 기록했는데 틀렸다.**
+  창별로 다시 보면 **매 순간 99~100%로 집중돼 있었고 집중된 엔진이 두 번 옮겨 갔을 뿐**
+  이다(엔진 2 → 3 → 1). 위치가 움직이면 전 구간 합산 분포는 퍼진 것처럼 읽힌다.
+  → **집중도는 창별로 재고, 창마다 어느 대상인지도 같이 낸다.** §40(평균끼리 나눔)·
+  §55(표본 정의가 다른 두 적합)·§32(같은 이름의 두 양)와 같은 계열이다.
+  → 그리고 이 경우 **그림이 표를 먼저 반증했다** — 창별로 그린 패널에서 두 반복 곡선이
+  붙어 다녔는데 표를 먼저 믿었다. **생성한 그림을 읽고 표와 대조한 뒤에 결론을 쓴다.**
 - **그림 스크립트가 조용히 한 종류의 run을 통째로 건너뛴다 (2026-08-04).**
   `plot_ratesweep_split.py`·`exp38_policy_compare.py`가 디렉토리 이름의 `_rpm_(\d+)`로
   조건을 찾는데, 한 시간 동적 trace 디렉토리에는 그게 없다. 앞의 것은 `ValueError`로 죽고

@@ -134,6 +134,26 @@ present in the data, never from a hardcoded list.
 A legend of seven entries does not fit above the axes beside a two-line title;
 it wraps and overlaps. Put it below.
 
+## A concentration statistic pooled over a whole run cannot see a moving target
+
+EXP-54 repeat 2 was recorded as "the class separation does not reproduce", from a
+whole-run figure: the share of deep research held by the engine holding the most
+of it read 58.7% in repeat 1 and 32.6% in repeat 2, against 25% for an even
+spread. **It was wrong.** Windowed at three minutes, both repeats sit at 99-100%
+for the first third of the hour; what differs is *which* engine, and repeat 2
+moved it twice (engine 2, then 3, then 1). Pooling an hour over a target whose
+identity moves spreads the distribution and reads as no concentration at all.
+
+**Measure a concentration per window, and report which entity holds it in each
+window.** The whole-run number is only meaningful when the assignment is stable,
+which is the thing being measured.
+
+The figure had it right before the table did — the windowed panel showed the two
+repeats tracking each other — and the table was believed first. **Read the figure
+you just generated and reconcile it with the table before writing the
+conclusion.** This is the same failure as verifying which arms got drawn, one
+step later in the pipeline.
+
 ## A script that parses the condition out of the directory name skips a whole class of run
 
 `plot_ratesweep_split.py` and `exp38_policy_compare.py` located the condition
@@ -259,3 +279,31 @@ reporting done. A regex edit that moved figures onto the shared style module
 also deleted the `tight_layout` and x-label lines; the script still ran and
 still wrote a plausible-looking PDF. `pdftoppm -r 200` on both and `cmp` is the
 check that caught it.
+
+## The run-boundary cutoff inflates the end of a timeline, and only for the arm that is losing
+
+A request still in flight when a run ends has an unknown outcome, so `attain()`
+drops it from **both** denominators rather than scoring it a violation. That is
+right in general — counting it as a miss would penalise the low-load conditions
+where a long request cannot finish inside the run. It is wrong at the end of a
+**backlogged** run, because the requests still in flight there are precisely the
+slow ones, so removing them removes the failures and leaves the survivors.
+
+EXP-54's PolyServe arm: its final 90 s window holds 3,678 arrivals of which
+**3,396, or 92.3%, never finished**. The 282 that did were the fast ones, so
+attainment reads **99.6% against 9.1% two minutes earlier**. On the figure it is
+a near-vertical rise at minute 60 that reads as "the static partition recovers
+at the end", the exact opposite of what happened. The same run's FluidServe arm
+never exceeds 4.5% in-flight-at-end, because it rejects and never builds a
+backlog — so **the artifact appears only on the arm that is doing worst, and
+flatters it.**
+
+Before publishing any attainment-over-time figure: compute the in-flight-at-end
+share per window, drop the windows above a stated threshold (20% works), and cut
+**every arm at the same time** so the panels stay comparable. Report the trim.
+An arm that rejects and an arm that does not will hit the threshold minutes
+apart; that difference is itself the signal, not a reason to give them different
+x extents.
+
+This does not affect static per-condition figures, where the whole condition is
+one number and the drain is a fixed fraction of every arm's run.

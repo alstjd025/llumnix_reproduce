@@ -1348,14 +1348,115 @@ motivation에 직접 걸리므로 더 급하다.**
 
 ---
 
-## 11. 관련 문서
+## 11. SLOs-Serve와의 비교 (요약 — 정본은 [slosserve-comparison.md](slosserve-comparison.md))
+
+SLOs-Serve만 위치가 애매하다. 본체는 엔진 스케줄러(배치 안에서 토큰을 어떻게 나눌
+것인가)인데, 그 위에 얹힌 multi-replica 라우팅 계층이 우리가 서 있는 자리와 같다.
+그래서 별도 문서로 분리했고, 여기에는 결론만 남긴다.
+
+### 11.1 두 시스템이 같은 양을 문제로 지목하고, 대응이 반대 방향이다
+
+SLOs-Serve Algorithm 2 첫 줄 `t_0 ← min_{req ∈ Reqs_Decoding} req.TPOT`과 FluidServe
+`buildFlux`의 `f.gateAllowance` 계산(`fluidserve.go:946`)은 **같은 값을 구한다** —
+한 인스턴스 위에 살아 있는 요청들의 공칭 지연 예산 중 최솟값이다. 그리고 두 시스템 모두
+이 값이 그 인스턴스의 허용 배치 크기(또는 허용 KV 점유)를 정한다고 본다.
+
+대응이 반대다.
+
+- **SLOs-Serve**: 그 최솟값을 주어진 것으로 보고, 그 아래에서 토큰 배분을 최적화한다.
+  Sarathi처럼 전역 상한을 두는 대신 현재 running set에 맞춰 배치를 매번 최대로 키우고,
+  speculative decoding으로 배치당 지연 제약 자체를 완화한다. **제약을 덜 비싸게 만든다.**
+- **FluidServe**: 그 최솟값이 취해지는 집합을 바꾼다. feasible한 곳 중 그 클래스를 이미
+  가장 많이 든 인스턴스를 먼저 고르므로, 한 인스턴스가 한 클래스로 채워지고 그 인스턴스의
+  최솟값이 그 클래스 자신의 예산이 된다. **일부 인스턴스에서 제약을 없앤다.**
+
+**그리고 동적 배치 크기 조절이 만드는 이득의 크기는 "그 replica에 빡빡한 클래스의 요청이
+하나도 없을 확률"에 비례한다.** running set에 chat이 한 건이라도 있으면 `t_0`는 chat의
+50 ms이고, 그 순간 Sarathi의 전역 상한과 같은 값이 된다. **우리 믹스에서 chat은 요청의
+76.9%이므로**, round-robin으로 뿌리면 모든 인스턴스가 몇 초 안에 chat을 들고 그 확률이
+0에 가까워진다. 실측: 혼합 상태에서 `gate_allowance`가 네 인스턴스 **전부 정확히 50.0**
+(§33.2), 클래스 분리가 일어난 엔진에서 **100.0**(§36.2) — 허용 점유가 약 두 배가 된다.
+
+**SLOs-Serve 자신의 ablation도 같은 방향이다**(Fig. 14): 라우팅 1.19×로 세 구성요소 중
+가장 작고, 도착이 급변하는 Coder 시나리오에서 1.92×로 가장 크다. 우리 EXP-40이 반대편
+끝을 쟀다 — 엔진 레벨 구성 제어(Niyama unit 4)가 +0.7점인 동안 컨트롤플레인 차이는
+45 req/s에서 +41.6~45.7점이었다.
+
+### 11.2 ⚠ 정정 — "한 번에 평가 대 순차 질의"는 비교 축이 아니다 (2026-08-04)
+
+이 문서의 첫 판에서 비교 실험을 "함대 전체를 한 번에 평가하는 것 대 인스턴스에 하나씩
+순차로 묻는 것"으로 설계하고 `slosserve-route`라는 새 정책을 약 60줄로 추가하자고
+적었다. **철회한다.**
+
+**FluidServe의 feasibility 술어는 이미 인스턴스별 로컬 함수다.** `evaluate(f, view, req)`는
+그 인스턴스의 flux 상태와 요청만 읽고, 보정계수·prefill duty·KV 기울기도 전부 인스턴스별로
+관리된다. **전역인 것은 판정이 아니라 그 다음 단계인 선택이다.** 그래서 순차 질의를 우리
+스케줄러 안에서 하나의 상태 스냅샷으로 구현하면 순차성이 사라지고, 남는 차이는 정렬 규칙
+하나뿐이다. 새 정책을 만들 이유가 없었다.
+
+**아키텍처 그림 수준에서 축을 세우고 그 다름이 코드의 어느 줄에 있는지 확인하지 않은
+것이 원인이다.** §55(같은 이름의 두 양이 같은 정의로 만들어졌는지 확인하지 않은 것)와
+같은 모양의 실수다.
+
+### 11.3 그러면 실제 차이는 술어의 결과에 매달린 두 가지다
+
+```
+evaluate()가 인스턴스별로 로컬 판정          ← 두 시스템이 같다
+  ├─ 통과한 곳이 여럿 → 어느 것을 고르나      ← 차이 1: 클래스 affinity
+  └─ 어느 곳도 통과 못 함 → 그 다음 무엇을    ← 차이 2: 사다리(PEND/SHED/FORCE)
+```
+
+**차이 2가 진짜 아키텍처 차이다.** SLOs-Serve의 replica i는 거절할 때 다른 replica가
+받을지 모르므로, "아무도 못 받고 이 요청은 어차피 예산을 놓친다(→ SHED, 용량을 돌려준다)"와
+"아무도 지금은 못 받지만 아직 기다릴 수 있다(→ PEND)"를 구분할 수 없다. **우리 결정의
+80~87%가 PEND다**(45~60 req/s, §33.1). 그리고 엔진이나 replica는 이 선택지를 원리적으로
+가질 수 없다 — 요청이 이미 자기에게 와 있어서 자기가 배치해야 하기 때문이다.
+
+### 11.4 baseline 설정 — 새 정책을 만들지 않는다
+
+§11.3의 두 기전이 각각 **이미 있는 ablation 스위치 하나**에 대응한다.
+
+| SLOs-Serve 라우팅의 성질 | 우리 플래그 | 끄면 코드가 어떻게 되나 |
+|---|---|---|
+| feasible한 것 중 그냥 하나를 고른다 | `--fluidserve-enable-affinity=false` | `c.share`가 전부 0이 되어 `sortCandidates`의 첫 비교가 동률이 되고, `room`(여유 공간 비율) 내림차순으로 떨어진다 |
+| 보유하지 않고 도착 시점에 결정한다 | `--fluidserve-enable-pend=false` | `canWait` 분기를 건너뛰어 곧바로 SHED 판정, 아니면 FORCE |
+
+**`affinity=off, pend=off` 조합이 SLOs-Serve 라우팅 아키텍처의 우리 시스템 내 등가물이고,
+코드 변경이 0줄이다.** 네 arm(대조군 / affinity만 끔 / pend만 끔 / 둘 다 끔)을 한 sweep에
+놓으면 두 기전의 값이 따로 나오고, **설계서 §6.3의 미측정 칸("독립 결합")도 함께 채워진다.**
+
+주의 셋 — ① `affinity=off`는 round-robin보다 **강한** 기준선이다(여유 공간 순으로 고르므로).
+기준선을 약화시키지 않았다는 점에서 옳은 방향이고 논문에 명시한다. ② `classHarm`을
+명시적으로 고정하고 기동 줄에서 대조한다 — `pend=off`는 FORCE 비중이 크게 올라가서 이
+스위치의 영향을 처음으로 크게 받는 조건이다(§38). ③ **이름을 그들 것으로 붙이지 않는다.**
+판정 술어도 다르고(그들은 토큰 예산선 DP), declined의 처리도 다르며(그들은 best-effort
+tier), 우리 재구현은 실제 SLOs-Serve보다 강하다(한 스냅샷에서 마이크로초 안에 넷을 다 본다).
+
+**설계·판정 규칙·실행 계획은 [slosserve-comparison.md](slosserve-comparison.md) §10에 있다.**
+
+### 11.5 지금 쓸 수 있는 문장과 쓰면 안 되는 문장
+
+- ✅ "두 시스템은 같은 병목을 지목하고, 한쪽은 그 제약 아래에서 최적화하며 다른 쪽은
+  제약이 취해지는 집합을 바꾼다" — §11.1이 뒷받침한다
+- ❌ "우리가 SLOs-Serve를 이긴다" — 그들의 본체를 구현하지 않았다. 어떤 실험을 해도
+  이 문장은 성립하지 않는다
+- ❌ "순차 재시도는 작동하지 않는다" — 측정이 아니라 논증이고, §11.2대로 우리 재구현
+  안에서는 순차성 자체가 재현되지 않는다
+
+**우리가 못 하는 것 다섯**(배치 내 토큰 배분, speculation 길이 조절, stage별 SLO,
+"수용 = 완료까지 보장" 불변식, 다단계 마감 배분)은 slosserve-comparison.md §9에 있다.
+
+---
+
+## 12. 관련 문서
 
 | | |
 |---|---|
 | [fluidserve-v0.1.md](fluidserve-v0.1.md) | 결정 규칙·용량 모델·상수 정본 |
 | [fluidserve-v0.1.1.md](fluidserve-v0.1.1.md) | 현재 명세와 미해결 일곱 개 |
 | [fluidserve-implementation.md](fluidserve-implementation.md) | §33(설계 검토), §36(클래스 packing 증거와 대가), §48(투영 오차 측정), §57(네 정책 sweep) |
-| [fluidserve-design.md](fluidserve-design.md) | Part 11(한계), 부록 B(원안 대 구현), **§6.3 ablation 행렬(§9.7이 요구하는 실험)** |
+| [slosserve-comparison.md](slosserve-comparison.md) | **SLOs-Serve 비교의 정본.** §11이 이 문서의 요약이다 |
+| [fluidserve-design.md](fluidserve-design.md) | Part 11(한계), 부록 B(원안 대 구현), **§6.3 ablation 행렬(§9.7·§11.4가 요구하는 실험)** |
 | [qoserve-niyama-fidelity.md](qoserve-niyama-fidelity.md) | **QoServe 이식의 unit별 충실도와 §2의 엔진 큐 깊이 표(§9.1의 근거)** |
 | [fluidserve-implementation.md](fluidserve-implementation.md) §35 | **EXP-40 — 컨트롤플레인 × 엔진 스케줄러 교차. §9.4의 근거** |
 | [../../POLYSERVE_DESIGN_KO.md](../../POLYSERVE_DESIGN_KO.md) | PolyServe 이식의 충실도 |
