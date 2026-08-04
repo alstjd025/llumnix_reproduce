@@ -52,11 +52,44 @@ SLO_FLAGS = {
     "--tpot-profiling-data-path": f"{MOUNT}/tpot.json",
 }
 
-# Expected output length per tier, keyed by the tier's TPOT SLO.  Measured
-# per-class means of the mix workload: swe 728, chat 386, deepresearch 275.
-POLYSERVE_FLAGS = {
-    "--polyserve-tier-decode-tokens": "25:728,50:386,100:275",
-}
+# Expected output length per tier, keyed by the tier's TPOT SLO.  PolyServe uses
+# this quantity in two places -- the largest KV footprint a tier's admitted set
+# can reach (design document section 4.5) and the per-tier demand the
+# repartitioner divides the fleet by -- so a value that no longer matches the
+# workload moves the partition itself, not merely an admission threshold.
+#
+# It used to be a hand-written string here, "25:728,50:386,100:275", measured on
+# 2026-07-25.  On 2026-07-29 Agent_applications 5fa82f8 changed the search-arena
+# report structure from four sections to seven, which took the deep research
+# class from 282 to 985 output tokens, and this string was not updated because
+# nothing connected it to the workload.  FluidServe carried the identical defect
+# in its own length profile; correcting that was the largest single improvement
+# in the project's history (static 60 req/s, offered attainment 36.6 -> 56.8,
+# implementation.md sections 48 and 49).  The baseline kept the defect six days
+# longer only because the same quantity was written down in two places and only
+# one of them was regenerated.
+#
+# It is derived from fluidserve.json now, which is the file both policies read,
+# so the two cannot drift apart again and neither policy holds an accuracy
+# advantage over the other in any comparison between them.
+TIER_BY_CLASS = {"swe": 25, "chat": 50, "deepresearch": 100}
+
+
+def polyserve_flags():
+    """The tier table, derived from the length profile rather than hard-coded."""
+    path = os.path.join(TABLE_DIR, "fluidserve.json")
+    with open(path) as fh:
+        doc = json.load(fh)
+    by_name = {c["name"]: c for c in doc.get("classes", [])}
+    missing = sorted(n for n in TIER_BY_CLASS if n not in by_name)
+    if missing:
+        sys.exit(f"{path} has no class {missing}; the PolyServe tier table "
+                 f"cannot be derived and a stale hard-coded one is exactly the "
+                 f"defect this replaced")
+    pairs = sorted(TIER_BY_CLASS.items(), key=lambda kv: kv[1])
+    return {"--polyserve-tier-decode-tokens":
+            ",".join(f"{tier}:{int(round(by_name[name]['mean']))}"
+                     for name, tier in pairs)}
 
 # How each tier's latency budget is defined, which is how the requests are
 # actually scored: chat and deepresearch on the mean time between output tokens
@@ -316,8 +349,12 @@ def main():
     # them set across a revert costs nothing and keeps the diff small.
     for k, v in SLO_FLAGS.items():
         args = set_flag(args, k, v)
-    for k, v in POLYSERVE_FLAGS.items():
+    for k, v in polyserve_flags().items():
         args = set_flag(args, k, v)
+        # Printed on every invocation, not only under --policy polyserve, so
+        # that a run whose tier table went stale says so in its own log rather
+        # than being reconstructed from the deployment spec months later.
+        print(f"  polyserve tier table (from fluidserve.json): {k}={v}")
     # An ablation flag that this invocation does NOT set is REMOVED, so the
     # scheduler falls back to its compiled default. Keeping it instead was a
     # defect: a flag written by one arm survived into every condition that ran
