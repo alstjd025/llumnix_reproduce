@@ -8,6 +8,8 @@
 > | 문서 | 무엇이 있나 |
 > |---|---|
 > | **이 문서** | **논문에 무엇을 쓸 것인가.** 주장과 증거의 대응, 그림 목록, 위험 요소 |
+> | **`motivation.md`** | **§2의 논증 전체 (정본).** 사실 다섯 개, 그것이 만드는 요구 조건 넷, 추가로 만들 기준선 넷. **motivation을 쓰거나 고칠 때는 이 문서와 아래 §2를 같이 고친다** |
+> | **`.../aggregate_analysis/motivation/README.md`** | **그림 다섯 개 각각**: 무엇을 그렸나, 어떤 스크립트가 그렸나, 무엇을 말하지 않나 |
 > | `fluidserve-how-it-works.md` | 시스템이 무엇을 어떻게 하는가 (위에서 아래로) |
 > | `fluidserve-v0.1.md` / `v0.1.1.md` | 결정 규칙의 정본 / 지금 상태의 명세 |
 > | `fluidserve-implementation.md` | 일어난 순서대로의 기록, 반증과 정정 |
@@ -80,9 +82,18 @@ admission을 같은 양으로 결정한다.**
 
 ---
 
-# 2. Motivation / Problem — 세 개의 사실
+# 2. Motivation / Problem — 다섯 개의 사실
 
-**셋 다 우리 시스템 없이 성립한다.** 자기 결과로 자기 동기를 만들면 심사에서 걸린다.
+> **정본은 [`motivation.md`](motivation.md)이다.** 논증 전체, 각 사실의 기전, 요구 조건
+> 넷으로의 연결, 추가 기준선 계획이 거기 있다. 아래는 그 요약이고, **주장을 고칠 때는
+> 두 곳을 같이 고친다.** 그림별 문서는
+> `Agent_applications/agent_motivation_experiment/results/aggregate_analysis/motivation/README.md`.
+>
+> **2026-08-05에 셋에서 다섯으로 늘렸다.** 원래 셋(문제가 있다 / 클래스마다 자원이 다르다
+> / 기존 답이 부족하다)에는 **그 셋을 잇는 고리와 시간 축이 빠져 있었다** — 왜 클래스마다
+> 자원이 다른 것이 정책 문제가 되는지(사실 3), 왜 한 번 정하면 안 되는지(사실 5).
+
+**다섯 다 우리 시스템 없이 성립한다.** 자기 결과로 자기 동기를 만들면 심사에서 걸린다.
 
 ## 사실 1 — 엔진은 바쁜데 쓸모 있는 처리량이 무너진다
 
@@ -136,7 +147,36 @@ admission을 같은 양으로 결정한다.**
 유도된다 — 요청 하나가 더하는 시간 중 KV 항의 비중이 chat 15.3%, deepresearch 47.3%다.
 **측정과 모델이 따로 같은 답을 낸다.**
 
-## 사실 3 — 기존 답들이 왜 부족한가
+## 사실 3 — 함대의 용량이 하드웨어가 아니라 배정의 함수다
+
+**사실 2와 사실 4를 잇는 고리다.** 인스턴스 하나는 그 위 모든 요청에 대해 **한 가지**
+토큰 생성 속도를 만들므로, 받아들여도 되는 상태인지는 **그 위에서 예산이 가장 빡빡한
+요청**이 정한다. 그래서 요청을 어디에 놓는가가 함대 총 용량을 바꾼다.
+
+재는 방법: EXP-55의 클래스별 단독 포화 도착률(chat 65.6 / swe 23.1 / dr 16.5 req/s)에서
+**자원이 하나뿐이고 각 클래스가 고정 비율로 소비한다면** 이 믹스가 포화할 도착률은
+`R = 1/Σ(f_c/K_c) = 41.0 req/s`다. **측정은 거기 안 떨어진다.**
+
+| | 실측 포화 | 예측 대비 |
+|---|---|---|
+| PolyServe | **26.7** req/s | **0.65배** |
+| Llumnix (부하분산) | 36.4 | 0.89배 |
+| Llumnix SLO | 37.1 | 0.90배 |
+| *FluidServe (참고, 주장 아님)* | *45.1* | *1.10배* |
+
+> **믹스와 하드웨어를 고정한 채 정책만 바꿔 1.4배가 움직인다**(기존 셋 기준).
+> 포화 기준을 70·80·90·95%로 바꿔도 **순서가 한 번도 안 바뀐다.**
+
+그리고 같은 믹스를 세 가지로 세면 비율이 전부 다르다 — chat이 **요청의 76.9% / 입력
+토큰의 30.4% / 함대 용량의 48.1%**다. **이 워크로드가 "같은 것 세 덩어리"가 되는 단위가
+없다.**
+
+**그림**: `motivation/motivation_capacity_is_a_policy.png` (`motivation_fig3.py`)
+
+⚠ 1.10배는 EXP-55 1회 측정 위에 서 있어 견고하지 않다. **주장의 본체는 0.65~0.90의
+간격**이고 1.10은 참고로만 쓴다.
+
+## 사실 4 — 기존 답들이 왜 부족한가
 
 | 기존 접근 | 왜 부족한가 | 증거 | 상태 |
 |---|---|---|---|
@@ -145,6 +185,23 @@ admission을 같은 양으로 결정한다.**
 | **엔진 안의 SLO 스케줄러** | 순서는 바꿔도 **구성은 못 바꾼다** | EXP-40: 엔진 스케줄러를 바꿔도 격차 변화가 반복 산포 안 | **약함 — §7 참조** |
 
 **세 번째가 심사에서 반드시 나온다.** 논거는 `why-the-routing-layer.md` §9가 정본.
+
+**그림**: `motivation/motivation_two_failures.png` (`motivation_fig4.py`) — 두 열(PolyServe /
+Llumnix SLO) × 세 행(무엇을 받았나 / 무엇을 전달했나 / 무엇이 대기했나). **둘 다 함대
+대부분을 놀리고, 그 이유가 서로 반대다**: PolyServe는 엔진 하나를 KV 14%로 두고 셋에
+753~1,056건을 쌓으며, Llumnix SLO는 네 엔진을 전부 KV 55%·chat 예산의 89~96%로 만들어
+deepresearch에 자기 예산의 56%만 준다.
+
+## 사실 5 — 옳은 배정이 시간에 따라 움직인다
+
+**정적 파티션이 원리적으로 안 되는 이유이고, admission을 라우팅 뒤에 따로 붙일 수 없는
+이유다.** 한 시간 trace에서 도착률(13.8~73.8 req/s)과 믹스(chat 66.6~93.1%)가 독립적으로
+움직이고, 사실 3의 식을 2분 창마다 풀면:
+
+> **용량선이 37.6에서 55.6 req/s로 1.48배 움직인다 — 하드웨어는 그대로다.
+> 그리고 도착률이 그 선 위에 있는 시간이 한 시간의 63%다.**
+
+**그림**: `motivation/motivation_the_target_moves.png` (`motivation_fig5.py`)
 
 ---
 
@@ -209,10 +266,17 @@ iteration 단위**이며, 밀리초 단위 상수는 하나(300)뿐이다. 그�
 
 # 5. 그림 목록
 
+**motivation 그림 다섯 개는 `results/aggregate_analysis/motivation/`에 모여 있고, 그 폴더의
+`README.md`가 그림별 정본이다** — 무엇을 그렸나, 어떤 스크립트가 그렸나, 무엇을 말하지
+않나. 다시 만드는 명령도 거기 있다.
+
 | # | 그림 | 파일 | 스크립트 | 뒷받침하는 주장 |
 |---|---|---|---|---|
 | 1 | **생산량 대 goodput** | `motivation/motivation_throughput_vs_goodput.png` | `motivation_fig1.py` | 사실 1 |
-| 2 | **두 한계 (자원 공간)** | `exp55/two_ceilings.png` | `exp55_two_ceilings.py` | 사실 2 |
+| 2 | **두 한계 (자원 공간)** | `motivation/two_ceilings.png` | `exp55_two_ceilings.py` | 사실 2 |
+| 2b | **용량은 정책의 함수다** | `motivation/motivation_capacity_is_a_policy.png` | `motivation_fig3.py` | **사실 3** |
+| 2c | **기존 답 둘의 실패 기전** | `motivation/motivation_two_failures.png` | `motivation_fig4.py` | **사실 4** |
+| 2d | **목표가 움직인다** | `motivation/motivation_the_target_moves.png` | `motivation_fig5.py` | **사실 5** |
 | 3 | 정적 sweep, 네 정책 | `exp53/` | `exp53_compare.py` | 4.1 |
 | 4 | 한 시간 timeline (8패널) | `exp54/exp54_full_timeline.png` | `exp41_dynamic_timeline.py` | 4.2 |
 | 5 | 클래스별 goodput | `exp54*/class_goodput_hour.png` | `exp53_class_goodput.py` | 4.3 |

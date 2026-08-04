@@ -12,7 +12,8 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크. 여기에 라우팅/
 
 | 읽을 것 | 무엇이 있나 |
 |---|---|
-| [ms_dev/notes/paper-outline.md](ms_dev/notes/paper-outline.md) | **논문 관련 요청이면 여기부터.** 절 구도, **주장마다 뒷받침하는 실험 번호와 반복 횟수**, 그림 목록, **오독을 막으려면 같이 적어야 하는 것 다섯**, **아직 뒷받침이 없는 것 여덟**. ⚠ **§0이 차단 항목**: PolyServe의 `--polyserve-tier-decode-tokens`가 낡아서(dr 3.58배 과소) 지금 표는 프로파일을 고친 우리 대 안 고친 기준선의 비교다. **고치고 PolyServe arm을 다시 돌리기 전에는 4.1과 그림 1을 못 쓴다** |
+| [ms_dev/notes/paper-outline.md](ms_dev/notes/paper-outline.md) | **논문 관련 요청이면 여기부터.** 절 구도, **주장마다 뒷받침하는 실험 번호와 반복 횟수**, 그림 목록, **오독을 막으려면 같이 적어야 하는 것 다섯**, **아직 뒷받침이 없는 것 여덟**. ⚠ **§0이 차단 항목**: PolyServe의 `--polyserve-tier-decode-tokens`가 낡아서(dr 3.58배 과소) 지금 표는 프로파일을 고친 우리 대 안 고친 기준선의 비교다 — **EXP-57이 고친 값으로 재측정 중**(2026-08-05 01:34 예약) |
+| [ms_dev/notes/motivation.md](ms_dev/notes/motivation.md) | **motivation·problem 관련 요청이면 여기부터. §2 논증의 정본.** 사실 **다섯 개**(문제가 실제로 있다 / 클래스마다 자원과 단위가 다르다 / **용량이 배정의 함수다** / 기존 답 둘이 반대 방향으로 틀린다 / **옳은 배정이 1.48배 움직인다**), 그것이 만드는 **요구 조건 넷과 설계로의 연결**, **추가로 만들 기준선 넷**(1순위가 "독립 결합" — 설계서가 논문의 핵심 실험이라고 미리 적어 둔 칸), 비어 있는 것 일곱. 그림별 문서는 `results/aggregate_analysis/motivation/README.md` |
 | [ms_dev/notes/fluidserve-v0.1.1.md](ms_dev/notes/fluidserve-v0.1.1.md) | **여기부터 읽는다.** 현재 상태의 자족적 명세 — v0.1에서 **결정 규칙은 한 줄도 안 바뀌었고** 바뀐 것은 길이 프로파일 하나와 계측. 실측 표(정적·한 시간), **v0.1.1이 아닌 것**, 그리고 **미해결 일곱 개를 우선순위로**(1순위가 45 req/s의 두 상태 산포) |
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | 앞 버전. **결정 규칙·용량 모델·상수 아홉 개는 여기가 정본.** v0.1의 자족적 명세 — 결정 규칙, 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
 | [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | 시간순 경위. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
@@ -146,7 +147,9 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 | [POLYSERVE_DESIGN_KO.md](POLYSERVE_DESIGN_KO.md) | PolyServe 이식 설계 (정본) |
 | [POLYSERVE_PROGRESS.md](POLYSERVE_PROGRESS.md) | PolyServe 구현 시간순 기록, 함정 |
 | [ms_dev/notes/polyserve-fidelity.md](ms_dev/notes/polyserve-fidelity.md) | **PolyServe 이식의 원문 대조 (정본).** "Isolation의 대표주자로 세울 수 있는가"에 대한 답 — **세울 수 있으나 이름을 "고정 fleet 위의 정적 클래스 파티션"으로 좁혀야 한다.** ⚠ **§2가 필수 수정**: `set_scheduler_profiling.py`의 `--polyserve-tier-decode-tokens`가 `25:728,50:386,100:275`인데 실측은 `494/428/985`로 **dr이 3.58배 과소**다. §48·§49와 같은 오류가 기준선 쪽에만 남아 있어, 고치기 전 EXP-53의 PolyServe 수치는 인용하면 안 된다 |
-| [ms_dev/notes/paper-outline.md](ms_dev/notes/paper-outline.md) | **논문 작업의 정본. 논문 관련 요청이면 여기부터 읽는다.** 절 구도(motivation 세 사실 / design / evaluation), **각 주장과 그것을 뒷받침하는 실험 번호·반복 횟수**, 그림 목록(파일·스크립트·무슨 주장인지), **반드시 같이 적어야 오독되지 않는 것 다섯**, 그리고 **아직 뒷받침이 없는 것 여덟**(4번 믹스 비율의 현실성이 최대 위험). 논문에 주장을 추가할 때는 이 문서에 증거와 함께 적고, 증거가 없으면 §7에 올린다 |
+| [ms_dev/notes/paper-outline.md](ms_dev/notes/paper-outline.md) | **논문 작업의 정본. 논문 관련 요청이면 여기부터 읽는다.** 절 구도(motivation 다섯 사실 / design / evaluation), **각 주장과 그것을 뒷받침하는 실험 번호·반복 횟수**, 그림 목록(파일·스크립트·무슨 주장인지), **반드시 같이 적어야 오독되지 않는 것 다섯**, 그리고 **아직 뒷받침이 없는 것 여덟**(4번 믹스 비율의 현실성이 최대 위험). 논문에 주장을 추가할 때는 이 문서에 증거와 함께 적고, 증거가 없으면 §7에 올린다 |
+| [ms_dev/notes/motivation.md](ms_dev/notes/motivation.md) | **motivation 논증의 정본 (2026-08-05 신설).** 사실 다섯 개를 순서대로 쌓고, 그것이 만드는 **요구 조건 넷을 우리 설계의 어느 부분이 만족시키는지** 표로 대응시킨다. §7.1에 **설계의 핵심 개념 둘**(격리를 구성하지 않고 결과로 얻는다 / 라우팅과 admission이 같은 결정이다), §8에 **추가로 만들 기준선 넷과 비용**, §9에 비어 있는 것 일곱 |
+| [.../results/aggregate_analysis/motivation/README.md](Agent_applications/agent_motivation_experiment/results/aggregate_analysis/motivation/README.md) | **motivation 그림 다섯 개의 정본.** 그림마다 주장 / 스크립트 / 실험과 반복 횟수 / **그림이 말하지 않는 것**. 다시 만드는 명령도 여기 |
 | [ms_dev/notes/fluidserve-how-it-works.md](ms_dev/notes/fluidserve-how-it-works.md) | **시스템 전체를 위에서 아래로 설명한 문서.** 처음 이해할 때 여기부터 — 문제 정의, 유연한 격리, 시간·메모리 모델, 결정 사다리, 클래스 분리, 무엇을 측정하고 무엇을 설정하는가, 실측 결과, 미해결. 각 설계 결정에 그것을 정하게 만든 측정이 붙어 있다 |
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **FluidServe v0.1 명세 (정본)** |
 | [ms_dev/notes/fluidserve-design.md](ms_dev/notes/fluidserve-design.md) | FluidServe 설계 원안 |
@@ -230,8 +233,12 @@ go build -buildvcs=false \
   `set_scheduler_profiling.py`의 `--polyserve-tier-decode-tokens`가 `25:728,50:386,100:275`인데
   실측은 `494/428/985`다(dr 3.58배 과소, swe 1.5배 과대). 이 값이 §4.5 admission의 최대 KV와
   **재분할기의 tier별 수요 추정**(= 파티션 자체)에 둘 다 들어간다. **같은 양이 두 곳에 따로
-  적혀 있어서 한쪽만 갱신됐다** — 고치면서 `fluidserve.json`에서 읽도록 배관을 합칠 것.
-  자세한 것은 `ms_dev/notes/polyserve-fidelity.md` §2.
+  적혀 있어서 한쪽만 갱신됐다.**
+  **2026-08-05에 고쳤다** — `set_scheduler_profiling.py`가 `polyserve_flags()`에서
+  `fluidserve.json`의 `classes[].mean`으로 유도하므로 두 정책이 같은 파일을 읽고 다시
+  어긋날 수 없다. **재측정이 EXP-57**(정적 8 rate × 2반복 + Llumnix SLO 세션 앵커 2점 +
+  한 시간 trace 2반복). 고치기 전 EXP-53·EXP-54의 PolyServe 수치는 인용하면 안 된다.
+  자세한 것은 `ms_dev/notes/polyserve-fidelity.md` §2와 `experiments/EXP-57_polyserve-refit.md`.
 - **모델이 내놓는 양이 맞는지는 그 양의 미래와 대조해서 잰다 (2026-08-02).** `proj`는
   "한 horizon 뒤의 KV 점유량" 예측인데 **그게 맞는지를 한 번도 재지 않은 채** 열 몇 개의
   후보를 그 위에 세웠다. 재는 방법은 있었다 — 스케줄러가 `projected_kv_tokens`와
