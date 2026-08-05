@@ -308,7 +308,7 @@ iteration 단위**이며, 밀리초 단위 상수는 하나(300)뿐이다. 그�
 
 # 5. 그림 목록
 
-**motivation 그림 다섯 개는 `results/aggregate_analysis/motivation/`에 모여 있고, 그 폴더의
+**motivation 그림 여섯 개는 `results/aggregate_analysis/motivation/`에 모여 있고, 그 폴더의
 `README.md`가 그림별 정본이다** — 무엇을 그렸나, 어떤 스크립트가 그렸나, 무엇을 말하지
 않나. 다시 만드는 명령도 거기 있다.
 
@@ -319,11 +319,13 @@ iteration 단위**이며, 밀리초 단위 상수는 하나(300)뿐이다. 그�
 | 2b | **용량은 정책의 함수다** | `motivation/motivation_capacity_is_a_policy.png` | `motivation_fig3.py` | **사실 3** |
 | 2c | **기존 답 둘의 실패 기전** | `motivation/motivation_two_failures.png` | `motivation_fig4.py` | **사실 4** |
 | 2d | **목표가 움직인다** | `motivation/motivation_the_target_moves.png` | `motivation_fig5.py` | **사실 5** |
+| **2e** | **한 축 위의 두 조건** (3패널: 클래스별 배분 대 수요 기준선 / chat 없는 시간 대 점수 / 축 대 점수) | `motivation/motivation_two_conditions_static45.png`, `..._hour.png` | `motivation_fig6.py` (입력은 `separation_measures.py`가 쓴 CSV) | **§8의 아래위 두 조건.** 정적판과 한 시간판 둘 다 있고 **두 조건이 서로 다른 run에서 뚜렷하다** |
 | 3 | 정적 sweep, 네 정책 | `exp53/` | `exp53_compare.py` | 4.1 |
 | 4 | 한 시간 timeline (8패널) | `exp54/exp54_full_timeline.png` | `exp41_dynamic_timeline.py` | 4.2 |
 | 5 | 클래스별 goodput | `exp54*/class_goodput_hour.png` | `exp53_class_goodput.py` | 4.3 |
 | 6 | 엔진 레이어 | `exp54*/exp54*_engine_*.png`, `compare_rpm_full.png` | `exp41_engine_view.py`, `exp38_policy_compare.py` | 4.4 |
 | 7 | **분리 대 점수** | `exp54/separation_vs_score.png` | `exp54_separation.py` | 3.6의 한계 |
+| **8** | **선호 세기 축** (3패널: 점수 대 w / 분리 대 w / **점수 대 분리 — 한 시스템 안의 곡선**) | `exp58/exp58_weight_axis.png` | `exp58_weight_axis.py` | **4.5b.** 지금까지 이 곡선의 점이 전부 다른 시스템이었다 |
 | — | (본문 제외) rate 축 대안 넷 | `exp55/xaxis_options.png` | `exp55_xaxis_options.py` | 사실 2의 부록 |
 | — | (본문 제외) knee 3패널 | `exp55/knees.png` | `exp55_knees.py` | 사실 2의 부록 |
 
