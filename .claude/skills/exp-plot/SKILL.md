@@ -352,3 +352,63 @@ caption was not.
 **Compute caption numbers from the same table the panels are drawn from.** If a
 sentence in a title states a value, a ratio or which arm is highest, it should
 be an f-string over the aggregate, not a literal.
+
+## Measuring how separated the classes are
+
+Use **the effective number of instances a class runs on**, `1/sum(share^2)` over
+a 60-second window, median over windows. Four instances holding an equal share
+reads 4.0, one instance reads 1.0, two instances holding half each reads **2.0**.
+`separation_measures.py` computes it and everything below it.
+
+Do **not** lead with the largest instance's share of a class. It reads 50% both
+for two instances dedicated to a class and for one instance holding half of an
+unpartitioned class, which is why the static-partition baseline read 83.5 rather
+than 100 and needed a paragraph of explanation beside every table it appeared
+in. The script still prints it, for checking new numbers against recorded ones.
+
+Three other things that measure something different and were all called
+"concentration" at some point:
+
+| what | where | reads what for an unseparated fleet |
+|---|---|---|
+| normalised HHI, `(HHI - 1/N)/(1 - 1/N)` | `exp21_polyserve.py` | 0 |
+| per-instance class-mix HHI | `exp43_judge.py` ("separation index") | **0.62 on our mix, not 1/3** — its floor is set by the class mixture and moves when the mixture moves |
+| largest-instance share | `exp54_separation.py`, `exp56_affinity.py` | 25% |
+
+Give each its own name in the script and in the note.
+
+**A movement measure needs two lags.** The distance between a class's instance
+distribution in consecutive windows contains counting noise whose size depends
+on the distribution: one instance holding a class has almost none, four holding
+it equally have the most. Measured on the hour trace, the static partition reads
+0.032 and load balancing 0.056, and neither moved anything. Movement accumulates
+with the lag and noise does not, so report the ratio: 5.5 for the static
+partition (it sits still and jumps when its repartitioner fires), 3.6 for ours
+(it moves at every timescale), 1.9 for load balancing (nearly all noise).
+
+**Do not use "how often does the instance holding the most of a class change".**
+When a class sits evenly on two instances the argmax alternates between them for
+counting reasons; the static partition reads 41 to 55 changes an hour for the
+one class it spreads over two instances while its assignment has not moved.
+
+## Put the score in the same file as the measures
+
+`separation_measures.py` writes offered, admitted, rejection and goodput into
+the same row as the separation measures, so a figure reading it needs no join.
+Joining two files on a run name is one more place for an arm to be dropped in
+silence, which has already happened twice here.
+
+And compute a quantity the same way the experiment's own script computes it.
+Goodput divided by the trimmed span read 22,711 against `exp56_affinity.py`'s
+20,099 for the same run — the same name for two quantities, which is the failure
+mode this repository keeps hitting.
+
+## Run labels: the session tag is not always expNNrN
+
+Passes are named `exp53p2r1`, hour runs `exp56hr1`, one-off arms
+`exp57unchanged`; and the mix suffix is not always `_m1`, because the Llumnix
+SLO arm runs `_m1f`. A parser that assumed either form let six of twelve runs
+fall through to the raw directory name, and the figure drew each of them as its
+own arm with its own colour. **After generating, print the arm names and the
+point count and check them against what was intended** — the rule at the end of
+this file, applied to the labels and not only to the counts.
