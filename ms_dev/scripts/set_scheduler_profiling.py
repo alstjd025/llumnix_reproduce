@@ -115,6 +115,11 @@ FLUIDSERVE_FLAGS = {
 #                      the difference is what their capacity cost the others
 #   FS_AFFINITY=false  among the instances that can take a request, ignore which
 #                      class each is already holding and route on free space
+#   FS_AFFINITY_WEIGHT=w  how strongly that preference counts against free
+#                      space, between 0 and 1.  1 is the shipped behaviour and
+#                      every measurement before EXP-58; 0 is the same ordering
+#                      FS_AFFINITY=false produces.  It exists so the degree of
+#                      class separation can be swept rather than switched.
 #   FS_CLASS_HARM=false  when nothing is feasible, stop charging a candidate for
 #                      the share of it that belongs to other classes.  Separate
 #                      from FS_AFFINITY because the feasible-set ordering never
@@ -127,6 +132,8 @@ FLUIDSERVE_ABLATIONS = {
     "FS_PEND": "--fluidserve-enable-pend",
     "FS_SHED": "--fluidserve-enable-shed",
     "FS_AFFINITY": "--fluidserve-enable-affinity",
+    # EXP-58. Not a boolean either: a float between 0 and 1.
+    "FS_AFFINITY_WEIGHT": "--fluidserve-affinity-weight",
     "FS_FLUX": "--fluidserve-enable-flux",
     "FS_CLASS_HARM": "--fluidserve-class-harm",
     "FS_HORIZON": "--fluidserve-horizon-steps",
@@ -494,6 +501,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-enable-pend", "pend"),
         ("--fluidserve-enable-shed", "shed"),
         ("--fluidserve-enable-affinity", "affinity"),
+        ("--fluidserve-affinity-weight", "affweight"),
         ("--fluidserve-enable-flux", "flux"),
         ("--fluidserve-class-harm", "classharm"),
         ("--fluidserve-force-margin", "forcemargin"),

@@ -272,6 +272,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveEnablePend        bool
 	FluidserveEnableShed        bool
 	FluidserveEnableAffinity    bool
+	FluidserveAffinityWeight    float64
 	FluidserveEnableFlux        bool
 	FluidserveClassHarm         bool
 	FluidserveForceMargin       bool
@@ -407,6 +408,16 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"holding the most of its class. Disabling it routes purely by free "+
 			"space, which is the ablation that isolates where the class separation "+
 			"comes from.")
+	flags.Float64Var(&c.FluidserveAffinityWeight, "fluidserve-affinity-weight", 1.0,
+		"How strongly the class preference counts against free space when ordering "+
+			"the instances that can take a request. At 1.0 the instance holding the "+
+			"most of the request's class wins and free space only breaks ties, which "+
+			"is the behaviour every experiment before EXP-58 measured. At 0.0 the "+
+			"preference contributes nothing and the ordering is by free space alone, "+
+			"which is what --fluidserve-enable-affinity=false produces. Values in "+
+			"between trade the two off continuously, which is what makes the degree "+
+			"of class separation an axis that can be swept rather than a switch. "+
+			"Ignored when --fluidserve-enable-affinity=false.")
 	flags.BoolVar(&c.FluidserveEnableFlux, "fluidserve-enable-flux", true,
 		"Project occupancy over the horizon. Disabling it judges instances on their "+
 			"current occupancy alone, which is the level-based baseline.")

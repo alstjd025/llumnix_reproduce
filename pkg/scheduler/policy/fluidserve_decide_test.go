@@ -37,6 +37,10 @@ func fsPolicy(t *testing.T, budgets string, mutate func(*fluidserveConfig)) *flu
 		// feasible, so the helper has to carry it rather than rely on the
 		// zero value.
 		gateSlack: 1.0,
+		// Same reason: the zero value here means "no class preference at all",
+		// which is an ablation rather than the shipped behaviour, so a test that
+		// did not set it would silently measure the ablation.
+		affinityWeight: 1.0,
 	}
 	if mutate != nil {
 		mutate(&cfg)
@@ -988,4 +992,94 @@ func TestTheProjectionCanBeTheOccupancyTheEngineIsObservedMovingAt(t *testing.T)
 	assert.Less(t, filling.headroom, steady.headroom,
 		"so the two instances are ordered by which of them is filling, which a "+
 			"fleet-wide projection cannot do")
+}
+
+// ---------------------------------------------------------------------------
+// The class preference as a degree rather than a switch (EXP-58)
+
+// sortCandidates orders the feasible instances by w*share + (1-w)*room. The two
+// endpoints have to reproduce behaviour that has already been measured, because
+// the sweep between them is only interpretable if its ends coincide with the two
+// arms of EXP-56: at w=1 the arm called `fluidserve` in every experiment up to
+// EXP-56, and at w=0 the arm called `fsnoaff`.
+func TestAffinityWeightSpansTheTwoArmsAlreadyMeasured(t *testing.T) {
+	// One instance holds this class and is nearly full; the other holds none of
+	// it and is nearly empty. The two orderings disagree, which is what makes
+	// this pair able to tell them apart.
+	mine := candidate{flux: &instanceFlux{id: "mine"}, feasible: true, share: 1.0, room: 0.10}
+	other := candidate{flux: &instanceFlux{id: "other"}, feasible: true, share: 0.0, room: 0.90}
+
+	for _, tc := range []struct {
+		w    float64
+		want string
+		why  string
+	}{
+		{1.0, "mine", "at full strength the class preference decides outright"},
+		{0.0, "other", "at zero the ordering is by free space alone"},
+		// The crossing point: 1.0*w + 0.10*(1-w) against 0.0*w + 0.90*(1-w) is an
+		// equality at w = 0.8/1.8 = 0.444..., so 0.4 still prefers space and 0.5
+		// already prefers the class.
+		{0.40, "other", "below the crossing point free space still wins"},
+		{0.50, "mine", "above it the class preference wins"},
+	} {
+		c := []candidate{other, mine}
+		sortCandidates(c, tc.w)
+		assert.Equal(t, tc.want, c[0].flux.id, "w=%.2f: %s", tc.w, tc.why)
+	}
+}
+
+// The order within the feasible set is not the only place the preference acts;
+// harmToIncumbents charges an instance for the share of it that belongs to other
+// classes. That term has to move on the same scale, or w would mean one thing in
+// one place and another thing in the other, and w=0 would not reproduce
+// --fluidserve-enable-affinity=false.
+func TestAffinityWeightScalesTheClassTermInHarmToo(t *testing.T) {
+	theirs := &instanceFlux{
+		meanStep: 200,
+		live: []liveRequest{
+			{tier: 50, allowanceMs: 50}, // both already past budget, so the
+			{tier: 50, allowanceMs: 40}, // incumbent sum contributes nothing
+		},
+	}
+	full := fsPolicy(t, "25:e2e:30000,50:decode", nil)
+	half := fsPolicy(t, "25:e2e:30000,50:decode", func(c *fluidserveConfig) {
+		c.affinityWeight = 0.5
+	})
+	none := fsPolicy(t, "25:e2e:30000,50:decode", func(c *fluidserveConfig) {
+		c.affinityWeight = 0
+	})
+	off := fsPolicy(t, "25:e2e:30000,50:decode", func(c *fluidserveConfig) {
+		c.enableAffinity = false
+	})
+
+	hFull := full.harmToIncumbents(theirs, 25, 200, 260)
+	hHalf := half.harmToIncumbents(theirs, 25, 200, 260)
+	assert.InDelta(t, hFull/2, hHalf, 1e-9, "the class term scales linearly in w")
+	assert.Zero(t, none.harmToIncumbents(theirs, 25, 200, 260))
+	assert.Equal(t, none.harmToIncumbents(theirs, 25, 200, 260),
+		off.harmToIncumbents(theirs, 25, 200, 260),
+		"w=0 and the switch being off are the same configuration")
+}
+
+// The switch stays the master: whatever weight is configured, turning the
+// preference off means off. Out-of-range values are clamped rather than
+// rejected, because a weight above 1 would make the score fall as an instance
+// gains free space, which is not a stronger preference but a different and
+// meaningless ordering.
+func TestAffinityWeightIsClampedAndTheSwitchWins(t *testing.T) {
+	for _, tc := range []struct {
+		set  float64
+		on   bool
+		want float64
+	}{
+		{1.0, true, 1.0}, {0.3, true, 0.3}, {0.0, true, 0.0},
+		{1.7, true, 1.0}, {-0.2, true, 0.0}, {1.0, false, 0.0},
+	} {
+		p := fsPolicy(t, "25:e2e:30000,50:decode", func(c *fluidserveConfig) {
+			c.affinityWeight = tc.set
+			c.enableAffinity = tc.on
+		})
+		assert.InDelta(t, tc.want, p.affinityWeight(), 1e-9,
+			"configured %.2f with the switch %v", tc.set, tc.on)
+	}
 }

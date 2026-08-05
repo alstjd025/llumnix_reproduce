@@ -103,6 +103,11 @@ type fluidserveConfig struct {
 	enablePend     bool
 	enableShed     bool
 	enableAffinity bool
+	// affinityWeight is the one exception to the line above: it is a quantity,
+	// between 0 and 1, and it exists so that the class preference can be varied
+	// in degree instead of only switched. Read it through affinityWeight(),
+	// which returns 0 when enableAffinity is false.
+	affinityWeight float64
 	enableFlux     bool
 	classHarm      bool
 	forceMargin    bool
@@ -1194,15 +1199,15 @@ func (s *fluidserveSelector) selectInstance(
 			snap[i].feasible = snap[i].snapFeasible
 			snap[i].room = snap[i].snapRoom
 		}
-		sortCandidates(snap)
-		sortCandidates(cands)
+		sortCandidates(snap, p.affinityWeight())
+		sortCandidates(cands, p.affinityWeight())
 		if snap[0].flux.id != cands[0].flux.id {
 			metrics.Counter("scheduler_fluidserve_flux_flips_total",
 				metrics.Labels{{Name: "level", Value: "target"}}).Inc()
 		}
 	}
 
-	sortCandidates(cands)
+	sortCandidates(cands, p.affinityWeight())
 
 	best := cands[0]
 	if best.feasible {
@@ -1268,14 +1273,28 @@ func (s *fluidserveSelector) selectInstance(
 // Infeasible: least damage first. Nothing here can serve the request at its
 // promised pace, so the question is no longer where it runs best but which
 // instance loses the least by taking it.
-func sortCandidates(c []candidate) {
+// The weight `w` is how strongly the class preference counts against free space
+// in the feasible group. The two quantities are both fractions between 0 and 1 --
+// share is the fraction of the instance's requests that belong to this class,
+// room is the free space left after admitting as a fraction of the instance's
+// physical capacity -- so a weighted sum of them is a comparison between
+// commensurable things and needs no scaling constant.
+//
+// At w=1 the sum is the share, and equal shares fall through to the room
+// comparison below, which is exactly the lexicographic order this function
+// applied before EXP-58. At w=0 the sum is the room and the class plays no part,
+// which is the ordering --fluidserve-enable-affinity=false produces. So the
+// endpoints are the two arms EXP-56 measured and the values between them are the
+// axis that experiment could not sweep.
+func sortCandidates(c []candidate, w float64) {
+	score := func(i int) float64 { return w*c[i].share + (1-w)*c[i].room }
 	sort.Slice(c, func(a, b int) bool {
 		if c[a].feasible != c[b].feasible {
 			return c[a].feasible
 		}
 		if c[a].feasible {
-			if c[a].share != c[b].share {
-				return c[a].share > c[b].share
+			if sa, sb := score(a), score(b); sa != sb {
+				return sa > sb
 			}
 		} else if c[a].harm != c[b].harm {
 			return c[a].harm < c[b].harm
@@ -1617,10 +1636,39 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 	// instance whose own class has already started missing -- a question the
 	// feasible-set ordering cannot answer, because in that regime nothing is
 	// feasible and that ordering never runs.
-	if p.cfg.enableAffinity && p.cfg.classHarm && len(f.live) > 0 {
-		harm += (1 - classShare(f, tier)) * fsHarmCap
+	if p.cfg.classHarm && len(f.live) > 0 {
+		// Scaled by the same weight that scales the feasible-set ordering, so that
+		// ONE number moves the class preference from absent to full strength in
+		// both of the places it acts. Before EXP-58 this was a boolean and the two
+		// places switched together; keeping them on one continuous scale is what
+		// makes w=0 reproduce --fluidserve-enable-affinity=false exactly and w=1
+		// reproduce every measurement taken before EXP-58, so the two endpoints of
+		// the sweep are conditions that have already been measured three times
+		// each and can be checked against those values.
+		harm += p.affinityWeight() * (1 - classShare(f, tier)) * fsHarmCap
 	}
 	return harm
+}
+
+// affinityWeight is how strongly the class preference counts, on a scale where 0
+// is no preference at all and 1 is the preference deciding the order outright.
+//
+// The boolean switch is kept as the master because every experiment up to EXP-56
+// records itself in terms of it, and because "off" should stay expressible
+// without also having to say a number. When it is off the weight is zero
+// whatever was configured, so there is exactly one quantity downstream.
+func (p *fluidserveDispatchPolicy) affinityWeight() float64 {
+	if !p.cfg.enableAffinity {
+		return 0
+	}
+	w := p.cfg.affinityWeight
+	if w < 0 {
+		return 0
+	}
+	if w > 1 {
+		return 1
+	}
+	return w
 }
 
 // classShare is the fraction of the requests on an instance that belong to the
@@ -1891,6 +1939,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		enablePend:     p.FluidserveEnablePend,
 		enableShed:     p.FluidserveEnableShed,
 		enableAffinity: p.FluidserveEnableAffinity,
+		affinityWeight: p.FluidserveAffinityWeight,
 		enableFlux:     p.FluidserveEnableFlux,
 		classHarm:      p.FluidserveClassHarm,
 		forceMargin:    p.FluidserveForceMargin,
@@ -1940,10 +1989,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	}
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
-		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, flux=%v, classharm=%v, "+
+		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
-		cfg.enableShed, cfg.enableAffinity, cfg.enableFlux, cfg.classHarm,
+		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.enableFlux, cfg.classHarm,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
 		p.FluidserveClassBudgets)
 
