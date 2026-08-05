@@ -237,7 +237,7 @@ go build -buildvcs=false \
   적혀 있어서 한쪽만 갱신됐다.**
   **2026-08-05에 고쳤다** — `set_scheduler_profiling.py`가 `polyserve_flags()`에서
   `fluidserve.json`의 `classes[].mean`으로 유도하므로 두 정책이 같은 파일을 읽고 다시
-  어긋날 수 없다. **재측정이 EXP-57**(정적 8 rate × 2반복 + Llumnix SLO 세션 앵커 2점 +
+  어긋날 수 없다. **재측정이 EXP-57**(정적 8 rate × 2반복 + Llumnix SLO 무변경 재측정 2점 +
   한 시간 trace 2반복). 고치기 전 EXP-53·EXP-54의 PolyServe 수치는 인용하면 안 된다.
   자세한 것은 `ms_dev/notes/polyserve-fidelity.md` §2와 `experiments/EXP-57_polyserve-refit.md`.
 - **모델이 내놓는 양이 맞는지는 그 양의 미래와 대조해서 잰다 (2026-08-02).** `proj`는
