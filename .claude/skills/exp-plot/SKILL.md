@@ -307,3 +307,48 @@ x extents.
 
 This does not affect static per-condition figures, where the whole condition is
 one number and the drain is a fixed fraction of every arm's run.
+
+## An arm that was re-measured is still matched by the old glob
+
+Every figure script here selects its runs with a glob over `results/`. When one
+arm is re-measured in a later session — a corrected setting, a rebuilt binary —
+the old session's directories are still on disk and still match. The script
+averages the superseded runs into the new ones, draws the mean, and says
+nothing.
+
+This happened on 2026-08-05. PolyServe's tier length table understated deep
+research by 3.58x, was corrected, and that arm alone was re-run as EXP-57.
+Anything still globbing `results/*exp53*_rpm_*` would have averaged 27.5 and
+35.6 at 45 req/s into 31.6 and drawn a policy that never ran.
+
+- **Select per arm when any arm has been superseded**, and pass the patterns
+  explicitly rather than editing a default. `exp53_compare.py`,
+  `exp38_policy_compare.py` and `exp53_class_goodput.py` take `--runs` as a
+  list for this; `plot_ratesweep_split.py` takes one `--glob` and is run once
+  per arm.
+- **Put the selection in one script, not in a document.** The commands are long
+  and easy to get subtly wrong, and a document cannot be executed.
+  `analysis_scripts/redraw_static_sweep.sh` is that script for the static sweep;
+  it prints the condition count behind every glob before drawing anything.
+- **Say what was dropped.** `motivation_fig1.py` and `motivation_fig3.py`
+  supersede inside `_supersede()` and print `using N EXP-57 conditions,
+  superseding M from EXP-53`. A silent supersede is the same defect as a silent
+  average, one step later.
+- **Only the arms that read the changed setting are re-measured.** The other
+  arms keep their original runs, so the figure joins two sessions, and that join
+  has to be measured rather than assumed — re-run one unchanged arm in the new
+  session and check it against its old value before drawing anything. For
+  EXP-57 that was Llumnix SLO at 45 and 70 req/s, reading 52.3 and 21.7 against
+  52.4 and 21.4.
+
+## A number in a caption goes stale faster than the figure
+
+`motivation_fig1.py` had its headline numbers written into the suptitle by hand.
+One re-measurement later the caption still said the best policy returned 21% of
+the requests sent to it, when the answer had become 24% and the policy holding
+it had changed from Llumnix SLO to PolyServe. The figure was correct and its
+caption was not.
+
+**Compute caption numbers from the same table the panels are drawn from.** If a
+sentence in a title states a value, a ratio or which arm is highest, it should
+be an f-string over the aggregate, not a literal.
