@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -108,7 +110,11 @@ type fluidserveConfig struct {
 	// in degree instead of only switched. Read it through affinityWeight(),
 	// which returns 0 when enableAffinity is false.
 	affinityWeight float64
-	enableFlux     bool
+	// classPin maps a class's per-token budget tier to the positions, in the
+	// sorted list of instance ids, that the class may be placed on. Empty means
+	// no pinning, which is the default and every experiment before EXP-59.
+	classPin   map[int][]int
+	enableFlux bool
 	classHarm      bool
 	forceMargin    bool
 	ownBudgetGate  bool
@@ -1178,6 +1184,7 @@ func (s *fluidserveSelector) selectInstance(
 	if len(cands) == 0 {
 		return nil
 	}
+	cands = p.applyClassPin(cands, instances, req)
 	// Would the projection have changed what happens to THIS request, as opposed
 	// to what one instance looked like? Two different answers count separately:
 	// whether the request gets placed at all, and if it does, whether it goes
@@ -1650,6 +1657,72 @@ func (p *fluidserveDispatchPolicy) harmToIncumbents(
 	return harm
 }
 
+// applyClassPin restricts the candidate set to the instances a class is assigned
+// to, when such an assignment is configured. It is off by default and exists
+// only to be turned on for one experiment.
+//
+// Why it is here at all. The motivation argues that pinning classes to servers
+// is one of two ways to get the assignment wrong, and the evidence for that half
+// comes from a different system, which also differs from us in how it estimates
+// demand, in having no spill between tiers, and in its admission rule. So
+// "concentration this high scores this low" cannot be attributed to the
+// concentration. This flag makes the fully-pinned end an ablation of our own
+// system: the candidate list is filtered and nothing else changes -- the same
+// capacity model, the same budgets, the same four-way ladder, the same
+// preference among whatever survives the filter.
+//
+// No spill. A request whose pinned instances cannot take it is held or rejected
+// like any other request that has nowhere to go; it is not allowed onto an
+// instance outside its set. That is the property under test. The static
+// partition being compared against does allow a limited spill, so this arm is
+// the stricter version of it, and the difference has to be stated wherever the
+// two are read together.
+//
+// Instances are identified by their position in the sorted list of instance ids
+// rather than by name, so the same configuration string means the same thing
+// across restarts and does not have to be rewritten when a pod is recreated.
+func (p *fluidserveDispatchPolicy) applyClassPin(cands []candidate,
+	instances map[string]*instanceViewScheduling, req *fluidserveRequest) []candidate {
+
+	if len(p.cfg.classPin) == 0 {
+		return cands
+	}
+	allowed, ok := p.cfg.classPin[req.tier]
+	if !ok || len(allowed) == 0 {
+		return cands
+	}
+	ids := make([]string, 0, len(instances))
+	for id := range instances {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	idx := make(map[string]int, len(ids))
+	for i, id := range ids {
+		idx[id] = i
+	}
+	keep := cands[:0:0]
+	for _, c := range cands {
+		for _, a := range allowed {
+			if idx[c.flux.id] == a {
+				keep = append(keep, c)
+				break
+			}
+		}
+	}
+	if len(keep) == 0 {
+		// The configuration names instances that are not in the fleet. Falling
+		// back to the unfiltered set is wrong for the experiment, so it is
+		// reported rather than absorbed; the arm's start-up line prints the map
+		// and the operator can compare it against the fleet size.
+		klog.Warningf("FluidServe class pin: tier %d is assigned instances %v "+
+			"but none of them are among the %d instances offered; "+
+			"falling back to the unrestricted set for this request",
+			req.tier, allowed, len(cands))
+		return cands
+	}
+	return keep
+}
+
 // affinityWeight is how strongly the class preference counts, on a scale where 0
 // is no preference at all and 1 is the preference deciding the order outright.
 //
@@ -1932,6 +2005,15 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		panic(fmt.Sprintf("invalid --fluidserve-class-budgets: %v", err))
 	}
 
+	// A malformed pin map would silently become "no pinning", which is the
+	// control arm, so the process refuses to start instead. The same reasoning
+	// as the budgets above: an ablation that quietly turns into its own baseline
+	// has already cost this project four hours of measurement once.
+	pin, err := parseClassPin(p.FluidserveClassPin)
+	if err != nil {
+		panic(fmt.Sprintf("invalid --fluidserve-class-pin: %v", err))
+	}
+
 	cfg := fluidserveConfig{
 		horizonSteps:   p.FluidserveHorizonSteps,
 		zSafety:        p.FluidserveZSafety,
@@ -1940,6 +2022,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		enableShed:     p.FluidserveEnableShed,
 		enableAffinity: p.FluidserveEnableAffinity,
 		affinityWeight: p.FluidserveAffinityWeight,
+		classPin:       pin,
 		enableFlux:     p.FluidserveEnableFlux,
 		classHarm:      p.FluidserveClassHarm,
 		forceMargin:    p.FluidserveForceMargin,
@@ -1990,11 +2073,11 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, "+
-		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, budgets %q",
+		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, classpin=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.enableFlux, cfg.classHarm,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
-		p.FluidserveClassBudgets)
+		formatClassPin(cfg.classPin), p.FluidserveClassBudgets)
 
 	go policy.reportLoop()
 	return policy
@@ -2018,4 +2101,85 @@ func (p *fluidserveDispatchPolicy) reportLoop() {
 			metrics.Labels{{Name: "reason", Value: "age"}}).Set(float64(byAge))
 		p.registry.logSummary()
 	}
+}
+
+// parseClassPin reads "50:0;100:1,2;25:3" into {50: [0], 100: [1,2], 25: [3]}:
+// the class whose per-token budget tier is 50 may only be placed on the first
+// instance in the sorted list of instance ids, the tier-100 class on the second
+// and third, and the tier-25 class on the fourth.
+//
+// The empty string means no pinning. Every other malformed input is an error
+// rather than a silent fallback, because the fallback is the control arm.
+func parseClassPin(s string) (map[int][]int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	out := map[int][]int{}
+	seen := map[int]string{}
+	for _, group := range strings.Split(s, ";") {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		tierStr, listStr, ok := strings.Cut(group, ":")
+		if !ok {
+			return nil, fmt.Errorf("group %q is not tier:instances", group)
+		}
+		tier, err := strconv.Atoi(strings.TrimSpace(tierStr))
+		if err != nil {
+			return nil, fmt.Errorf("group %q: tier %q is not a number", group, tierStr)
+		}
+		if prev, dup := seen[tier]; dup {
+			return nil, fmt.Errorf("tier %d appears twice, in %q and %q", tier, prev, group)
+		}
+		seen[tier] = group
+		idxs := []int{}
+		for _, one := range strings.Split(listStr, ",") {
+			one = strings.TrimSpace(one)
+			if one == "" {
+				continue
+			}
+			i, err := strconv.Atoi(one)
+			if err != nil {
+				return nil, fmt.Errorf("group %q: instance %q is not a number", group, one)
+			}
+			if i < 0 {
+				return nil, fmt.Errorf("group %q: instance index %d is negative", group, i)
+			}
+			idxs = append(idxs, i)
+		}
+		if len(idxs) == 0 {
+			return nil, fmt.Errorf("group %q names no instances; a class with no "+
+				"instances could never be placed, which is a different experiment", group)
+		}
+		sort.Ints(idxs)
+		out[tier] = idxs
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no groups parsed from %q", s)
+	}
+	return out, nil
+}
+
+// formatClassPin renders the map for the start-up line in a stable order, so
+// that the line can be compared against what the arm asked for.
+func formatClassPin(m map[int][]int) string {
+	if len(m) == 0 {
+		return "off"
+	}
+	tiers := make([]int, 0, len(m))
+	for t := range m {
+		tiers = append(tiers, t)
+	}
+	sort.Ints(tiers)
+	parts := make([]string, 0, len(tiers))
+	for _, t := range tiers {
+		s := make([]string, 0, len(m[t]))
+		for _, i := range m[t] {
+			s = append(s, strconv.Itoa(i))
+		}
+		parts = append(parts, fmt.Sprintf("%d:%s", t, strings.Join(s, ",")))
+	}
+	return strings.Join(parts, ";")
 }

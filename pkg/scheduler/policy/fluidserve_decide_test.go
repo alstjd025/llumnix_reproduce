@@ -1083,3 +1083,71 @@ func TestAffinityWeightIsClampedAndTheSwitchWins(t *testing.T) {
 			"configured %.2f with the switch %v", tc.set, tc.on)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Pinning a class to a fixed set of instances (EXP-59)
+
+func TestParseClassPinReadsTheMapAndRefusesMalformedInput(t *testing.T) {
+	got, err := parseClassPin(" 50:0 ; 100:1,2 ; 25:3 ")
+	require.NoError(t, err)
+	assert.Equal(t, map[int][]int{50: {0}, 100: {1, 2}, 25: {3}}, got)
+
+	empty, err := parseClassPin("")
+	require.NoError(t, err)
+	assert.Nil(t, empty, "the empty string is no pinning, which is the default")
+
+	// Each of these would otherwise become "no pinning", which is the control
+	// arm of the experiment this flag exists for.
+	for _, bad := range []string{"50", "x:0", "50:x", "50:-1", "50:", "50:0;50:1"} {
+		_, err := parseClassPin(bad)
+		assert.Error(t, err, "input %q must not be accepted", bad)
+	}
+}
+
+func TestClassPinKeepsOnlyTheInstancesAClassIsAssignedTo(t *testing.T) {
+	// Four instances, and the tier-50 class is assigned the second and third in
+	// the sorted order of their ids. Positions are used rather than names so the
+	// configuration survives a pod being recreated under a new name.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.classPin = map[int][]int{50: {1, 2}}
+	})
+	views := map[string]*instanceViewScheduling{}
+	cands := []candidate{}
+	for _, id := range []string{"a", "b", "c", "d"} {
+		views[id] = fsView(fsViewOpts{id: id, decodeReqs: 5, decodeTokens: 100_000,
+			usedGpu: 20_000, stepID: 5000})
+		cands = append(cands, candidate{flux: &instanceFlux{id: id}, feasible: true})
+	}
+
+	kept := p.applyClassPin(cands, views, &fluidserveRequest{tier: 50})
+	ids := []string{}
+	for _, c := range kept {
+		ids = append(ids, c.flux.id)
+	}
+	assert.Equal(t, []string{"b", "c"}, ids)
+
+	// A class with no entry in the map is unrestricted, so one class can be
+	// pinned while the others are left alone.
+	assert.Len(t, p.applyClassPin(cands, views, &fluidserveRequest{tier: 100}), 4)
+
+	// And with no map at all nothing is filtered, which is every experiment
+	// before this flag existed.
+	off := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", nil)
+	assert.Len(t, off.applyClassPin(cands, views, &fluidserveRequest{tier: 50}), 4)
+}
+
+func TestClassPinDoesNotSilentlyEmptyTheCandidateSet(t *testing.T) {
+	// The configuration names an instance that is not in the fleet. Returning an
+	// empty list would make the request unplaceable for a reason that has
+	// nothing to do with capacity, so the unfiltered set is returned and the
+	// scheduler logs it.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.classPin = map[int][]int{50: {7}}
+	})
+	views := map[string]*instanceViewScheduling{
+		"a": fsView(fsViewOpts{id: "a", decodeReqs: 5, decodeTokens: 100_000,
+			usedGpu: 20_000, stepID: 5000}),
+	}
+	cands := []candidate{{flux: &instanceFlux{id: "a"}, feasible: true}}
+	assert.Len(t, p.applyClassPin(cands, views, &fluidserveRequest{tier: 50}), 1)
+}

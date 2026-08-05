@@ -273,6 +273,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveEnableShed        bool
 	FluidserveEnableAffinity    bool
 	FluidserveAffinityWeight    float64
+	FluidserveClassPin          string
 	FluidserveEnableFlux        bool
 	FluidserveClassHarm         bool
 	FluidserveForceMargin       bool
@@ -418,6 +419,17 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"between trade the two off continuously, which is what makes the degree "+
 			"of class separation an axis that can be swept rather than a switch. "+
 			"Ignored when --fluidserve-enable-affinity=false.")
+	flags.StringVar(&c.FluidserveClassPin, "fluidserve-class-pin", "",
+		"Restrict each class to a fixed set of instances, as "+
+			"\"50:0;100:1,2;25:3\": the class whose per-token budget tier is 50 may "+
+			"only be placed on the first instance in the sorted list of instance "+
+			"ids, the tier-100 class on the second and third, and so on. Empty, the "+
+			"default, means no restriction. Nothing else changes: the same capacity "+
+			"model, budgets, four-way ladder and ordering run over whatever survives "+
+			"the filter, and a request whose instances cannot take it is held or "+
+			"rejected rather than placed elsewhere. This exists so that pinning "+
+			"classes to servers can be measured as an ablation of this policy "+
+			"instead of only as a comparison against a different system.")
 	flags.BoolVar(&c.FluidserveEnableFlux, "fluidserve-enable-flux", true,
 		"Project occupancy over the horizon. Disabling it judges instances on their "+
 			"current occupancy alone, which is the level-based baseline.")
