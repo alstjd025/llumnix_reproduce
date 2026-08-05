@@ -108,13 +108,27 @@ admission을 같은 양으로 결정한다.**
 | **70** | **1.5배** | **15.2배** |
 
 초당 70건에서 (Llumnix 부하분산 / Llumnix SLO / PolyServe):
-- 총 출력: **20,057 / 13,563 / 16,363**
-- goodput: **710 / 10,811 / 3,509**
+
+| | 부하분산 | Llumnix SLO | PolyServe | 최대/최소 |
+|---|---|---|---|---|
+| 총 출력 토큰/초 | **20,057** | 13,563 | 16,363 | 1.5배 |
+| goodput 토큰/초 | 710 | **10,811** | 3,509 | **15.2배** |
+| **달성률 (offered)** | 3.9% | **21.4%** | 14.4% | **5.5배** |
+| 거절률 | 0.0% | **69.2%** | 0.0% | — |
 
 > **가장 많이 만드는 정책이 가장 적게 쓸모 있는 것을 내놓는다. 만든 것의 96%가 버려진다.**
+> 그리고 **기존 정책 중 가장 나은 것도 사용자가 보낸 요청의 21.4%만 약속한 지연 안에
+> 돌려준다.**
+
+**토큰으로 세는 것과 요청으로 세는 것이 다른 답을 준다** — 격차가 15.2배 대 5.5배다.
+goodput은 출력 토큰으로 가중하므로 **긴 요청을 지키고 짧은 요청을 거절하는 정책이 높게
+나오고**, Llumnix SLO가 정확히 그것이다(거절 69.2%).
 
 **그림**: `results/aggregate_analysis/motivation/motivation_throughput_vs_goodput.png`
-(`motivation_fig1.py`) — 세 패널. 생산량 / goodput / 초당 70건의 적층 막대.
+(`motivation_fig1.py`) — **네 패널**. A 생산량 / B goodput / **C 요청 단위 달성률(실선
+offered, 점선 admitted)** / D 초당 70건의 적층 막대. **C의 두 선 사이 간격이 그 정책이
+일을 거절해서 산 점수**이고, Llumnix SLO는 45 → 70 req/s에서 **점선이 56.8 → 71.3으로
+올라가는데 실선은 52.4 → 21.4로 내려간다.**
 
 **부수 사실**: 초당 35건 아래에서 셋이 두 패널 모두에서 겹친다. **라우팅 결정이 언제부터
 중요해지는가**까지 같은 그림이 답한다.
@@ -272,7 +286,7 @@ iteration 단위**이며, 밀리초 단위 상수는 하나(300)뿐이다. 그�
 
 | # | 그림 | 파일 | 스크립트 | 뒷받침하는 주장 |
 |---|---|---|---|---|
-| 1 | **생산량 대 goodput** | `motivation/motivation_throughput_vs_goodput.png` | `motivation_fig1.py` | 사실 1 |
+| 1 | **생산량 / goodput / 달성률** (4패널) | `motivation/motivation_throughput_vs_goodput.png` | `motivation_fig1.py` | 사실 1 |
 | 2 | **두 한계 (자원 공간)** | `motivation/two_ceilings.png` | `exp55_two_ceilings.py` | 사실 2 |
 | 2b | **용량은 정책의 함수다** | `motivation/motivation_capacity_is_a_policy.png` | `motivation_fig3.py` | **사실 3** |
 | 2c | **기존 답 둘의 실패 기전** | `motivation/motivation_two_failures.png` | `motivation_fig4.py` | **사실 4** |
