@@ -12,22 +12,36 @@ description: Write up experiments, implementation decisions and corrections in l
 | `ms_dev/notes/fluidserve-v0.1.md` | the self-contained spec: decision rules, what is measured versus configured, remaining constants, what v0.1 is **not** |
 | `ms_dev/notes/fluidserve-implementation.md` | chronological account, numbered sections. **The end of the file is always the newest.** |
 | `Agent_applications/.../experiments/EXP-NN_*.md` | one file per experiment: why, hypothesis, judgement rule, exact settings, result |
-| `CLAUDE.md` | traps that will recur, and the resume procedure |
+| `CLAUDE.md` | **rules only** — traps that will recur, judgement rules, prose convention, the resume procedure |
+| `ms_dev/notes/STATUS.md` | **state only** — what is running, which section is current, which numbers must not be cited, the per-section digest of `implementation.md` |
 | auto-memory | pointers and the few facts not derivable from the repo |
 
 Two repositories, both on `feat/fluidserve`. Commit to each separately;
 `Agent_applications` is gitignored by the outer repo.
 
+### CLAUDE.md or STATUS.md — the test is whether the next experiment changes it
+
+**Still true after the next run → `CLAUDE.md`, in one of the trap groups A–F.
+Changes when the next run finishes → `STATUS.md`.**
+
+- "changing the workload means changing the profile too" — a rule, group A
+- "candidate C was rejected on the dynamic trace at −4.4" — state
+- "the same quantity written in two places gets updated in one of them" — a rule
+- "do not cite the PolyServe numbers from EXP-53" — state, it lifts when EXP-57 lands
+
+`CLAUDE.md` is loaded in full at the start of every session, so a stale sentence
+there is read every time. `STATUS.md` is read on demand, so it is the safe place
+for anything with a shelf life.
+
+**After a run finishes**: update `STATUS.md` §1, add a row to §3, and add a trap
+to `CLAUDE.md` only if something recurred that is not already in A–F.
+
 ## Prose convention
 
-**No metaphors, no idioms. Ordinary technical terms.** Longer sentences are
-fine. Say **why and how** a state comes about.
-
-- not: "the instance is held hostage", "it goes blind"
-- but: "that instance's cap stays low until the request completes, so it cannot
-  accept new work"
-
-The test: could this sentence appear in the paper unchanged.
+The convention is in `CLAUDE.md` under 서술 규칙, which is always loaded — do not
+restate it here, and do not write from this file's summary of it. In short: no
+metaphors, ordinary technical terms used in the systems literature, nothing
+abbreviated away, and the context of a number written beside the number.
 
 ## Write the judgement rule before the run
 
@@ -90,7 +104,8 @@ Ask what a reader with no memory of this session would need:
 
 1. the newest section of `implementation.md`, self-contained
 2. the experiment file for anything running, with its judgement rule
-3. `CLAUDE.md` resume procedure pointing at both
+3. `ms_dev/notes/STATUS.md` §1 brought up to date — it is what the resume
+   procedure in `CLAUDE.md` sends the next session to read
 4. auto-memory updated — current state, open questions, what was refuted
 
 State what is running, its expected finish, and which binary is deployed

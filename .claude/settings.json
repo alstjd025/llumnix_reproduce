@@ -1,0 +1,54 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/nxclab/llumnix_reproduce/.claude/hooks/guard-measurement-path.sh 2>/dev/null || true",
+            "timeout": 15,
+            "statusMessage": "측정 경로 확인"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/nxclab/llumnix_reproduce/.claude/hooks/guard-delete.sh 2>/dev/null || true",
+            "timeout": 10,
+            "statusMessage": "삭제 규칙 확인"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/nxclab/llumnix_reproduce/.claude/hooks/state-brief.sh 2>/dev/null || true",
+            "timeout": 20,
+            "statusMessage": "지금 상태 조회"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /home/nxclab/llumnix_reproduce/.claude/hooks/state-brief.sh 2>/dev/null || true",
+            "timeout": 20,
+            "statusMessage": "지금 상태 보존"
+          }
+        ]
+      }
+    ]
+  }
+}
