@@ -16,3 +16,5 @@
 27.5	EXP-53 PolyServe 정적 45 req/s offered (프로파일 수정 전)	35.6
 17.1	EXP-54 PolyServe 한 시간 offered (프로파일 수정 전)	18.9
 3,192	EXP-54 PolyServe 한 시간 goodput (프로파일 수정 전)	5,632
+6.08	EXP-61 QoServe 60 req/s offered (게이트웨이가 무너진 반복을 포함한 값)	6.73
+1,265	EXP-61 QoServe 60 req/s goodput (게이트웨이가 무너진 반복을 포함한 값)	1,281
