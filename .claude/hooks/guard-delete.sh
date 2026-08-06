@@ -7,18 +7,25 @@
 set -uo pipefail
 
 payload=$(cat)
-cmd=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""')
-[ -z "$cmd" ] && exit 0
+raw=$(printf '%s' "$payload" | jq -r '.tool_input.command // ""')
+[ -z "$raw" ] && exit 0
 
+# heredoc 본문과 따옴표 안의 글자는 실행되는 명령이 아니다. 이것을 빼지 않으면
+# 커밋 메시지에 "git clean"이라고 쓴 것만으로 경고가 뜨고, 그런 오탐이 쌓이면
+# 경고 자체를 무시하게 된다(2026-08-06에 실제로 걸렸다).
+cmd=$(printf '%s\n' "$raw" | awk '
+  /<<-?'"'"'?[A-Za-z_][A-Za-z0-9_]*'"'"'?/ && !inhere { inhere=1; next }
+  inhere { if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*$/) inhere=0; next }
+  { print }
+')
+
+# 명령 위치(줄 머리 또는 ; && || | 뒤)에 있는 토큰만 본다
 hit=""
-case "$cmd" in
-  *"rm -r"*|*"rm -f"*|*"rm "*)   hit="rm" ;;
-esac
-case "$cmd" in
-  *"git clean"*)                 hit="git clean" ;;
-  *"find "*-delete*)             hit="find -delete" ;;
-  *"truncate "*)                 hit="truncate" ;;
-esac
+detect() { printf '%s\n' "$cmd" | grep -qE "(^|[;&|]|\`|\\\$\()[[:space:]]*(sudo[[:space:]]+)?$1([[:space:]]|$)"; }
+detect 'rm'            && hit="rm"
+detect 'truncate'      && hit="truncate"
+printf '%s\n' "$cmd" | grep -qE "(^|[;&|])[[:space:]]*git[[:space:]]+clean" && hit="git clean"
+printf '%s\n' "$cmd" | grep -qE "(^|[;&|])[[:space:]]*find[[:space:]].*-delete" && hit="find -delete"
 [ -z "$hit" ] && exit 0
 
 # 결과 디렉토리를 향하면 더 강하게 말한다

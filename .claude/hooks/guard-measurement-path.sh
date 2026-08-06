@@ -10,15 +10,33 @@ REPO=/home/nxclab/llumnix_reproduce
 
 payload=$(cat)
 tool=$(printf '%s' "$payload" | jq -r '.tool_name // ""')
-cmd=$(printf '%s' "$payload"  | jq -r '.tool_input.command // ""')
+raw=$(printf '%s' "$payload"  | jq -r '.tool_input.command // ""')
 file=$(printf '%s' "$payload" | jq -r '.tool_input.file_path // ""')
+
+# heredoc 본문은 실행되는 명령이 아니다 — 커밋 메시지에 bin/scheduler-exp07이라고
+# 쓴 것만으로 경고가 뜨면 오탐이 쌓여 경고를 무시하게 된다(guard-delete.sh와 같은 이유).
+cmd=$(printf '%s\n' "$raw" | awk '
+  /<<-?'"'"'?[A-Za-z_][A-Za-z0-9_]*'"'"'?/ && !inhere { inhere=1; next }
+  inhere { if ($0 ~ /^[A-Za-z_][A-Za-z0-9_]*$/) inhere=0; next }
+  { print }
+')
 subject="$cmd $file"
 
 # 측정 경로: 도는 sweep이 호출하는 것 전부 (CLAUDE.md 함정 C)
-hit=""
-case "$subject" in
-  *bin/scheduler-exp07*|*bin/gateway-exp10*|*"-o bin/"*)        hit="배포 바이너리" ;;
+#
+# Bash는 그 경로에 **쓰는** 명령일 때만 본다. 복귀 절차 2단계가
+# `ls -l --time-style=... bin/scheduler-exp07`이라 읽기까지 걸면 복귀할 때마다 뜬다.
+writes=0
+case "$cmd" in
+  *"cp "*|*"mv "*|*"install "*|*"go build"*|*">"*|*"tee "*|*"rsync"*|*"ln -"*|*"chmod"*|*"truncate"*) writes=1 ;;
 esac
+
+hit=""
+if [ "$writes" = 1 ]; then
+  case "$cmd" in
+    *bin/scheduler-exp07*|*bin/gateway-exp10*|*"-o bin/"*)      hit="배포 바이너리" ;;
+  esac
+fi
 case "$file" in
   */k8s/exp07/*.sh|/home/nxclab/tools/*.sh)                     hit="드라이버 스크립트" ;;
   */ms_dev/scripts/set_scheduler_profiling.py)                  hit="정책·프로파일 주입 스크립트" ;;
