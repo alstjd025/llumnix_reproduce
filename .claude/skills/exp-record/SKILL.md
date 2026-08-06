@@ -124,3 +124,37 @@ End with:
 ```
 Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
 ```
+
+## Before you record a number, check it against the one table
+
+Two files and two scripts exist because one measurement copied by hand into
+several documents is how this project's most frequent error happens. On
+2026-08-06 four corrections of that shape were made in one day, and the checker
+found eleven more stale values in the living documents on its first run.
+
+```bash
+python3 ms_dev/scripts/collect_numbers.py        # results/  -> numbers.tsv
+python3 ms_dev/scripts/check_numbers.py          # notes     -> problems
+```
+
+| file | what it holds |
+|---|---|
+| `ms_dev/notes/numbers.tsv` | **generated.** `experiment.condition.arm.metric` -> mean, repeat count, min, max. Never edit it |
+| `ms_dev/notes/retracted.tsv` | values a re-measurement replaced. A line per value, with what it was and what to use |
+| `ms_dev/notes/excluded_runs.tsv` | runs that exist and are valid but must not enter an aggregate, with the reason |
+
+**When a re-measurement changes a headline value, add a row to `retracted.tsv`
+in the same commit.** That is the whole mechanism; it is what turns "인용하면 안
+되는 수치", which was a hand-maintained paragraph in two documents, into
+something that fails.
+
+**A document may cite instead of copying**: write `{{exp57.static45.polyserve.offered}}`
+and the checker verifies the key exists. Where the table says the value is a mean
+over more than one repeat, a citation whose line does not also state the range is
+reported — this project's own rule, written in three places and broken again on
+2026-08-06.
+
+Do not convert existing documents. `fluidserve-implementation.md` and the
+`experiments/` files are append-only records; a number in them is a fact about a
+date and replacing it would make the record wrong. The checker does not read
+them for that reason.

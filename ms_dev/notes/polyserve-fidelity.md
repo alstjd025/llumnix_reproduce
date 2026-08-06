@@ -395,6 +395,8 @@ implementation.md §57.2가 기록한 미해결 항목이다.
 
 **단, 이름과 주장 범위를 이렇게 좁혀야 한다.**
 
+> ⚠ **아래 PolyServe 값은 EXP-57 이전(길이 프로파일 수정 전)이다.** 정본은 `ms_dev/notes/numbers.tsv`의 `exp57.*.polyserve.*`이고, 낡은 값 목록은 `ms_dev/notes/retracted.tsv`다. 표 전체를 다시 만들기 전까지 이 열은 인용하지 않는다.
+
 | 쓰면 안 되는 것 | 써야 하는 것 |
 |---|---|
 | "PolyServe" | **"고정 fleet 위의 정적 클래스 파티션 (PolyServe §4.2의 이식)"** |

@@ -392,6 +392,18 @@ go build -buildvcs=false \
 
 ### E. 파생값·지표·그림을 만들 때
 
+- **수치를 문서에 옮겨 적기 전에 한 표와 대조한다 (2026-08-06 도구화).** 한 번 측정한 값이
+  손으로 옮겨 적힌 집이 여러 개라서, 재측정하면 낡은 값이 어딘가에 남는다. 2026-08-06 하루에
+  같은 모양의 오류를 네 번 고쳤고, 도구를 만들어 돌리자 **살아 있는 문서에서 11개가 더
+  나왔다.**
+  ```bash
+  python3 ms_dev/scripts/collect_numbers.py   # results/ → ms_dev/notes/numbers.tsv
+  python3 ms_dev/scripts/check_numbers.py     # 문서에서 낡은 값·잘못된 인용을 찾는다
+  ```
+  **재측정으로 값이 바뀌면 같은 커밋에서 `ms_dev/notes/retracted.tsv`에 한 줄 넣는다.**
+  집계에서 빼야 할 run은 `excluded_runs.tsv`에 이유와 함께 적는다(지우지 않는다).
+  자세한 것은 `exp-record` 스킬의 마지막 절.
+
 - **모델이 내놓는 양이 맞는지는 그 양의 미래와 대조해서 잰다 (2026-08-02).** `proj`는
   "한 horizon 뒤의 KV 점유량" 예측인데 **그게 맞는지를 한 번도 재지 않은 채** 열 몇 개의
   후보를 그 위에 세웠다. 재는 방법은 있었다 — 스케줄러가 `projected_kv_tokens`와
