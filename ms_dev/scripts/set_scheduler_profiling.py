@@ -134,6 +134,9 @@ FLUIDSERVE_ABLATIONS = {
     "FS_AFFINITY": "--fluidserve-enable-affinity",
     # EXP-58. Not a boolean either: a float between 0 and 1.
     "FS_AFFINITY_WEIGHT": "--fluidserve-affinity-weight",
+    # EXP-59. A string, "50:0;100:1,2;25:3": tier -> the positions, in the
+    # sorted list of instance ids, that the class may be placed on.
+    "FS_CLASS_PIN": "--fluidserve-class-pin",
     "FS_FLUX": "--fluidserve-enable-flux",
     "FS_CLASS_HARM": "--fluidserve-class-harm",
     "FS_HORIZON": "--fluidserve-horizon-steps",
@@ -521,6 +524,36 @@ def verify_effective(policy, logs, applied_args):
             same = asked == got
         if not same:
             bad.append(f"{flag}: asked {asked}, scheduler reports {key}={got}")
+    # The class pin is checked separately for two reasons. Its value contains
+    # ':' ',' and ';', which the general token regex above does not capture, so
+    # it would be skipped in silence -- and a pin that was asked for and not
+    # applied turns the treatment arm into the control arm, which is the failure
+    # this function exists to prevent. And the two sides write the same map in
+    # different orders: the scheduler prints the tiers sorted so that its
+    # start-up line is reproducible, while an arm writes them in whatever order
+    # reads well. Comparing the strings failed a configuration that was correct.
+    def _pin_canon(text):
+        out = {}
+        for grp in (text or "").split(";"):
+            grp = grp.strip()
+            if not grp or ":" not in grp:
+                continue
+            tier, _, lst = grp.partition(":")
+            out[tier.strip()] = sorted(x.strip() for x in lst.split(",") if x.strip())
+        return out
+
+    if "--fluidserve-class-pin" in want:
+        m = re.search(r"classpin=(.+?), budgets ", line)
+        asked = want["--fluidserve-class-pin"]
+        got = m.group(1) if m else "(absent)"
+        if _pin_canon(got) != _pin_canon(asked):
+            bad.append(f"--fluidserve-class-pin: asked {asked}, "
+                       f"scheduler reports classpin={got}")
+    elif "classpin=" in line and "classpin=off" not in line:
+        m = re.search(r"classpin=(.+?), budgets ", line)
+        bad.append(f"--fluidserve-class-pin was not requested but the scheduler "
+                   f"reports classpin={m.group(1) if m else '?'}")
+
     # The horizon is printed in its own phrasing.
     m = re.search(r"horizon (\d+) steps", line)
     if m and "--fluidserve-horizon-steps" in want:
