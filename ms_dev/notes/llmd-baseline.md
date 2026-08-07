@@ -272,6 +272,101 @@ vLLM이 그 값을 자기 completion id로 쓴다. 그래서
 
 ---
 
+## 5.5 무엇이 수집되고, 그 지표가 맞는가 (2026-08-07 검증)
+
+§32(기록된 TBT가 실제의 1/1.92였던 것)와 같은 계열의 오류가 라우터를 바꾸면서 다시 생길 수
+있으므로, **평가에 쓰는 양이 만들어지는 경로를 하나씩 확인했다.**
+
+### 5.5.1 판정에 쓰는 양은 라우터와 무관한 곳에서 만들어진다
+
+달성률·goodput·거절률은 전부 **클라이언트가 기록한 `metrics.csv`**에서 나오고, 그 기록을
+만드는 코드(`workloads/swe_bench_coding/agent.py`의 `LlumnixCompletionsLLM`)는 arm에 상관없이
+같다. 파생 TBT의 식 `(e2e − ttft) / (output_tokens − 1)`도 분석 쪽(§32의 수정)에 있고 라우터를
+안 본다. **그러므로 라우터 교체가 지표 정의를 바꾸지 않는다.** 다만 그 전제가 실제로 성립하는지
+셋을 쟀다.
+
+### 5.5.2 확인 1 — Envoy가 스트리밍을 버퍼링하지 않는다
+
+버퍼링하면 첫 토큰이 늦게 도착해 TTFT가 e2e에 가까워지고 토큰 간 간격이 0으로 무너진다.
+같은 프롬프트를 엔진에 직접, 그리고 Envoy를 거쳐 보내고 청크 간격을 비교했다.
+
+| | 청크 간격 중앙값 | `(e2e − ttft)/(n−1)` | 청크 수 |
+|---|---|---|---|
+| 엔진 직접 | 16.58 ms | 16.62 ms | 64 |
+| Envoy 경유 | 16.32 ms | 16.41 ms | 64 |
+
+**간격이 같고 청크 수도 같다.** Envoy는 SSE 청크를 합치지도 미루지도 않는다. 그리고 이 표는
+**§32의 수정식이 새 경로에서도 실제 청크 간격과 일치한다는 것**을 같이 보여준다(16.41 대 16.32).
+
+### 5.5.3 확인 2 — 프록시 자체의 비용이 비교를 왜곡하지 않는다
+
+TTFT를 세 경로에서 각각 6회 쟀다(부하 없음).
+
+| 경로 | 1회차 | 이후 5회 중앙값 | 엔진 직접 대비 |
+|---|---|---|---|
+| 엔진 직접 | 29.9 ms | **23.0 ms** | — |
+| Envoy (llm-d) | 3107.5 ms | **26.0 ms** | +3.0 ms |
+| Llumnix 게이트웨이 | 2600.5 ms | **28.7 ms** | +5.7 ms |
+
+**첫 요청이 비싼 것은 연결 수립 비용이고 두 프록시 모두에 걸린다.** 정상 상태에서는 Envoy가
+우리 게이트웨이보다 2.7 ms 빠르므로, **프록시 비용 때문에 llm-d가 유리하거나 불리해지지
+않는다.** ⚠ 이 값은 **부하가 없을 때**의 것이다. 부하가 걸리면 우리 게이트웨이는 요청을
+큐에 붙드는데(PEND) 그것은 설계이지 비용이 아니고, llm-d 쪽은 `llmd-pred`·`llmd-slo`에서
+예측 왕복이 더해진다. **그 비용은 `inference_extension_plugin_duration_seconds`로 잰다.**
+
+### 5.5.4 확인 3 — 파생 TBT의 분모가 맞는가
+
+`output_tokens`는 `count_tokens(response_text)`이고 그 함수는 **tiktoken `cl100k_base`**를
+쓴다 — 모델은 Llama-3이므로 토크나이저가 다르다. 분모가 틀리면 달성률이 그 비율만큼 통째로
+틀리므로 실제로 쟀다. 스트리밍에서 엔진은 토큰 하나당 청크 하나를 보내므로 **청크 개수가 실제
+토큰 수**다(코드 주석의 독립 실측으로 서버 보고값의 0.991배).
+
+| 출력 성격 | 청크 수(= 실제 토큰) | cl100k 개수 | 비 |
+|---|---|---|---|
+| chat 유사(대화) | 168 | 168 | **1.000** |
+| deepresearch 유사(보고서) | 200 | 200 | **1.000** |
+| swe 유사(코드) | 200 | 200 | **1.000** |
+
+**세 종류 전부 정확히 일치한다.** 클래스마다 다른 배수로 틀어지는 일도 없다. 표본이 셋이므로
+"어긋남을 못 찾았다"이지 "0임을 증명했다"는 아니지만, 코드 주석의 독립 실측과 방향이 같다.
+
+### 5.5.5 arm에 따라 수집처가 달라지는 것
+
+| 무엇 | `fluidserve` arm | llm-d arm |
+|---|---|---|
+| 달성률·goodput·거절률·TTFT·e2e·토큰 수 | 클라이언트 `metrics.csv` | **같다** |
+| 파생 TBT | 분석에서 `(e2e−ttft)/(out−1)` | **같다** |
+| 엔진별 KV·큐·preemption·prefix hit | 엔진 Prometheus (neutral-0:8000~8003) | **같다** |
+| 요청이 어느 엔진에서 처리됐나 | 스케줄러 배치 로그 + 요청 번호 조인 | **Envoy 접근 로그 한 줄** (§4.1) |
+| 라우터 내부 상태 | 스케줄러 Prometheus (`scheduler_fluidserve_*`) | **EPP Prometheus** — 아래 |
+| 게이트웨이 큐 | `gateway_pending_requests` | 해당 없음(Envoy는 붙들지 않는다) |
+
+**llm-d arm에서는 `scheduler_*`·`gateway_*` 계열이 존재하지 않는다.** 수집기
+(`llumnix_metrics.py`)가 못 긁으면 그 대상을 건너뛰므로 run이 죽지는 않지만, **EPP를 긁는
+대상을 새로 넣어야 한다.** EPP가 내는 것 중 쓸 것:
+
+| 지표 | 무엇에 쓰나 |
+|---|---|
+| `inference_objective_normalized_time_per_output_token_seconds` | **llm-d 자신이 잰 토큰당 시간.** 우리 파생 TBT와 대조하는 독립 근거가 공짜로 생긴다 — §32가 요구하는 계층 간 대조가 이 arm에서는 자동이다 |
+| `inference_objective_request_duration_seconds` | 요청 e2e. 클라이언트 값과 대조 |
+| `inference_extension_plugin_duration_seconds` | 플러그인별 소요. **예측 왕복 비용이 여기 보인다** |
+| `inference_extension_prefix_indexer_hit_ratio` | EPP가 보는 prefix 일치율 |
+| `inference_pool_per_pod_queue_size`, `inference_pool_average_kv_cache_utilization` | EPP가 보는 엔진 상태. 엔진 Prometheus 값과 대조하면 EPP의 관측이 맞는지 알 수 있다 |
+
+⚠ **`inference_objective_request_predicted_ttft_seconds` 계열은 `llmd-base`에는 없다** —
+predicted-latency 플러그인이 안 실려서다. `llmd-pred`·`llmd-slo`에서 생기고, §5.4가 요구하는
+예측 오차 확인이 그것으로 이루어진다.
+
+### 5.5.6 아직 안 고친 것 — 거절이 오류로 기록된다
+
+클라이언트의 `_raise_if_llumnix_rejected`는 상태코드 429/503이면서 본문에
+`no available inference worker` 또는 `rate limit exceeded`가 있을 때만 거절로 센다. llm-d의
+거절은 **503에 `no valid endpoint available to serve the request`**이므로 지금 그대로 돌리면
+**거절이 거절이 아니라 오류로 집계된다.** 그러면 `admitted` 분모가 틀리고 거절률이 0으로
+보인다. §4의 4번 항목이 그것이고, 단계 5 전에 반드시 넣는다.
+
+---
+
 ## 6. 단계와 점검 지점
 
 각 단계는 **다음 단계로 넘어가기 전에 확인할 것**을 갖는다. 확인이 안 되면 거기서 멈춘다.
