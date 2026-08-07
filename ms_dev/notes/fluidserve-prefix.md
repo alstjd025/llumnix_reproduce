@@ -302,7 +302,7 @@ R을 1로 만들어도 s는 남는다. s는 워크로드의 실제 구조이고 
 
 | 클래스 | s (서로 다른 프롬프트끼리 공유하는 앞부분) | 근거 |
 |---|---|---|
-| swe | **73.3%** — 프롬프트 평균 8,657 토큰 중 6,341 토큰이 공통 시스템 프롬프트 | transcript 1,500개를 16토큰 블록으로 직접 측정 |
+| swe | **73.2%** | transcript 1,500개를 **64자 블록**으로 직접 측정: 공유 접두사 38.04 M자 / 전체 51.94 M자. 토큰으로는 transcript가 기록한 평균 6,812 토큰 중 **약 4,989 토큰**(문자/토큰 = 5.08). **비율 73.2%는 문자 비이므로 토큰화에 의존하지 않고, 토큰 환산값만 근사다** |
 | deepresearch | **약 19.6%** — 고정 시스템 프롬프트 910 토큰 / 평균 4,639 토큰 | 생성기 설계상 노트는 요청마다 다르게 뽑힌다 |
 | chat | 미측정 — 같은 대화의 다음 턴이 앞 턴을 접두사로 포함하므로 대화 안에서는 높고 대화끼리는 낮다 | ShareGPT 다중 턴 |
 
@@ -318,13 +318,13 @@ R을 1로 만들어도 s는 남는다. s는 워크로드의 실제 구조이고 
 |---|---|---|---|---|
 | chat | 3,354 (`num_conversations` 1,000) | 25,896 | 7.7× | 여전히 90% 근처 |
 | deepresearch | 60,000 | 5,184 | **1.0×** | **약 19.6%** |
-| swe | 1,500 | 2,580 | **1.72×** | **약 84.5%** |
+| swe | 1,500 | 2,580 | **1.72×** | **약 84.4%** |
 
 chat만 풀이 모자란다. `num_conversations`를 1,000 → 8,000으로 올리면 배수가 1.0이 되고
 chat도 자기 s로 내려간다.
 
-**남는 것은 swe다.** 84.5%는 재생이 아니라 **s = 73.3%**에서 온다. 사용자가 말한 목표(agent
-약 60%)에 맞추려면 공통 시스템 프롬프트 6,341 토큰을 줄여야 하는데, 그것은 워크로드의 의미를
+**남는 것은 swe다.** 84.5%는 재생이 아니라 **s = 73.2%**에서 온다. 사용자가 말한 목표(agent
+약 60%)에 맞추려면 공통 시스템 프롬프트 약 4,989 토큰을 줄여야 하는데, 그것은 워크로드의 의미를
 바꾸는 것이라 **혼자 정하지 않고 물어본다.** 실제 coding agent가 긴 시스템 프롬프트를
 공유하는 것 자체는 현실적이다.
 
@@ -344,3 +344,59 @@ FluidServe·PolyServe·Llumnix·Llumnix SLO·llm-d 다섯 arm을 전부 다시 �
   arm당 약 6시간이다.
 - 절충: **먼저 FluidServe와 llm-d 둘만** 고친 워크로드로 재서 방향을 확인하고, 방향이 맞으면
   나머지 셋을 채운다.
+
+---
+
+# 9. H1·H2가 실패하면 다음 수 — score에 항을 더하지 않고 고치는 길 (2026-08-08 설계)
+
+§5에 적은 한계는 "prefix 신호가 feasible 안에서의 순위에 안 들어간다"이고, 거기서 제시한
+선택지는 `score = w·share + (1−w)·room`에 세 번째 항을 넣는 것이었다. **그것은 하지 않는 편이
+낫고, 대신 고칠 수 있는 불일치가 하나 있다.**
+
+## 9.1 사실 — 용량과 점유가 서로 다른 시점을 말한다
+
+```go
+// buildFlux (fluidserve.go:1064) — 도착 요청을 모르는 상태
+f.capKv = p.capacity.maxKvForAllowance(
+    f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
+    f.effectivePrefill, f.chunk, p.cfg.horizonSteps)
+
+// evaluate (fluidserve.go:1449) — 도착 요청을 받아들인 상태
+c.headroomAfter = math.Min(f.capKv, f.capMem) - newKv
+```
+
+`newKv`는 **이 요청을 받은 뒤**의 KV인데, `f.capKv`는 **받기 전**의 `nDecode`와
+`effectivePrefill`로 계산된 한계다. 같은 뺄셈의 두 항이 다른 상태를 말한다.
+`meanAfter`는 `newN`과 `newPending`을 쓰므로, **feasibility는 받은 뒤 상태로 판정하고
+room은 반쯤 받기 전 상태로 잰다.**
+
+## 9.2 고치면 prefix가 순위에 들어온다 — 새 목적함수 없이
+
+일관되게 만들려면 `capKv`를 후보마다 계산하고 `newN`·`newPending`을 넘긴다:
+
+```go
+capKvAfter := p.capacity.maxKvForAllowance(
+    f.gateAllowance*fsAllowanceUtilisation, newN,
+    newPending, f.chunk, p.cfg.horizonSteps)
+c.headroomAfter = math.Min(capKvAfter, f.capMem) - newKv
+```
+
+`newPending`은 §1에서 인스턴스별 charge가 됐으므로, **캐시를 들고 있는 인스턴스는 자동으로
+`capKvAfter`가 크고 따라서 `room`이 크다.** 즉 prefix가 `room`을 통해 순위에 들어오는데,
+**그것은 선호를 추가한 것이 아니라 "이 요청을 받으면 이 인스턴스에 얼마가 남는가"를 정확히
+계산한 결과다.** 논지("우리는 판정 조건 하나를 정확하게 만들 뿐이고 배치는 그 결과다")가
+그대로 유지된다.
+
+## 9.3 그래도 별도 실험이어야 한다
+
+- **두 변화를 한 단계에 넣으면 구별할 수 없다.** EXP-67은 charge가 인스턴스별이 되는 것
+  하나만 잰다. 이것은 EXP-68이다.
+- **`capKv`가 인스턴스 성질에서 후보 성질로 바뀐다.** `buildFlux`에서 `evaluate`로 옮겨야
+  하고, `scheduler_fluidserve_cap_kv_tokens` 게이지의 의미도 바뀐다(인스턴스당 하나가 아니게
+  된다). 그 게이지는 EXP-37 이후 여러 분석이 읽으므로 이름을 바꾸거나 둘 다 내보내야 한다.
+- **방향이 자명하지 않다.** `capKvAfter < capKv`이므로 `room`은 전반적으로 줄고
+  `overMemory`가 더 자주 걸린다. 즉 **admission이 전체적으로 보수적이 된다.** 지금 거절률이
+  이미 llm-d보다 높으므로(55 req/s에서 24.3% 대 7.7%) 그 방향은 우리에게 불리할 수 있다.
+  prefix가 주는 이득과 보수화가 주는 손해 중 어느 쪽이 큰지는 **재봐야 안다.**
+
+**요약**: H1·H2가 실패하면 이것이 다음 수이고, 실패하지 않아도 별도로 값어치가 있는 수정이다.
