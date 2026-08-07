@@ -265,8 +265,8 @@ CPU만 쓴다. 매니페스트는 `llm-d-latency-predictor/deploy/base/`의 것�
 
 | 단계 | 하는 일 | 넘어가기 전에 확인할 것 |
 |---|---|---|
-| **0** | ghcr.io에서 이미지 넷을 실제로 pull 한다 (EPP, envoy, 예측기 둘) | `crictl images`에 넷이 보인다. 안 되면 여기서 계획이 바뀐다 |
-| **1** | 예측기 둘을 Deployment로 띄운다 | 학습 서버 `/`에 응답, 예측 서버가 모델을 받아 온다 |
+| **0** | ghcr.io에서 이미지 넷을 실제로 pull 한다 (EPP, envoy, 예측기 둘) | ✅ **2026-08-07 통과.** EPP 23 MB / Envoy 33 MB / 학습 617 MB / 예측 617 MB, 합계 약 1.3 GB. 네임스페이스 `llmd`에서 확인 |
+| **1** | 예측기 둘을 Deployment로 띄운다 | ✅ **2026-08-07 통과.** `deploy/llmd/predictor.yaml`. 학습 1 + 예측 3 파드 전부 Ready. **모델 동기화 링크가 실제로 돈다** — 예측 서버들이 `GET /model/{ttft,tpot}/info` 200을 받는다. 학습 루프가 1초마다 돌며 `Skipping training: only 0 samples (< 10)`을 찍는다(= 설정이 먹었고 첫 학습 문턱이 10개) |
 | **2** | 경로 A(file-discovery)로 EPP + Envoy를 띄우고 `llmd-base` 구성으로 `curl` 한 번 | 응답이 오고, Envoy 접근 로그에 `UPSTREAM_HOST`가 엔진 넷 중 하나로 찍힌다 |
 | **3** | 클라이언트 변경(4장의 1~4번)을 넣고 짧은 smoke — 8분 45 req/s 한 조건 | `metrics.csv`가 정상, 요청 → 엔진 연결이 **100%**, 엔진 넷에 다 분산됨 |
 | **4** | `llmd-pred`, `llmd-slo` 구성으로 각각 smoke | EPP 로그에 예측값이 찍히고, 예측 대 실측 히스토그램이 채워진다 |
@@ -316,7 +316,7 @@ arm        : fluidserve / llmd-base / llmd-pred / llmd-slo
 | 경로 | 무엇 | git |
 |---|---|---|
 | `lib/llm-d/` | 상류 저장소 클론 넷(llm-d-router, llm-d, gateway-api-inference-extension, llm-d-latency-predictor) | 추적 안 함. `lib/sglang`과 같은 방식 |
-| `deploy/llmd/` | 우리가 쓴 매니페스트 — EPP+Envoy 파드, 예측기 둘, ConfigMap 셋(arm 하나당 하나) | **추적한다** |
+| `deploy/llmd/` | 우리가 쓴 매니페스트. `predictor.yaml`(작성됨), EPP+Envoy와 arm별 ConfigMap은 아직 | **추적한다** |
 | `ms_dev/notes/llmd-baseline.md` | 이 문서 | 추적 |
 | `Agent_applications/.../experiments/EXP-66_llm-d-baseline.md` | 실험 기록. 실행 **전에** 가설과 판정 규칙을 적는다 | 추적(별도 저장소) |
 | `Agent_applications/.../k8s/exp07/run_exp66_llmd.sh` | 드라이버 | 추적(별도 저장소) |

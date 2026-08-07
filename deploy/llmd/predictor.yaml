@@ -1,0 +1,184 @@
+# llm-d latency predictor — training server + prediction servers.
+#
+# Derived from llm-d-latency-predictor/deploy/base (upstream), with four
+# deliberate changes, each noted where it appears:
+#   1. namespace llmd (upstream is namespace-less; we keep the llumnix namespace
+#      untouched so the existing stack is unaffected)
+#   2. images pinned to the :main tag the upstream overlays use
+#   3. prediction replicas 10 -> 3 (upstream sizes for a 10k-QPS cluster; ours
+#      peaks at 70 req/s x 4 candidate endpoints = 280 predictions/s)
+#   4. service names prefixed llmd- , and TRAINING_SERVER_URL updated to match
+#      (kustomize does not rewrite string values, and neither do we)
+#
+# The two servers do NOT share a volume: the prediction servers download the
+# model from the training server over HTTP every MODEL_SYNC_INTERVAL_SEC.
+# Both are CPU only.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: latency-predictor-config
+  namespace: llmd
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+data:
+  # Upstream's own deployment values, not the source defaults (the source
+  # defaults are 1800 s and 1000 samples, which would never retrain inside an
+  # 8-minute condition).
+  LATENCY_RETRAINING_INTERVAL_SEC: "1"
+  LATENCY_MIN_SAMPLES_FOR_RETRAIN: "100"
+  LATENCY_TTFT_MODEL_PATH: "/models/ttft.joblib"
+  LATENCY_TPOT_MODEL_PATH: "/models/tpot.joblib"
+  LATENCY_TTFT_SCALER_PATH: "/models/ttft_scaler.joblib"
+  LATENCY_TPOT_SCALER_PATH: "/models/tpot_scaler.joblib"
+  LATENCY_MODEL_TYPE: "xgboost"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prediction-server-config
+  namespace: llmd
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+data:
+  MODEL_SYNC_INTERVAL_SEC: "10"
+  LATENCY_MODEL_TYPE: "xgboost"
+  PREDICT_HOST: "0.0.0.0"
+  PREDICT_PORT: "8001"
+  # Change 4: matches the prefixed Service name below.
+  TRAINING_SERVER_URL: "http://llmd-training-service:8000"
+  LOCAL_TTFT_MODEL_PATH: "/local_models/ttft.joblib"
+  LOCAL_TPOT_MODEL_PATH: "/local_models/tpot.joblib"
+  LOCAL_TTFT_SCALER_PATH: "/local_models/ttft_scaler.joblib"
+  LOCAL_TPOT_SCALER_PATH: "/local_models/tpot_scaler.joblib"
+  HTTP_TIMEOUT: "30"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmd-training-server
+  namespace: llmd
+  labels:
+    app: training-server
+    component: training
+    app.kubernetes.io/part-of: llmd-baseline
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: training-server, component: training }
+  template:
+    metadata:
+      labels:
+        app: training-server
+        component: training
+        app.kubernetes.io/part-of: llmd-baseline
+    spec:
+      containers:
+        - name: training-server
+          image: ghcr.io/llm-d/llm-d-latency-predictor-training-server:main
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8000, name: training-port }]
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8000 }
+            initialDelaySeconds: 45
+            periodSeconds: 10
+          resources:
+            requests: { cpu: "1000m", memory: "2Gi" }
+            limits:   { cpu: "4000m", memory: "8Gi" }
+          envFrom:
+            - configMapRef: { name: latency-predictor-config }
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: SERVER_TYPE
+              value: "training"
+          volumeMounts:
+            - { name: model-storage, mountPath: /models }
+      volumes:
+        - name: model-storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmd-training-service
+  namespace: llmd
+  labels:
+    component: training
+    app.kubernetes.io/part-of: llmd-baseline
+spec:
+  type: ClusterIP
+  selector: { app: training-server, component: training }
+  ports:
+    - { protocol: TCP, port: 8000, targetPort: 8000, name: training }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llmd-prediction-server
+  namespace: llmd
+  labels:
+    app: prediction-server
+    component: prediction
+    app.kubernetes.io/part-of: llmd-baseline
+spec:
+  # Change 3. Raise this if the EPP reports high prediction latency — a
+  # bottlenecked predictor would make the baseline look worse than it is,
+  # which is the wrong direction for a baseline.
+  replicas: 3
+  selector:
+    matchLabels: { app: prediction-server, component: prediction }
+  template:
+    metadata:
+      labels:
+        app: prediction-server
+        component: prediction
+        app.kubernetes.io/part-of: llmd-baseline
+    spec:
+      containers:
+        - name: prediction-server
+          image: ghcr.io/llm-d/llm-d-latency-predictor-prediction-server:main
+          imagePullPolicy: IfNotPresent
+          ports: [{ containerPort: 8001, name: predict-port }]
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8001 }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8001 }
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 10
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "2000m", memory: "2Gi" }
+          envFrom:
+            - configMapRef: { name: prediction-server-config }
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+            - name: SERVER_TYPE
+              value: "prediction"
+          volumeMounts:
+            - { name: local-model-storage, mountPath: /local_models }
+      volumes:
+        - name: local-model-storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmd-prediction-service
+  namespace: llmd
+  labels:
+    component: prediction
+    app.kubernetes.io/part-of: llmd-baseline
+spec:
+  type: ClusterIP
+  selector: { app: prediction-server, component: prediction }
+  ports:
+    - { protocol: TCP, port: 80, targetPort: 8001, name: prediction }
