@@ -93,7 +93,7 @@ func fill(p *fluidserveDispatchPolicy, inst string, tier, prompt, n int,
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("%s-%d-%d", inst, tier, i)
 		p.registry.noteArrival(id, 0, atMs)
-		p.registry.onDispatch(inst, id, tier, prompt, 8192, atStep, atMs, 0)
+		p.registry.onDispatch(inst, id, tier, prompt, 8192, atStep, atMs, 0, 0)
 	}
 }
 
@@ -124,7 +124,7 @@ func TestAmongFeasibleInstancesTheClassGoesWhereItAlreadyIs(t *testing.T) {
 		if i%2 == 1 {
 			tier = 100
 		}
-		p.registry.onDispatch("mixed", id, tier, 1000, 8192, 4990, now, 0)
+		p.registry.onDispatch("mixed", id, tier, 1000, 8192, 4990, now, 0, 0)
 	}
 	got := decide(p, fsRequest("chat-new", 50, 5000, 1000), views)
 	require.NotNil(t, got)
@@ -366,7 +366,7 @@ func TestUnachievableRequestsDoNotPinInstanceCapacity(t *testing.T) {
 	}
 	// An end-to-end request that has already spent nearly its whole budget.
 	p.registry.noteArrival("doomed", 0, now-15900)
-	p.registry.onDispatch("a", "doomed", 25, 20000, 8192, 4900, now-15900, 0)
+	p.registry.onDispatch("a", "doomed", 25, 20000, 8192, 4900, now-15900, 0, 0)
 
 	p.calculateMetrics(consts.InferTypeNeutral, fsRequest("probe", 50, 5000, 1000), views)
 	f := views["a"].schedulingCtx.fluidserveFlux

@@ -31,8 +31,15 @@ metadata:
 data:
   envoy.yaml: |
     admin:
+      # Bound to the pod IP rather than loopback so /stats can be read from
+      # outside the pod. The upstream config uses 127.0.0.1, which is correct
+      # for a production deployment and useless for diagnosis: when 11% of
+      # requests came back 500 with no upstream selected, Envoy's own ext_proc
+      # and circuit-breaker counters were the one place that could say why, and
+      # they were unreachable. The listener is inside the cluster network and
+      # carries no request data.
       address:
-        socket_address: { address: 127.0.0.1, port_value: 19000 }
+        socket_address: { address: 0.0.0.0, port_value: 19000 }
 
     static_resources:
       listeners:

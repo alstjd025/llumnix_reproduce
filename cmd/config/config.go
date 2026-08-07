@@ -278,6 +278,10 @@ type FullModeSchedulingConfig struct {
 	FluidserveClassHarm         bool
 	FluidserveForceMargin       bool
 	FluidserveOwnBudgetGate     bool
+	FluidservePrefixAware       bool
+	FluidservePrefixCalibration bool
+	FluidservePrefixBlockTokens int
+	FluidservePrefixCapacity    int
 	FluidserveKvSlopeProjection bool
 	FluidserveGateSlack         float64
 
@@ -419,6 +423,35 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"between trade the two off continuously, which is what makes the degree "+
 			"of class separation an axis that can be swept rather than a switch. "+
 			"Ignored when --fluidserve-enable-affinity=false.")
+	flags.BoolVar(&c.FluidservePrefixAware, "fluidserve-prefix-aware", false,
+		"Charge an arriving prompt only for the blocks the instance under "+
+			"consideration is not already believed to hold, instead of for a "+
+			"fleet-wide fraction of it. The scheduler keeps its own index of which "+
+			"instance each block of prompt was last dispatched to; it does not query "+
+			"the engines, so it cannot see eviction, and the error that causes is "+
+			"measured by the calibration below. Off by default so that every arm "+
+			"measured before EXP-67 reproduces unchanged. See "+
+			"ms_dev/notes/fluidserve-prefix.md.")
+	flags.BoolVar(&c.FluidservePrefixCalibration, "fluidserve-prefix-calibration", true,
+		"Multiply the prefix-aware charge by the measured ratio between what the "+
+			"engines actually computed and what this scheduler predicted they would. "+
+			"With it on, an index that claims more cache hits than the engines have "+
+			"is corrected within about a minute; with it off the charge is taken at "+
+			"face value, which is the ablation that shows what the correction is "+
+			"worth. Ignored when --fluidserve-prefix-aware=false.")
+	flags.IntVar(&c.FluidservePrefixBlockTokens, "fluidserve-prefix-block-tokens", 16,
+		"Tokens per block in the prefix index. Matching the engine's own KV block "+
+			"size makes a claimed hit correspond to something the engine can actually "+
+			"reuse; a larger value costs less to hash and loses up to one block of "+
+			"precision at the end of the matched run, in the direction of charging "+
+			"more. Ignored when --fluidserve-prefix-aware=false.")
+	flags.IntVar(&c.FluidservePrefixCapacity, "fluidserve-prefix-capacity", 500000,
+		"Blocks the prefix index keeps before evicting the least recently used. "+
+			"The working set is set by the amount of DISTINCT prompt content in "+
+			"flight, not by the request rate: one eight-minute condition at 70 req/s "+
+			"carried 33,660 requests and 56.7M prompt tokens but only 4.73M distinct "+
+			"tokens, which is 0.30M blocks at the default block size. Ignored when "+
+			"--fluidserve-prefix-aware=false.")
 	flags.StringVar(&c.FluidserveClassPin, "fluidserve-class-pin", "",
 		"Restrict each class to a fixed set of instances, as "+
 			"\"50:0;100:1,2;25:3\": the class whose per-token budget tier is 50 may "+

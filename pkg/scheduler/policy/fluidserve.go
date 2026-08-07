@@ -125,6 +125,17 @@ type fluidserveConfig struct {
 	// instance may be driven in order to serve a class promised more. 1 is the
 	// shipped behaviour; large enough is candidate C. See evaluate().
 	gateSlack float64
+
+	// prefixAware charges an arriving prompt only for the blocks the instance
+	// under consideration is not already believed to hold, instead of for a
+	// fleet-wide fraction of it. See ms_dev/notes/fluidserve-prefix.md.
+	prefixAware bool
+	// prefixCalibrate multiplies that charge by the measured residual, which is
+	// what keeps a prediction that claims too many cache hits from admitting
+	// past the budget. Off makes the ablation arm.
+	prefixCalibrate  bool
+	prefixBlockToks  int
+	prefixCapacity   int
 }
 
 // fluidserveRequest is the per-request context the selector needs. Filters and
@@ -151,6 +162,11 @@ type fluidserveRequest struct {
 	// budget the wait is judged separately, against ttftSloMs.
 	isE2E    bool
 	budgetMs float64
+	// promptHashes is the prompt as one chained hash per block, or nil when
+	// there is nothing to match on. Computed once per request and cached in the
+	// registry, because this struct is rebuilt on every scheduling call and a
+	// pended request re-enters that path on every gateway recheck.
+	promptHashes []uint64
 }
 
 // instanceFlux is one instance's state at the moment of a decision.
@@ -213,6 +229,7 @@ type fluidserveDispatchPolicy struct {
 	capacity *capacityModel
 	registry *requestRegistry
 	lengths  *lengthModel
+	prefix   *prefixIndex
 
 	obsMu   sync.Mutex
 	lastObs map[string]stepObservation
@@ -360,11 +377,22 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 	tier := request.TpotSloMs
 	nominal, expected, isE2E, budgetMs := p.registry.requestBudget(tier)
 
+	// Hashed here rather than inside evaluate() because evaluate runs once per
+	// CANDIDATE and this is a property of the request. The registry returns a
+	// cached slice from the second call on, so a request held at the gateway and
+	// re-examined every 500 ms is hashed once, not once per recheck.
+	var hashes []uint64
+	if p.cfg.prefixAware && p.prefix != nil {
+		hashes = p.registry.hashesFor(
+			request.Id, Uint32ToInt64(request.PromptTokenIds), p.cfg.prefixBlockToks)
+	}
+
 	ctx := &fluidserveRequest{
 		id:           request.Id,
 		tier:         tier,
 		ttftSloMs:    float64(request.TtftSloMs),
 		promptTokens: request.PromptNumTokens,
+		promptHashes: hashes,
 		arrivedMs:    arrived,
 		recheckMs:    recheckMs,
 		nowMs:        now,
@@ -646,8 +674,17 @@ func (p *fluidserveDispatchPolicy) observeInstance(view *instanceViewScheduling)
 		chunk = float64(view.cmsView.Metadata.MaxNumBatchedTokens)
 	}
 	decodeOnly := p.capacity.decodeStepMs(prev.kvLogical, prev.nDecode)
-	p.capacity.notePrefill(measured, decodeOnly,
-		float64(steps), chunk, p.registry.takePromptTokens(id))
+	// Which denominator depends on what the charge was made from, so that the
+	// factor corrects the charge rather than re-applying a discount already in
+	// it. Both accumulators are drained either way, otherwise the unused one
+	// would keep growing and be wrong the moment the flag is flipped mid-run.
+	whole := p.registry.takePromptTokens(id)
+	charged := p.registry.takeChargedPrefill(id)
+	denom, residual := whole, false
+	if p.cfg.prefixAware {
+		denom, residual = charged, true
+	}
+	p.capacity.notePrefill(measured, decodeOnly, float64(steps), chunk, denom, residual)
 
 	// The three quantities that decompose the predicted iteration, published
 	// here because this is the one place that holds both ends of a measured
@@ -1125,6 +1162,13 @@ type candidate struct {
 	// still miss the budget the request itself is judged by.
 	missesOwnBudget bool
 	prefillMs       float64
+	// prefillCharge is the prompt tokens this placement was priced at on THIS
+	// instance: the whole prompt scaled by the fleet factor when the prefix
+	// index is off, and the prompt minus the blocks the instance is believed to
+	// hold when it is on. Carried on the candidate so that commit records the
+	// same number the decision was made from, which is what the calibration
+	// divides by.
+	prefillCharge float64
 
 	// snapFeasible is what the SAME test would have returned had the instance
 	// been judged on the KV it holds right now instead of on the projection.
@@ -1324,6 +1368,46 @@ func anyInstance(instances map[string]*instanceViewScheduling) *instanceViewSche
 	return instances[ids[0]]
 }
 
+// prefillChargeFor is how many prompt tokens this instance would actually have
+// to compute for this request.
+//
+// Two regimes, and the difference between them is where the quantity comes from
+// rather than how large it is.
+//
+//	prefix index off   the whole prompt scaled by capacityModel.prefillFractionOf,
+//	                   one measured fleet-wide ratio. It is right about the level
+//	                   -- charging a 6,472-token agent prompt in full raised the
+//	                   predicted iteration by about 15 ms and made that class
+//	                   infeasible almost everywhere, producing a 28.8% rejection
+//	                   rate while the engines ran at 13.5 ms against budgets of 50
+//	                   and 100 -- and it says nothing about WHICH instance is
+//	                   cheap for this prompt, because it is the same number on all
+//	                   of them.
+//	prefix index on    the prompt minus the leading blocks this instance is
+//	                   believed to already hold, then scaled by the same factor,
+//	                   which now means the RESIDUAL error of that belief rather
+//	                   than the discount itself. See notePrefill.
+//
+// With no hashes -- no token ids from the gateway, or a prompt shorter than one
+// block -- the hit is zero and the two regimes coincide, so a request the index
+// cannot speak about is charged exactly what it was charged before.
+func (p *fluidserveDispatchPolicy) prefillChargeFor(
+	req *fluidserveRequest, instanceID string) float64 {
+
+	tokens := float64(req.promptTokens)
+	if p.cfg.prefixAware && p.prefix != nil {
+		hit := float64(p.prefix.hitTokens(req.promptHashes, instanceID))
+		if hit > tokens {
+			hit = tokens
+		}
+		tokens -= hit
+		if !p.cfg.prefixCalibrate {
+			return tokens
+		}
+	}
+	return tokens * p.capacity.prefillFractionOf()
+}
+
 // costOf is the KV a request adds over the horizon: its prompt, plus the tokens
 // it will produce while the horizon lasts. A request that will outlive the
 // horizon is charged only for the part that falls inside it, because the
@@ -1356,8 +1440,8 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	//
 	// The KV footprint below is NOT discounted, because the latency model counts
 	// logical tokens and a shared block is charged to every request holding it.
-	newPending := f.effectivePrefill +
-		float64(req.promptTokens)*p.capacity.prefillFractionOf()
+	c.prefillCharge = p.prefillChargeFor(req, f.id)
+	newPending := f.effectivePrefill + c.prefillCharge
 	newN := f.nDecode + 1
 	newKv := f.proj + cost
 	c.meanBefore = f.meanStep
@@ -1877,9 +1961,15 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 		chunk = f.chunk
 	}
 	// Same discount as the admission test: the time to a first token is set by
-	// the work the engine does, not by the length of the prompt.
-	steps := prefillSteps(
-		float64(req.promptTokens)*p.capacity.prefillFractionOf(), chunk)
+	// the work the engine does, not by the length of the prompt. With the prefix
+	// index on, "the work the engine does" is per instance, so this estimate is
+	// too -- a prompt whose prefix is resident reaches its first token sooner
+	// there, and that is what canWait and missesOwnBudget need to see.
+	id := ""
+	if f != nil {
+		id = f.id
+	}
+	steps := prefillSteps(p.prefillChargeFor(req, id), chunk)
 	if steps <= 0 {
 		return 0
 	}
@@ -1952,7 +2042,12 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 		metrics.Labels{}).Observe(float64(ord))
 
 	p.registry.onDispatch(c.flux.id, req.id, req.tier, req.promptTokens,
-		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs)
+		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs, c.prefillCharge)
+	// Recorded only for a placement that was actually made. A pended or shed
+	// request never reached an engine and therefore put nothing in a cache.
+	if p.cfg.prefixAware {
+		p.prefix.note(req.promptHashes, c.flux.id)
+	}
 
 	metrics.Counter("scheduler_fluidserve_decisions_total",
 		metrics.Labels{{Name: "decision", Value: kind}}).Inc()
@@ -2030,6 +2125,14 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 		gateSlack:         p.FluidserveGateSlack,
+
+		prefixAware:     p.FluidservePrefixAware,
+		prefixCalibrate: p.FluidservePrefixCalibration,
+		prefixBlockToks: p.FluidservePrefixBlockTokens,
+		prefixCapacity:  p.FluidservePrefixCapacity,
+	}
+	if cfg.prefixAware && cfg.prefixBlockToks <= 0 {
+		panic("--fluidserve-prefix-block-tokens must be positive")
 	}
 	if cfg.horizonSteps <= 0 {
 		panic("--fluidserve-horizon-steps must be positive")
@@ -2047,6 +2150,9 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		lastObs:   map[string]stepObservation{},
 		shedIDs:   map[string]int64{},
 		fluxCache: map[string]cachedFlux{},
+	}
+	if cfg.prefixAware {
+		policy.prefix = newPrefixIndex(cfg.prefixBlockToks, cfg.prefixCapacity)
 	}
 	policy.baseDispatchPolicy = baseDispatchPolicy{
 		consts.InferTypeNeutral: {
@@ -2073,11 +2179,14 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, "+
-		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, classpin=%v, budgets %q",
+		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, classpin=%v, "+
+		"prefix=%v, prefixcalib=%v, prefixblock=%d, prefixcap=%d, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.enableFlux, cfg.classHarm,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
-		formatClassPin(cfg.classPin), p.FluidserveClassBudgets)
+		formatClassPin(cfg.classPin),
+		cfg.prefixAware, cfg.prefixCalibrate, cfg.prefixBlockToks, cfg.prefixCapacity,
+		p.FluidserveClassBudgets)
 
 	go policy.reportLoop()
 	return policy
@@ -2090,8 +2199,23 @@ func (p *fluidserveDispatchPolicy) reportLoop() {
 	for range time.Tick(5 * time.Second) {
 		metrics.Gauge("scheduler_fluidserve_capacity_correction",
 			metrics.Labels{}).Set(p.capacity.correctionFactor())
+		// With the prefix index on this is no longer the discount -- it is the
+		// residual error of the discount the index predicted, and 1.0 means the
+		// prediction was right. Published under the same name because it is the
+		// same measurement of the same interval; which reading applies is in the
+		// startup line, and prefix_index_blocks below is zero exactly when the
+		// old reading applies.
 		metrics.Gauge("scheduler_fluidserve_prefill_fraction",
 			metrics.Labels{}).Set(p.capacity.prefillFractionOf())
+		if p.prefix != nil {
+			blocks, lookups, matched := p.prefix.stats()
+			metrics.Gauge("scheduler_fluidserve_prefix_index_blocks",
+				metrics.Labels{}).Set(float64(blocks))
+			metrics.Gauge("scheduler_fluidserve_prefix_lookups_total",
+				metrics.Labels{}).Set(float64(lookups))
+			metrics.Gauge("scheduler_fluidserve_prefix_matched_total",
+				metrics.Labels{}).Set(float64(matched))
+		}
 		byCount, bySurvival, byAge := p.registry.counters()
 		metrics.Gauge("scheduler_fluidserve_retired_total",
 			metrics.Labels{{Name: "reason", Value: "count"}}).Set(float64(byCount))

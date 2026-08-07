@@ -130,6 +130,15 @@ const (
 	// one is the no-cache case.
 	fsPrefillFractionMin = 0.02
 	fsPrefillFractionMax = 1.0
+	// Bounds when the same quantity is used as a RESIDUAL rather than as the
+	// estimate itself -- that is, when the prefix index supplies the token count
+	// and this only corrects it. A residual has to be allowed above 1: it is
+	// above 1 exactly when the index claimed more cache hits than the engine
+	// had, which is the failure mode that matters, because the scheduler
+	// remembers what it dispatched and cannot see eviction. Capping it at 1
+	// would hide that.
+	fsPrefillResidualMin = 0.25
+	fsPrefillResidualMax = 4.0
 	// Weight of one interval. Slower than the step correction because the
 	// quantity is a property of the workload rather than of the hardware, and a
 	// workload's prompt reuse changes over minutes rather than seconds.
@@ -161,8 +170,16 @@ const (
 // predicts is attributed to prefill by this arithmetic, which overstates the
 // tokens computed and therefore understates the discount. That is the safe
 // direction: it charges an arrival more than it costs rather than less.
+// When the prefix index supplies the token count, the DENOMINATOR changes and
+// with it the meaning of the result. `charged` is then the prefill this
+// scheduler predicted for the placements made over the same stretch, so the
+// ratio is the error of that prediction and sits at 1.0 when it is right, rather
+// than being the estimate itself. Both cases share this function because they
+// share the numerator; what differs is which quantity the caller passes and
+// which bounds apply. See ms_dev/notes/fluidserve-prefix.md section 2.
 func (m *capacityModel) notePrefill(
-	measuredMs, decodeOnlyMs, steps, chunk, promptTokensDispatched float64) {
+	measuredMs, decodeOnlyMs, steps, chunk, promptTokensDispatched float64,
+	residual bool) {
 
 	if promptTokensDispatched <= 0 || steps <= 0 || chunk <= 0 ||
 		measuredMs <= 0 || decodeOnlyMs <= 0 {
@@ -178,11 +195,15 @@ func (m *capacityModel) notePrefill(
 	}
 	computed := prefillMs / perChunk * chunk
 	ratio := computed / promptTokensDispatched
-	if ratio > fsPrefillFractionMax {
-		ratio = fsPrefillFractionMax
+	lo, hi := fsPrefillFractionMin, fsPrefillFractionMax
+	if residual {
+		lo, hi = fsPrefillResidualMin, fsPrefillResidualMax
 	}
-	if ratio < fsPrefillFractionMin {
-		ratio = fsPrefillFractionMin
+	if ratio > hi {
+		ratio = hi
+	}
+	if ratio < lo {
+		ratio = lo
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

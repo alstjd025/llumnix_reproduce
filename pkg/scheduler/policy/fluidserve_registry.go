@@ -214,6 +214,28 @@ type requestRegistry struct {
 	// instance since the last time the measurement read it, which is what the
 	// prefill-fraction estimate is measured against.
 	promptTokensSince map[string]float64
+	// chargedPrefillSince[instanceID] accumulates the same placements' PREDICTED
+	// prefill charge, which is the prompt minus whatever the prefix index said
+	// the instance already held.
+	//
+	// Two accumulators rather than one because they are two quantities and the
+	// calibration divides by whichever the charge was actually made from. With
+	// the prefix index off the charge is the whole prompt and the two agree; with
+	// it on they differ by exactly the predicted hit, so dividing the engine's
+	// computed tokens by the wrong one would apply the same discount twice --
+	// once in the charge and once in the factor meant to correct it.
+	chargedPrefillSince map[string]float64
+
+	// promptHashes[requestID] is the request's prompt as one chained hash per
+	// block, computed once.
+	//
+	// It is cached here rather than recomputed in calculateMetrics because that
+	// function runs on every scheduling call and a request this policy holds at
+	// the gateway re-enters it on every recheck. Hashing a 6,472-token agent
+	// prompt costs about 20 microseconds; doing it once per request is free and
+	// doing it on every recheck of a request held for sixteen seconds is the
+	// call rate that has saturated this scheduler before.
+	promptHashes map[string][]uint64
 
 	// The time between placing a request and its first output token, measured.
 	//
@@ -284,7 +306,46 @@ func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestReg
 		lastSeenMs:        map[string]int64{},
 		dispatchVersion:   map[string]uint64{},
 		promptTokensSince: map[string]float64{},
+
+		chargedPrefillSince: map[string]float64{},
+		promptHashes:        map[string][]uint64{},
 	}
+}
+
+// hashesFor returns the request's prompt block hashes, computing them the first
+// time this request is seen and returning the cached slice afterwards.
+//
+// A nil result means there is nothing to match on -- either the gateway did not
+// forward token ids, or the prompt is shorter than one block. Both are handled
+// the same way downstream: no hit is claimed and the whole prompt is charged,
+// which is the behaviour this policy had before the index existed.
+func (r *requestRegistry) hashesFor(
+	requestID string, tokens []int64, blockTokens int) []uint64 {
+
+	if requestID == "" {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if h, ok := r.promptHashes[requestID]; ok {
+		return h
+	}
+	h := hashPrompt(tokens, blockTokens)
+	// Stored even when empty, so a request whose ids never arrive is not
+	// re-examined on every recheck.
+	r.promptHashes[requestID] = h
+	return h
+}
+
+// takeChargedPrefill returns and clears the predicted prefill charge placed on
+// an instance since the previous call. The counterpart of takePromptTokens; see
+// the field comment for why both exist.
+func (r *requestRegistry) takeChargedPrefill(instanceID string) float64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	v := r.chargedPrefillSince[instanceID]
+	r.chargedPrefillSince[instanceID] = 0
+	return v
 }
 
 // noteArrival records when a request first asked to be placed and returns that
@@ -344,14 +405,22 @@ func (r *requestRegistry) gcLocked(nowMs int64) {
 		if nowMs-t > fsArrivalTTLMs {
 			delete(r.arrivedMs, id)
 			delete(r.lastSeenMs, id)
+			delete(r.promptHashes, id)
 		}
 	}
 }
 
 // onDispatch records that a request was placed on an instance.
+//
+// chargedPrefill is the prompt tokens this placement was PRICED at -- the whole
+// prompt when the prefix index is off or found nothing, and the prompt minus the
+// predicted hit when it did. It is accumulated separately from promptTokens
+// because the calibration in capacityModel.notePrefill divides by whichever one
+// the charge was actually made from.
 func (r *requestRegistry) onDispatch(
 	instanceID, requestID string, tier, promptTokens int,
-	chunk float64, stepID int64, nowMs int64, prefillEstMs float64) {
+	chunk float64, stepID int64, nowMs int64, prefillEstMs float64,
+	chargedPrefill float64) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -373,6 +442,7 @@ func (r *requestRegistry) onDispatch(
 	}
 	r.dispatchVersion[instanceID]++
 	r.promptTokensSince[instanceID] += float64(promptTokens)
+	r.chargedPrefillSince[instanceID] += chargedPrefill
 	m[requestID] = &dispatchRecord{
 		id:             requestID,
 		tier:           tier,
@@ -622,6 +692,7 @@ func (r *requestRegistry) forget(requestID string) {
 	defer r.mu.Unlock()
 	delete(r.arrivedMs, requestID)
 	delete(r.lastSeenMs, requestID)
+	delete(r.promptHashes, requestID)
 }
 
 // takePromptTokens returns and clears the prompt tokens placed on an instance
