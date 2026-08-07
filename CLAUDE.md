@@ -260,6 +260,30 @@ go build -buildvcs=false \
   않은 ablation은 **제거**되어 컴파일 기본값으로 돌아가고, 기본값으로 남은 것들을
   출력한다. **기동 줄은 처음부터 사실을 말하고 있었다 — 없었던 것은 그 줄과 arm의
   의도를 대조하는 단계다.** 자세한 것은 implementation.md §38.
+- **swe의 SLO 분해는 arm마다 다르다 — 어느 워크로드 설정으로 돌았는지를 먼저 본다 (2026-08-07).**
+  세 클래스의 예산은 `workload_configs/mix_*.json`의 `slo` 블록에 있는데, **swe만 두 판이 있고
+  arm에 따라 다른 것을 쓴다.** 채점은 어느 쪽으로 돌리든 **항상 전체 시간 30초**다
+  (`exp22_fluidserve.py`의 `SLO_RULES`, `slo_rule_breakdown.py`).
+
+  | 설정 | swe (ttft, 토큰당) | 누가 쓰나 |
+  |---|---|---|
+  | `mix_short_m1_balanced.json` (**m1**) | (11,800, **25**) | fluidserve, polyserve, loadbalance |
+  | `mix_short_m1_slofair.json` (**m1f**) | (2,500, **52**) | **Llumnix SLO**, 그리고 llm-d |
+
+  **왜 두 판인가**: swe의 진짜 예산은 E2E 30초인데, **전체 시간 예산을 표현할 수 없는 정책**은
+  `tbt_ms`를 토큰당 목표로 곧이곧대로 읽는다. m1의 25 ms는 EXP-16에서 잰 **유휴 상태 디코드
+  ITL 중앙값**이라 부하가 걸리면 거의 항상 초과되고, 그런 정책은 모든 인스턴스를 거부한다 —
+  **Llumnix SLO가 실제로 그 클래스의 98%를 거절했다.** m1f는 30초 안에 들어가면서 FluidServe의
+  명목 속도(30,000/520.2 = 57.7 ms)에 가장 가까운 쌍을 준다: `2,500 + 520.2 × 52 = 29,550 ms`.
+  전체 근거는 그 파일의 `_comment`에 있다.
+
+  → **E2E 예산을 표현할 수 없는 정책을 새로 세울 때는 m1f를 쓴다.** m1을 주면 그 정책이 나쁜
+  것이 아니라 우리 설정이 그 정책을 무력화한 것을 재게 된다.
+  → **우리 것은 m1을 쓰는데, `--fluidserve-class-budgets`가 `25:e2e:30000`으로 tier 25를 다시
+  정의하기 때문이다.** 25는 tier 이름일 뿐 토큰당 예산이 아니다.
+  → **결과를 읽을 때**: 같은 표에 m1 arm과 m1f arm이 섞여 있다는 것을 밝힌다. 2026-08-07에
+  llm-d를 m1으로 돌려 swe를 17~49% 거절시켰고, 원인을 정책의 성질로 읽을 뻔했다.
+
 - **워크로드를 바꾸면 프로파일도 같이 바꿔야 한다 (2026-08-02 발견).**
   `deploy/profiling/.../fluidserve.json`의 `classes[]`는 클래스별 출력 길이 분포이고
   정책의 `completionProb`·`expectedToks`가 전부 여기서 온다. 이 파일은 `d4e8250`(07-26)에서
