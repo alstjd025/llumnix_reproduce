@@ -103,7 +103,7 @@ admission을 같은 양으로 결정한다.**
 
 # 2. Motivation / Problem — 다섯 개의 사실
 
-> **정본은 [`motivation.md`](motivation.md)이다.** 논증 전체, 각 사실의 기전, 요구 조건
+> **정본은 [`motivation.md`](motivation.md)이다.** 논증 전체, 각 사실의 메커니즘, 요구 조건
 > 넷으로의 연결, 추가 기준선 계획이 거기 있다. 아래는 그 요약이고, **주장을 고칠 때는
 > 두 곳을 같이 고친다.** 그림별 문서는
 > `Agent_applications/agent_motivation_experiment/results/aggregate_analysis/motivation/README.md`.
@@ -222,7 +222,7 @@ offered, 점선 admitted)** / D 초당 70건의 적층 막대. **C의 두 선 �
 |---|---|---|---|
 | **정적 파티션** | 구성이 움직이면 **틀린 채로 유지된다** | PolyServe: 엔진 하나가 묶음 42·큐 0.1로 노는 동안 두 엔진이 chat을 **96.4·101.0 ms**(예산 50)로 돌림. 불균형 **48배** (EXP-54, 반복 2회) | **확립** |
 | **균등 분산 + 지연 인식** | 모든 엔진이 **가장 빡빡한 예산에 묶인다** | Llumnix SLO: 네 엔진 전부 chat 62~66%, 토큰당 **44~48 ms**(예산 50) — 전부 경계에 붙어 있음 (EXP-54, 반복 2회) | **확립** |
-| **엔진 안의 SLO 스케줄러** | 순서는 바꿔도 **구성은 못 바꾼다** | EXP-40: 엔진 스케줄러를 바꿔도 격차 변화가 반복 산포 안 | **약함 — §7 참조** |
+| **엔진 안의 SLO 스케줄러** | 순서는 바꿔도 **구성은 못 바꾼다** | EXP-40: 엔진 스케줄러를 바꿔도 격차 변화가 반복 간 편차 안 | **약함 — §7 참조** |
 
 **세 번째가 심사에서 반드시 나온다.** 논거는 `why-the-routing-layer.md` §9가 정본.
 
@@ -255,7 +255,7 @@ deepresearch에 자기 예산의 56%만 준다.
 | 3.2 | **무엇을 모델링하는가** — step 시간 법칙 세 항, 계획 구간 평균, 왜 평균인가 | §3.2~3.4 |
 | 3.3 | **요청이 요구하는 것** — 토큰당 허용 시간, 두 모드. **지연 임계 한 쌍으로는 전체 시간 예산을 표현할 수 없다**(가장 방어 가능한 주장) | §3.5 |
 | 3.4 | **메모리 예측** — 흐름 수지, 왜 방출을 낮게 잡나 | §4 |
-| 3.5 | **결정 사다리** — 네 갈래, 각각 양 하나. `feasible`의 세 조건 | §5 |
+| 3.5 | **결정 단계** — 네 갈래, 각각 양 하나. `feasible`의 세 조건 | §5 |
 | 3.6 | **클래스 분리** — 대칭이면 안 생긴다, 비대칭 항 하나, feasible 안에서만 | §6 |
 | 3.7 | **무엇을 측정하고 무엇을 설정하는가** — 상수 아홉 개, 금지된 되먹임 둘 | §7 |
 
@@ -319,7 +319,7 @@ iteration 단위**이며, 밀리초 단위 상수는 하나(300)뿐이다. 그�
 | 1 | **생산량 / goodput / 달성률** (4패널) | `motivation/motivation_throughput_vs_goodput.png` | `motivation_fig1.py` | 사실 1 |
 | 2 | **두 한계 (자원 공간)** | `motivation/two_ceilings.png` | `exp55_two_ceilings.py` | 사실 2 |
 | 2b | **용량은 정책의 함수다** | `motivation/motivation_capacity_is_a_policy.png` | `motivation_fig3.py` | **사실 3** |
-| 2c | **기존 답 둘의 실패 기전** | `motivation/motivation_two_failures.png` | `motivation_fig4.py` | **사실 4** |
+| 2c | **기존 답 둘의 실패 메커니즘** | `motivation/motivation_two_failures.png` | `motivation_fig4.py` | **사실 4** |
 | 2d | **목표가 움직인다** | `motivation/motivation_the_target_moves.png` | `motivation_fig5.py` | **사실 5** |
 | **2e** | **한 축 위의 두 조건** (3패널: 클래스별 배분 대 수요 기준선 / chat 없는 시간 대 점수 / 축 대 점수) | `motivation/motivation_two_conditions_static45.png`, `..._hour.png` | `motivation_fig6.py` (입력은 `separation_measures.py`가 쓴 CSV) | **§8의 아래위 두 조건.** 정적판과 한 시간판 둘 다 있고 **두 조건이 서로 다른 run에서 뚜렷하다** |
 | 3 | 정적 sweep, 네 정책 | `exp53/` | `exp53_compare.py` | 4.1 |
@@ -388,7 +388,7 @@ trace가 남았고, **판정은 그때 한다.**
 반복이 86.7과 86.5로 **0.2점 안**인데 기준선은 98.9와 93.4로 **5.5점** 벌어져 있다.
 우연한 불균형을 증폭하는 장치가 없으면 반복이 붙는다는 예측과 맞는다.
 
-**H2(기전이 게이트냐 묶음 균질성이냐)는 아직 안 읽었다.** `gate_allowance_ms`와 결정
+**H2(메커니즘이 게이트냐 묶음 균질성이냐)는 아직 안 읽었다.** `gate_allowance_ms`와 결정
 구성비를 봐야 한다.
 
 ---

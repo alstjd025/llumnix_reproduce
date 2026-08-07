@@ -372,7 +372,7 @@ TTFT는 컨트롤러가 만들어내는 **결과값**이므로 신호로 부적�
 
 **정책**
 - Bin당 샘플 부족 시 → 인접 bin 보간 또는 보수적 fallback cap
-- Bin 내 산포가 과대하면(`IQR / median > spread_threshold`) → 조건화 변수 추가 필요 신호를 로깅 `[미결 Q1]`
+- Bin 내 편차가 과대하면(`IQR / median > spread_threshold`) → 조건화 변수 추가 필요 신호를 로깅 `[미결 Q1]`
 - Preemption 이벤트 관측 시 → 해당 bin을 즉시 "위험"으로 마킹하고 cap 하향
 
 **튜너블 파라미터**
@@ -386,7 +386,7 @@ TTFT는 컨트롤러가 만들어내는 **결과값**이므로 신호로 부적�
 | `min_samples_per_cell` | 100 | 셀 신뢰 최소 샘플 | — |
 | `fallback_cap_ratio` | 0.60 | 곡선 미성숙 시 보수 cap | 낮을수록 안전 |
 | `loose_cap_ratio` | 0.92 | TBT 제약 없을 때 상한 | 물리 한계 여유 |
-| `spread_threshold` | 0.35 | 산포 경보 임계 | Q1 진단용 |
+| `spread_threshold` | 0.35 | 편차 경보 임계 | Q1 진단용 |
 
 **예상 효과**
 - Engine-agnostic 유지하면서 SLO-aware capacity 확보
@@ -790,7 +790,7 @@ POST /fluidserve/config          # 런타임 파라미터 변경 (실험용)
 ### M1. 관측 계층 (선행 — 설계 검증용)
 - 엔진 metric exporter + 수집기
 - 오프라인 분석 스크립트:
-  - **Q1 검증**: occupancy bin별 TBT 산포 플롯 → cap 교정 가능성 판정
+  - **Q1 검증**: occupancy bin별 TBT 편차 플롯 → cap 교정 가능성 판정
   - **Q3 검증**: request duration 분포 vs class mixture autocorrelation → migration 필요성 판정
   - Kaplan-Meier 생존함수 추정 및 시각화
 - **산출물**: Q1/Q3에 대한 답. 이게 안 나오면 이후 설계가 흔들림
@@ -819,7 +819,7 @@ POST /fluidserve/config          # 런타임 파라미터 변경 (실험용)
 
 | # | 질문 | 무엇이 해결하나 | 위험도 |
 |---|---|---|---|
-| **Q1** | occupancy 단독 binning으로 TBT 곡선이 서나? | M1의 산포 플롯 | **높음** — 안 되면 `cap_i` 자체가 무너짐 |
+| **Q1** | occupancy 단독 binning으로 TBT 곡선이 서나? | M1의 편차 플롯 | **높음** — 안 되면 `cap_i` 자체가 무너짐 |
 | **Q2** | `k_horizon` 최적값? | 후향 스윕 | 중 |
 | **Q3** | Migration이 필요한가? | `T_req` vs `T_mix` 비교. **단, C7(late binding)이 "잘못된 초기 결정" 케이스를 무료로 처리하므로 남는 것은 "commit 이후 상황 변화" 케이스뿐** | 낮음~중 (C7로 하향) |
 | **Q7** | `engine_queue_target`을 얼마나 얕게 가져갈 수 있나? | 값을 스윕하며 throughput/제어권 트레이드오프 측정 | **높음** — 너무 얕으면 엔진 batch 품질 저하로 throughput 손실 |
@@ -836,7 +836,7 @@ POST /fluidserve/config          # 런타임 파라미터 변경 (실험용)
 ### 10.1 모델 검증
 - `headroom` 예측 vs 실측 occupancy 오차 (MAE, 편향 방향)
 - `p_c(j,k)` calibration plot (예측 확률 vs 실제 완료율)
-- 교정 곡선 bin별 산포
+- 교정 곡선 bin별 편차
 
 ### 10.2 신호 우월성 (P1 증명)
 - Flux 경보의 **lead time** vs level/queue/attainment 신호
@@ -888,7 +888,7 @@ POST /fluidserve/config          # 런타임 파라미터 변경 (실험용)
 | # | 가정 | 깨지면 영향받는 곳 | 검증 방법 |
 |---|---|---|---|
 | A1 | KV occupancy가 capacity의 지배적 축이다 | 전체 모델 | prefill-heavy 워크로드에서 KV 여유 상태의 SLO 위반 빈도 측정 |
-| A2 | `occupancy → latency`가 안정적인 함수다 | C3 → `cap_i` | bin별 산포 (Q1) |
+| A2 | `occupancy → latency`가 안정적인 함수다 | C3 → `cap_i` | bin별 편차 (Q1) |
 | A3 | Class별 출력 길이 분포가 준정상적(quasi-stationary)이다 | C1 → outflow | 윈도우별 분포 KS 검정 |
 | A4 | 요청 간 길이가 class 내에서 독립이다 | C1의 분산 추정 | agentic job 내 자기상관 측정 |
 | A5 | 엔진들이 상호 교환 가능하다 (동일 모델/하드웨어) | C4 라우팅 | — (설계 전제) |
@@ -966,7 +966,7 @@ C7이 dispatch 순서를 정하고, 엔진도 내부에서 자체 스케줄링�
 | | `k_horizon` 과대 | 추정 오차 지배 → 과보수 | 예측 vs 실측 오차 |
 | | Prefix caching 활성 | `w_r` 가산 불성립 → 회계 붕괴 | 예측 occupancy vs 실측 괴리 |
 | | in-flight 보정 누락 | 순간 과다 dispatch | dispatch 직후 preemption |
-| **C3** Calibrator | occupancy 단독으로 불충분 (A2 위반) | bin 내 산포 과대 | IQR/median |
+| **C3** Calibrator | occupancy 단독으로 불충분 (A2 위반) | bin 내 편차 과대 | IQR/median |
 | | 동일 총 KV, 다른 길이 구성 | 같은 bin인데 latency 다름 | 시퀀스 길이 분산 조건화 필요 |
 | | 엔진 adaptive scheduling | 곡선이 함수가 아님 | 재현성 낮음 |
 | | 고occupancy 구간 미탐색 (L3) | 곡선 커버리지 부족 | bin별 샘플 수 히트맵 |
@@ -1041,7 +1041,7 @@ C7이 dispatch 순서를 정하고, 엔진도 내부에서 자체 스케줄링�
 
 | 원안 | 구현 | 왜 | 근거 |
 |---|---|---|---|
-| **§3.3 통합 원리** — `Routing = argmax headroom`, `Admission = 모든 i에서 headroom < cost면 shed` | **사다리**(ROUTE/PEND/SHED/FORCE). headroom은 동률 처리로 밀림 | headroom은 인스턴스에 대해 **대칭**이라 균일 혼합이 안정한 고정점이다. 7개 구성이 전부 그 점에 앉았다(chat 라우팅 집중도 0.05~0.11, PolyServe는 1.00) | impl §7.3 |
+| **§3.3 통합 원리** — `Routing = argmax headroom`, `Admission = 모든 i에서 headroom < cost면 shed` | **결정 단계**(ROUTE/PEND/SHED/FORCE). headroom은 동률 처리로 밀림 | headroom은 인스턴스에 대해 **대칭**이라 균일 혼합이 안정한 고정점이다. 7개 구성이 전부 그 점에 앉았다(chat 라우팅 집중도 0.05~0.11, PolyServe는 1.00) | impl §7.3 |
 | **C4 externality** `score = headroom − α·ext` | **α 없음.** 각 단계가 하나의 양만 쓴다 | ① externality를 측정하니 0.013 대 [−1,1] 범위라 순위에 영향이 없었다 ② 가중합은 과부하에서 붕괴한다 — 한 엔진에 5,569건이 쌓이고 나머지 셋이 27분 유휴 | impl §5, §7.2 |
 | C4의 soft binning **창발** | **명시적 `classShare` 항** | 원안 §11.3이 예고한 그대로다: "externality가 soft binning을 못 만들면 명시적 tier-affinity 항 필요 `[Q4]`". **Q4의 답이 '필요하다'로 나왔다** | impl §5 |
 | **C5** 별도 pend 큐 + deadline 스캔 + `urgent_ratio`/`starvation_timeout` | 게이트웨이 보유-재시도로 대체. `ttft_safety_margin`만 남음 | 기능은 같고 구조가 다르다. 다만 게이트웨이 워커 풀이 5개여서 **동시 보유가 5건으로 제한**되는 결함이 있었고, 이것이 v1~v10 전체 측정을 무효화했다 | impl §8 |

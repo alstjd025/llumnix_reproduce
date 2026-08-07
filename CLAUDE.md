@@ -32,10 +32,10 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 
 ## 결과를 볼 때 반드시 지키는 규칙 — 전부 실제로 틀렸던 것들이다
 
-- **조건당 1회 측정으로 판정하지 않는다.** 반복 간 산포는 조건에 따라 0.0~4.2점이다
+- **조건당 1회 측정으로 판정하지 않는다.** 반복 간 편차는 조건에 따라 0.0~4.2점이다
   (EXP-38 실측: FluidServe 0.0/0.0/0.1/1.2, Llumnix SLO 0.0/0.0/4.2/1.2, 15~60 req/s).
   세션 간 이동은 이 워크로드에서 **최대 4.6점**이다 — 예전에 인용하던 5~17점은 다른
-  워크로드이거나 v19에서 제거된 원인의 값이다. 평균 차이가 산포보다 작으면 "차이 없음".
+  워크로드이거나 v19에서 제거된 원인의 값이다. 평균 차이가 편차보다 작으면 "차이 없음".
 - **클라이언트가 기록한 지표를 엔진·스케줄러가 보고하는 값과 대조한다.**
   `tbt_mean_ms`가 실제 토큰당 시간의 **1/1.92**로 기록되고 있었다(§32). 청크를 문맥에서
   떼어 따로 토큰화한 개수로 나누기 때문이다. 스케줄러의 `observed_step_ms`(50.5ms)와
@@ -56,11 +56,11 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
   효과와 arm 효과를 분리할 방법이 없다. 반복이 여러 세션에 걸쳐 있으면 세션 효과는
   평균으로 흡수되고 오차막대에 들어간다.
   → **지금 규칙**: 같은 세션에 놓을 수 있으면 그렇게 하되(싸니까), 세션이 다르다는
-  이유로 비교를 버리지 않는다. **읽으려는 양의 반복 산포를 알고, 그보다 큰 차이만
-  읽는다.** 산포를 줄이려면 반복을 늘린다.
+  이유로 비교를 버리지 않는다. **읽으려는 양의 반복 간 편차를 알고, 그보다 큰 차이만
+  읽는다.** 편차를 줄이려면 반복을 늘린다.
   ⚠ **양마다 다르다.** 위의 같은 두 run에서 점수는 0.5점 이내인데 **preemption은
   1,471 → 1,852로 26% 움직였다.** 총계 지표는 세션을 잘 건너가고, 특정 엔진에서
-  일어나는 사건은 안 건너간다. 산포는 양별로 따로 안다.
+  일어나는 사건은 안 건너간다. 편차는 양별로 따로 안다.
 - **분모를 두 개 다 본다 (2026-07-28 변경).** 주 지표는 **admitted**(시스템이 받아들인
   요청이 분모), 그 옆에 **offered**(도착한 모든 요청, 거절은 위반). admitted만 읽으면
   전부 거절하는 정책이 최고점을 받으므로 **거절률과 token goodput을 반드시 같이 본다.**
@@ -174,7 +174,7 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 | "용량이 무너진다" | "SLO를 지킨 채 완료되는 요청 수가 초당 39.01건에서 20.69건으로 줄어든다" |
 
 **사용자에게 보고할 때도 같다.** 결론만 압축해 놓으면 사용자가 되물어야 하고, 그
-왕복이 낭비다. 처음부터 기전을 풀어서 적는다.
+왕복이 낭비다. 처음부터 메커니즘을 풀어서 적는다.
 
 ## 빌드 / 배포
 
@@ -207,7 +207,7 @@ go build -buildvcs=false \
 | [ms_dev/notes/paper-outline.md](ms_dev/notes/paper-outline.md) | **논문 작업의 정본. 논문 관련 요청이면 여기부터 읽는다.** 절 구도(motivation 다섯 사실 / design / evaluation), **각 주장과 그것을 뒷받침하는 실험 번호·반복 횟수**, 그림 목록(파일·스크립트·무슨 주장인지), **반드시 같이 적어야 오독되지 않는 것 다섯**, 그리고 **아직 뒷받침이 없는 것 여덟**(4번 믹스 비율의 현실성이 최대 위험). 논문에 주장을 추가할 때는 이 문서에 증거와 함께 적고, 증거가 없으면 §7에 올린다 |
 | [ms_dev/notes/motivation.md](ms_dev/notes/motivation.md) | **motivation 논증의 정본.** 사실을 순서대로 쌓고, 그것이 만드는 **요구 조건 넷을 우리 설계의 어느 부분이 만족시키는지** 표로 대응시킨다. §7.1에 **설계의 핵심 개념 둘**(격리를 구성하지 않고 결과로 얻는다 / 라우팅과 admission이 같은 결정이다), §8에 **추가로 만들 기준선 넷과 비용**, §9에 비어 있는 것 일곱 |
 | [.../results/aggregate_analysis/motivation/README.md](Agent_applications/agent_motivation_experiment/results/aggregate_analysis/motivation/README.md) | **motivation 그림 다섯 개의 정본.** 그림마다 주장 / 스크립트 / 실험과 반복 횟수 / **그림이 말하지 않는 것**. 다시 만드는 명령도 여기 |
-| [ms_dev/notes/fluidserve-how-it-works.md](ms_dev/notes/fluidserve-how-it-works.md) | **시스템 전체를 위에서 아래로 설명한 문서.** 처음 이해할 때 여기부터 — 문제 정의, 유연한 격리, 시간·메모리 모델, 결정 사다리, 클래스 분리, 무엇을 측정하고 무엇을 설정하는가, 실측 결과, 미해결. 각 설계 결정에 그것을 정하게 만든 측정이 붙어 있다 |
+| [ms_dev/notes/fluidserve-how-it-works.md](ms_dev/notes/fluidserve-how-it-works.md) | **시스템 전체를 위에서 아래로 설명한 문서.** 처음 이해할 때 여기부터 — 문제 정의, 유연한 격리, 시간·메모리 모델, 결정 단계, 클래스 분리, 무엇을 측정하고 무엇을 설정하는가, 실측 결과, 미해결. 각 설계 결정에 그것을 정하게 만든 측정이 붙어 있다 |
 | [ms_dev/notes/fluidserve-v0.1.1.md](ms_dev/notes/fluidserve-v0.1.1.md) | 현재 상태의 자족적 명세 — 실측 표(정적·한 시간), **v0.1.1이 아닌 것**, 그리고 **미해결 일곱 개를 우선순위로** |
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **FluidServe v0.1 명세 (정본). 결정 규칙·용량 모델·상수 아홉 개는 여기가 정본.** 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
 | [ms_dev/notes/fluidserve-design.md](ms_dev/notes/fluidserve-design.md) | FluidServe 설계 원안 |
@@ -216,6 +216,7 @@ go build -buildvcs=false \
 | [POLYSERVE_DESIGN_KO.md](POLYSERVE_DESIGN_KO.md) | PolyServe 이식 설계 (정본) |
 | [POLYSERVE_PROGRESS.md](POLYSERVE_PROGRESS.md) | PolyServe 구현 시간순 기록, 함정 |
 | [ms_dev/notes/related-works-review.md](ms_dev/notes/related-works-review.md) | **관련 연구 검토 (논문 일곱 편 + 배포된 시스템 하나)** — §0~§7 SLOs-Serve/PolyServe/AdaGen/Scorpio, §8~§10 JITServe/QoServe/Simple is Better. **§9가 "엔진 레벨 SLO 스케줄러가 있는데 왜 라우팅 계층이 필요한가"에 대한 답이고 논문 motivation의 정본**(순서 대 구성의 구분, 단순 조합 일곱 개의 해부, EXP-40·EXP-25 근거, 최소 조건 셋, §9.7의 미측정 ablation). §11은 SLOs-Serve 요약이고 **정본은 아래 별도 문서**. **§12가 llm-d predicted-latency scheduling** — 논문이 아니라 llm-d v0.8에 배포된 기능이고, **인스턴스 위 가장 빡빡한 TPOT 예산을 판정 조건에 넣는 방식이 우리 것과 같은 형태다**(소스 확인). 남는 차이 여섯, 거절이 배포 형태에 달려 있다는 것, 예측기가 무엇을 학습하는지가 거기 있다. 원문은 `related_works/*.pdf` |
+| [ms_dev/notes/llmd-baseline.md](ms_dev/notes/llmd-baseline.md) | **llm-d를 기준선으로 세우는 계획 (정본).** 답하려는 질문 넷, 지금 환경의 실측값, 배포 경로 둘(file-discovery는 거절이 안 되고 InferencePool은 된다), 우리 쪽에서 고쳐야 하는 파일 일곱, **예측기 온라인 학습이 조건마다 초기화되는 위험과 그 대응**, 단계별 점검 지점, 실행 전에 적어 둔 판정 규칙. 시스템 자체의 분석은 related-works-review.md §12 |
 | [ms_dev/notes/slosserve-comparison.md](ms_dev/notes/slosserve-comparison.md) | **SLOs-Serve 대 FluidServe (정본).** 차별점은 **두 시스템이 같은 min(인스턴스 위 가장 빡빡한 예산)을 지목하고 대응이 반대**라는 것 — 그들은 그 제약 아래에서 토큰 배분을 최적화하고 우리는 제약이 취해지는 집합을 바꾼다(게이트 50.0 → 100.0). **§6에 철회 기록**: "한 번에 평가 대 순차 질의"는 비교 축이 아니다(우리 판정 조건도 인스턴스마다 따로 계산한다). **§10이 baseline 계획** — 새 정책 없이 `affinity=off, pend=off` 조합, 설계서 §6.3의 미측정 칸도 함께 채운다 |
 | [ms_dev/notes/qoserve-niyama-fidelity.md](ms_dev/notes/qoserve-niyama-fidelity.md) | QoServe(Niyama) 이식의 원본 대조·수정·한계 |
 | [deploy/profiling/README.md](deploy/profiling/README.md) | 지연 프로파일 테이블의 출처·신뢰도 |
