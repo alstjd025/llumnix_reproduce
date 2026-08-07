@@ -49,11 +49,32 @@ hand or the run is void.
 | **scheduler start-up line** | full `kubectl logs <pod>` with no `--tail` | the only authority on which policy and flags the *process* got. At `-v 4` it leaves a tail window in seconds |
 | **session prefix is unused** | `ls -d results/*<prefix>*` | see section 5 |
 
-## 3. Launch
+## 3. Launch — two commands, never one
 
 ```bash
+# 1. the chain
 nohup setsid ./script.sh > <log> 2>&1 < /dev/null & disown
+
+# 2. the watchdog, IN THE SAME TURN, with run_in_background so its exit notifies
+/home/nxclab/tools/watch_experiment.sh 'exp63_profile_sensitivity.sh' \
+    /home/nxclab/tools/exp63.log 'results/*exp63*' 10
 ```
+
+**A launch without a watchdog is not finished.** The watchdog returns on the
+first terminal state — the chain process disappearing, a new ABORT or FAILED
+line, or the expected result count — and prints the log's terminal lines, the
+result count and the unfinished jobs. Because it runs in the background, its
+exit arrives as a notification rather than waiting to be asked for.
+
+This exists because §4c below was written, understood, and then not acted on.
+On 2026-08-07 EXP-63 died twice and each death was found hours later:
+
+| | how it died | how long unnoticed | why the check missed it |
+|---|---|---|---|
+| attempt 1 | the scheduler could not parse the scaled profile, so the rollout never completed and the runner burned its 600 s timeout | 4.5 h | nothing was watching |
+| attempt 2 | the chain's own verification aborted it on a rounding difference after three good conditions | 2.6 h | the check that ran six minutes later **counted successes**, found three, and read as healthy |
+
+**Counting successes cannot detect a stop.** Ask whether the process is alive.
 
 `setsid` and `< /dev/null` because a plain `nohup ... &` has been killed by the
 harness between turns.
@@ -120,6 +141,14 @@ long sweep has to emit on every terminal state:
 3. a delivered rate far from the target — load never applied, but the condition
    looks complete
 4. **the chain script itself disappearing without its DONE marker**
+
+**And a check that stops the run must not be more fragile than what it checks.**
+Attempt 2 above was aborted by its own guard: the guard computed the wanted
+profile mean from a value already rounded to one decimal (984.8 x 1.5 = 1477.2)
+while the generator used the full 984.8457... (= 1477.3). The setting was exactly
+right and the run was stopped anyway. A false abort costs what a missed error
+costs. Compare ratios or use a tolerance, never two independently rounded
+numbers, and run the guard against a case whose answer is known before arming it.
 
 `kubectl wait --for=condition=complete` never returns on a job that FAILS; it
 sits until its own `--timeout`, which was 300m here and nearly held the cluster

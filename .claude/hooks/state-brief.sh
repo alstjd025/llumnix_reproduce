@@ -35,7 +35,26 @@ event=$(printf '%s' "$payload" | jq -r '.hook_event_name // "SessionStart"' 2>/d
   timeout 8 kubectl -n llumnix get jobs --no-headers 2>/dev/null \
     | awk '/bench-runner/ && $2 != "Complete" {print}' | head -10 \
     || echo "(kubectl 조회 실패)"
-  echo "--- 대기·실행 중인 연쇄 스크립트"
+  echo "--- 연쇄 스크립트: 최근 24시간 로그마다 살아 있나 / 마지막 종료성 줄"
+  # 개수를 세는 점검은 정지를 못 잡는다. 로그가 있는데 프로세스가 없으면 그 자체가 신호다.
+  # 이것 없이 EXP-63이 2026-08-07에 두 번 조용히 죽었고 4.5시간·2.6시간 뒤에 발견됐다.
+  found=0
+  for lg in $(find /home/nxclab/tools -maxdepth 1 -name 'exp*.log' -mmin -1440 2>/dev/null | sort); do
+    found=1
+    nm=$(basename "$lg" .log)
+    if pgrep -f "[e]xp${nm#exp}[_a-z0-9]*\.sh" >/dev/null 2>&1 \
+       || pgrep -af '\.sh' 2>/dev/null | grep -vE 'pgrep|shell-snapshots|claude' | grep -q "$nm"; then
+      state="RUNNING"
+    elif grep -qE "=== .*DONE" "$lg" 2>/dev/null \
+         && [ "$(grep -c 'ABORT' "$lg" 2>/dev/null)" = 0 ]; then
+      state="finished"
+    else
+      state="** NOT RUNNING, no clean DONE **"
+    fi
+    last=$(grep -E "ABORT|FAILED|!!!|=== .*DONE" "$lg" 2>/dev/null | tail -1 | cut -c1-90)
+    echo "  $nm: $state${last:+  | last: $last}"
+  done
+  [ "$found" = 1 ] || echo "  (최근 24시간 안에 만들어진 연쇄 로그 없음)"
   pgrep -af 'exp[0-9]+[a-z]*.*\.sh' 2>/dev/null \
     | grep -vE 'pgrep|shell-snapshots|claude' | head -5 || true
   echo "--- 최근 결과 디렉토리 5개 (이름의 시각은 UTC-7, KST는 +16h)"
