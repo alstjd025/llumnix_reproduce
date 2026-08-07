@@ -1448,7 +1448,147 @@ tier), 우리 재구현은 실제 SLOs-Serve보다 강하다(한 스냅샷에서
 
 ---
 
-## 12. 관련 문서
+## 12. llm-d predicted-latency scheduling — 논문이 아니라 배포된 시스템이고, 우리와 같은 판정 조건을 갖는다
+
+**이 절은 2026-08-07에 추가됐다.** 앞의 일곱 편과 성격이 다르다 — 심사를 거친 논문이 아니라
+**Red Hat·Google이 llm-d v0.8에 넣어 배포한 기능**이고, 근거는 블로그 글과 소스다. 그런데
+**우리가 차별점으로 세워 온 판정 조건 하나를 이 시스템이 같은 형태로 갖고 있어서**, 심사에서
+"이미 있는 것 아닌가"로 나올 가능성이 이 일곱 편 중 어느 것보다 높다.
+
+읽은 것: `llm-d/llm-d-router`(= `llm-d-inference-scheduler`, 같은 저장소가 개명된 것,
+2026-08-06 커밋 `aec4e4f`), `llm-d/llm-d-latency-predictor`, `llm-d/llm-d`의 guides,
+`kubernetes-sigs/gateway-api-inference-extension` v1.3.1/v1.4.0/v1.5.0.
+
+### 12.1 무엇을 하는 시스템인가
+
+Gateway API Inference Extension의 **Endpoint Picker(EPP)** 안에서 도는 플러그인 묶음이다.
+요청이 도착하면 후보 인스턴스마다 **그 요청을 거기 넣었을 때의 TTFT와 TPOT를 예측**하고,
+요청이 헤더로 들고 온 예산에서 그 예측을 뺀 값(그들은 headroom이라고 부른다)으로 거르고
+정렬하고 거절한다. 예측은 XGBoost 회귀이고 라이브 트래픽으로 온라인 학습한다.
+
+요청 단위 예산은 HTTP 헤더로 온다 — `x-llm-d-slo-ttft-ms`, `x-llm-d-slo-tpot-ms`
+(`pkg/epp/metadata/consts.go:50,54`; 구 별칭 `x-slo-ttft-ms`/`x-slo-tpot-ms`도 받는다).
+둘 다 없으면 그 요청은 SLO 인식 경로에서 빠진다.
+
+플러그인 다섯이 순서대로 붙는다.
+
+| 플러그인 | 하는 일 |
+|---|---|
+| `prefix-cache-affinity-filter` | prefix 일치율이 문턱(엄격 0.99 / 느슨 0.80) 이상인 후보로 좁힌다. 1% 확률로 탐색하고, 그 선호가 TTFT를 5,000 ms 넘게 늘리면 적용하지 않는다 |
+| `slo-headroom-tier-filter` | headroom의 **부호**로 후보를 두 무리로 가른다. 99%는 양수 무리만, 1%는 음수 무리만 남긴다(과부하 인스턴스가 회복할 기회를 주기 위한 것이라고 주석이 적는다) |
+| `latency-scorer` | headroom을 정규화해 점수로 만든다. `headroomSelectionStrategy: least`(기본)가 **예산 경계에 가장 가까운 후보를 고르는 best-fit packing**이고, `most`가 여유가 가장 큰 쪽이다. 기본 가중은 TTFT 0.8 / TPOT 0.2 |
+| `latency-slo-admitter` | 어느 후보도 예산을 못 맞추면 요청을 **거절**한다 |
+| `weighted-random-picker` | 점수를 가중치로 삼아 뽑는다 |
+
+### 12.2 그들의 판정 조건이 우리 것과 같은 형태다 — 이 절의 핵심
+
+`pkg/epp/framework/plugins/requestcontrol/dataproducer/predictedlatency/prediction.go:161-173`:
+
+```go
+bufferedTPOT := predictedLatencyCtx.avgTPOTSLO * pl.config.SLOBufferFactor
+if podMinTPOTSLO > 0 {
+    bufferedTPOT = min(bufferedTPOT, podMinTPOTSLO*pl.config.SLOBufferFactor)
+}
+tpotOk   = pred.TPOT < bufferedTPOT
+headroom = bufferedTPOT - pred.TPOT
+```
+
+`podMinTPOTSLO`는 인스턴스별 우선순위 큐가 유지하는 값이고, 그 큐를 정의하는 파일
+(`running_request_tpot_slo_queue.go`) 머리말이 용도를 직접 적는다 — "tracks in-flight
+requests per endpoint, ordered by their TPOT SLO … to quickly determine the **tightest
+(minimum) TPOT SLO among all running requests on an endpoint**". 요청은 배치될 때
+(`PreRequest`) 큐에 들어가고 EOS나 TTL에서 빠진다.
+
+**즉 그들의 판정은 "새 요청의 예측 TPOT ≤ min(새 요청의 TPOT 예산, 그 인스턴스에 이미 사는
+요청 중 가장 빡빡한 TPOT 예산)"이다.** 이것은 §11.1이 SLOs-Serve Algorithm 2의
+`t_0 ← min_{req ∈ Reqs_Decoding} req.TPOT`과 우리 `gateAllowance`가 같은 값을 구한다고 적은
+것과 **같은 양을 세 번째로 지목한 것**이고, 형태는 우리 `meanAfter ≤ tightestAllowance`에
+가장 가깝다. **SLOs-Serve는 그 제약 아래에서 토큰 배분을 최적화하고, llm-d는 그 제약을
+후보를 고르는 판정에 그대로 쓴다 — 후자가 우리가 하는 일이다.**
+
+**따라서 "인스턴스 위 가장 빡빡한 예산을 판정에 넣는다"는 것만으로는 차별점이 되지 않는다.**
+§9.6의 "FluidServe가 존재해야 하는 최소 조건"을 이 시스템 앞에서 다시 세워야 한다.
+
+### 12.3 그래도 남는 차이 여섯 — 전부 소스에서 확인한 것
+
+| # | 차이 | 근거 |
+|---|---|---|
+| 1 | **그 조건이 기본 구성에서는 꺼져 있다.** `streamingMode`가 기본 `false`이고, false면 TPOT 쪽이 통째로 꺼져서(`TPOTValid=true, Headroom=0`) 판정에 TTFT만 남는다. 그 인스턴스에서 이미 처리 중인 요청의 예산을 함께 보는 부분은 `streamingMode: true`를 명시해야 살아난다 | `plugin.go:259-261`(DefaultConfig), `prediction.go:111-115` |
+| 2 | **비교하는 양이 다르다.** 그들은 **들어오는 요청의 예측 TPOT**를 가장 빡빡한 예산과 비교하고, 우리는 **새 요청을 넣은 뒤 그 인스턴스의 평균 step 시간**을 가장 빡빡한 허용치와 비교한다. 전자는 새 요청이 SLO를 지키는지를 묻고 후자는 기존 요청들이 잃는 것을 묻는다 | `prediction.go:171` 대 `fluidserve.go`의 `overIncumbents` |
+| 3 | **요청의 미래가 입력에 없다.** 스케줄링 시점 예측은 `generatedTokenCounts[i] = 1`로 부른다 — 그 요청이 앞으로 만들 토큰이 KV를 얼마나 더 차지할지는 특징에 들어가지 않는다. 디코드 도중 재예측은 있으나(Poisson 표본, 평균 1,000 토큰 간격) 그것은 배치가 끝난 뒤다. 우리는 `E[L−j \| L>j]`로 남은 토큰을 넣는다 | `prediction.go:71`, `decode_token_sampler.go` |
+| 4 | **메모리 제약이 없다.** KV 사용률은 예측기의 **입력 특징**이지 제약이 아니다. 우리 `newKv ≤ capMem`에 해당하는 판정 조건이 없다 | `latencypredictorclient/types.go`의 `PredictionRequest` |
+| 5 | **전체 시간(E2E) 예산을 표현할 수 없다.** 헤더가 TTFT와 TPOT 둘뿐이다. 우리 `swe` 클래스는 E2E 예산을 쓰므로, 기준선으로 세우려면 기대 출력 길이로 나눠 TPOT로 환산해야 하고 **그 환산은 우리가 그들 대신 해 주는 것이므로 논문에 명시해야 한다** | `consts.go:50,54` |
+| 6 | **보유(PEND)가 없다.** 도착 시점에 배치하거나 거절한다 | `admitter/latencyslo/plugin.go` |
+
+### 12.4 거절이 동작하는 조건이 배포 형태에 달려 있다
+
+`admitter/latencyslo/plugin.go:111`이 `if request.Objectives.Priority >= 0 { return nil }`
+이므로 **priority가 음수인 요청만 거절 대상**이다. priority는 `InferenceObjective` CRD에서
+오고(`requestcontrol/director.go:217-231`), CRD가 없으면 `defaultPriority`로 떨어지는데 그
+값은 **하드코딩된 0이고 플래그가 없다**(`director.go:140`).
+
+`llm-d`는 쿠버네티스 없이 도는 경로도 제공한다 — `guides/no-kubernetes-deployment`가
+EPP + Envoy + vLLM을 CRD·게이트웨이·helm 없이 세우고, 엔드포인트 목록을 디스크의 YAML
+파일에서 읽는다(file-discovery 플러그인). 그런데 그 모드의 한계를 EPP 자신이 기동 로그에
+적는다(`cmd/epp/runner/runner.go:1041-1044`): "Outside Kubernetes there is no
+InferenceObjective CRD, so per-request priority falls back to `Director.defaultPriority`".
+
+**즉 file-discovery 경로에서는 라우팅은 전부 동작하지만 거절이 한 건도 일어나지 않는다.**
+우리 주 지표가 offered/admitted 두 분모와 거절률이므로 이것이 판정에 직접 걸린다. 기준선으로
+세울 때 **어느 경로로 돌렸는지와 그래서 거절이 가능했는지를 같이 적지 않으면 "llm-d는
+admission을 하지 않는다"는 틀린 문장이 된다.**
+
+### 12.5 예측기가 무엇을 학습하는가
+
+`llm-d-latency-predictor`가 학습 서버와 예측 서버로 나뉘어 있고 둘 다 Python이다.
+EPP는 `TRAINING_SERVER_URL`·`PREDICTION_SERVER_URL` 두 환경변수로 찾는다
+(`latencypredictorclient/types.go:93,98`).
+
+- **표본은 요청 하나당 두 개다** — 첫 토큰이 나올 때 TTFT 표본 하나(`training.go:133`),
+  요청이 끝날 때 TPOT 표본 하나(`requestcontrol_hooks.go:203`). 토큰마다가 아니다.
+- **TPOT 라벨의 정의가 `(e2e − ttft) / (생성 토큰 수 − 1)`이다**(`requestcontrol_hooks.go:175`).
+  **이것은 §32의 정정 이후 우리가 쓰는 식과 같다.** 두 시스템이 같은 양을 같은 식으로 부른다.
+- 특징은 배치 **직전**에 그 인스턴스에서 읽은 상태다 — KV 사용률, 입력 토큰 수, 대기 큐 길이,
+  running 요청 수, prefix 일치율, in-flight 토큰 수(`types.go`의 `TrainingEntry`).
+- 학습은 `LATENCY_MODEL_TYPE=xgboost`, 목적함수가 **quantile**이고 `QUANTILE_ALPHA=0.9`이므로
+  평균이 아니라 **p90을 맞춘다**. 표본이 적을 때의 대체 모델은 Bayesian ridge다.
+- 표본은 (KV 사용률 10% 구간 × prefix 일치율 0.25 구간 × 큐 구간)으로 나눈 통에 **통마다
+  최대 500개**씩 슬라이딩 윈도로 쌓인다. 재학습 주기는 소스 기본값 1,800초인데 그들이 배포에
+  쓰는 ConfigMap은 **1초**, 최소 표본 수는 소스 1,000 / 배포 100, 첫 학습은 10개다
+  (`training/training_server.py:70-77`, `deploy/base/training/configmap.yaml`).
+
+**그래서 우리 환경에서 cold start는 문제가 되지 않을 가능성이 높다.** 60 req/s 8분 조건이면
+요청 약 28,800건이므로 표본이 약 57,600개 쌓이고, 최소 표본 100개는 시작 몇 초 안에 넘는다.
+다만 **조건마다 스케줄러를 재시작하는 우리 sweep 구조에서는 매 조건이 빈 모델에서 시작한다.**
+예측이 없는 동안 `latency-scorer`는 composite fallback(KV 여유·큐 길이·prefix 일치율의 가중합)
+으로 떨어지는데(`scorer/latency/plugin.go:332-376`) **그 상태는 사실상 부하 균등화와 같다.**
+EPP가 예측과 실측을 히스토그램으로 내므로(`inference_objective_request_ttft_seconds`와
+`..._predicted_ttft_seconds`) **언제부터 예측이 쓸 만해지는지는 측정할 수 있고, 측정하지 않은
+채로 이 arm의 점수를 인용해서는 안 된다.**
+
+### 12.6 그들이 보고한 수치 — 우리 워크로드의 값이 아니다
+
+블로그가 프로덕션 7일 trace에서 P50 end-to-end 43% 개선, TTFT P50 70% 개선, Vertex AI
+클러스터에서 TTFT·ITL 최대 40% 감소를 보고한다. **비교 대상은 load + prefix-aware 라우팅이고
+워크로드도 하드웨어도 우리 것이 아니다.** 인용할 때 그것을 같이 적고, 우리 결론의 근거로는
+쓰지 않는다.
+
+### 12.7 이 시스템이 우리 논문에 요구하는 것
+
+1. **§9.6의 최소 조건을 다시 쓴다.** 지금 세 조건은 엔진 레벨 스케줄러를 상대로 세운 것이고,
+   같은 계층에서 같은 판정 조건을 쓰는 시스템을 상대로는 다시 세워야 한다. 12.3의 차이 여섯 중
+   어느 것이 점수를 만드는지가 그 답이고, **지금은 측정이 없다.**
+2. **§8.5의 "우리 입력이 이 문헌에서 가장 약하다"는 문장을 유지할 수 있다.** 그들은 요청 단위
+   TTFT·TPOT 예측기를 쓰고 우리는 클래스 조건부 분포만 쓴다. 그리고 **요청 단위 예측이 얼마를
+   더 사는지의 상한을 재는 EXP-64가 이 시스템과의 비교로 바뀐다.**
+3. **동종 풀 가정을 같이 적는다.** 그들 문서가 "mixed GPU types, model variants, or serving
+   configurations in the same pool will produce inaccurate predictions"라고 명시한다. 우리
+   네 엔진은 동일 구성이므로 이 가정이 성립하고, **그러므로 이 가정을 우리에게 유리한 조건으로
+   쓸 수 없다.**
+
+---
+
+## 13. 관련 문서
 
 | | |
 |---|---|
