@@ -137,6 +137,23 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 "부하분산"이라고 풀어 쓰지 않는다 — 기준선 이름은 그 시스템이 스스로 부르는 이름이고,
 풀어 쓰면 같은 시스템의 두 변형이 서로 다른 이름 체계로 불린다.
 
+**보편적이지 않은 한자어를 쓰지 않는다 (2026-08-07 사용자 지시).** 앞의 "보편적으로 쓰이는
+용어" 항목이 **분야의 용어를 고르라**는 것이라면, 이것은 **일상적으로 통하지 않는 한자어를
+피하라**는 것이다. 읽는 사람이 "그게 무슨 뜻이냐"고 되물어야 하면 그 단어는 실패한 것이고,
+설명하는 사람이 뜻을 알고 있다는 것은 이유가 되지 않는다. **영어 원어를 그대로 쓰는 것이
+나으면 그렇게 쓴다**(routing, admission, preemption, queueing처럼).
+
+| 쓰지 말 것 | 대신 쓸 것 |
+|---|---|
+| **술어** (predicate) | **판정 조건**, 또는 "인스턴스 하나를 받아들일지 정하는 조건" |
+| 가부(可否) | "되는지 안 되는지" |
+| 귀속 | "어느 것에 속하는지 알아내는 것" |
+| 상주 중인 | "지금 그 인스턴스에서 처리되고 있는" |
+| 구속력을 갖는다 | "그 조건이 실제로 결정을 바꾼다" |
+
+**판단 기준: 그 단어를 이 분야를 처음 보는 대학원생이 사전 없이 읽을 수 있는가.** 없으면
+바꾸거나, 처음 쓸 때 그 자리에서 뜻을 적는다.
+
 **없는 용어를 만들지 않는다 (2026-08-06 사용자 지적).** 비유가 아니어도, **어느 문서에도
 정의가 없는 말을 지어내면** 읽는 사람이 되물어야 한다. 새 용어를 쓰려면 **그 자리에서
 정의를 적고**, 정의를 적기 어려우면 그 용어가 아직 정리가 안 된 것이므로 용어 대신 사실을
@@ -146,6 +163,7 @@ git log --oneline -5 && (cd Agent_applications && git log --oneline -5)
 |---|---|
 | "엔진 귀속률" | "요청이 어느 엔진에서 처리됐는지 알아낸 비율" — 그리고 **그 값을 어떻게 만드는지부터** 적는다(두 로그를 요청 번호로 맞춰 붙인다) |
 | "아크" | "주장을 쌓는 순서". 또는 그냥 **번호를 매겨 나열한다** |
+| "입도" (2026-08-07 사용자 지적) | **"무엇 하나마다 따로 값을 내는가"**를 그대로 적는다 — "우리는 클래스마다 분포 하나를 두고 그 클래스의 모든 요청에 같은 값을 쓰고, 저쪽은 요청 하나하나에 대해 따로 값을 낸다". 한자어 전문용어는 읽는 사람이 되물어야 하므로 **정의가 널리 공유된 영어 용어(routing, preemption, admission control)와 같은 취급을 받지 못한다** |
 
 | 쓰지 말 것 | 쓸 것 |
 |---|---|
@@ -197,8 +215,8 @@ go build -buildvcs=false \
 | [ms_dev/notes/polyserve-fidelity.md](ms_dev/notes/polyserve-fidelity.md) | **PolyServe 이식의 원문 대조 (정본).** "Isolation의 대표주자로 세울 수 있는가"에 대한 답 — **세울 수 있으나 이름을 "고정 fleet 위의 정적 클래스 파티션"으로 좁혀야 한다.** §2가 `--polyserve-tier-decode-tokens` 프로파일 오류를 다룬다 — **§48·§49와 같은 오류가 기준선 쪽에만 남아 있었던 것**이고 수치와 경위는 함정 A에 있다 |
 | [POLYSERVE_DESIGN_KO.md](POLYSERVE_DESIGN_KO.md) | PolyServe 이식 설계 (정본) |
 | [POLYSERVE_PROGRESS.md](POLYSERVE_PROGRESS.md) | PolyServe 구현 시간순 기록, 함정 |
-| [ms_dev/notes/related-works-review.md](ms_dev/notes/related-works-review.md) | **관련 연구 검토 (일곱 편)** — §0~§7 SLOs-Serve/PolyServe/AdaGen/Scorpio, §8~§10 JITServe/QoServe/Simple is Better. **§9가 "엔진 레벨 SLO 스케줄러가 있는데 왜 라우팅 계층이 필요한가"에 대한 답이고 논문 motivation의 정본**(순서 대 구성의 구분, 단순 조합 일곱 개의 해부, EXP-40·EXP-25 근거, 최소 조건 셋, §9.7의 미측정 ablation). §11은 SLOs-Serve 요약이고 **정본은 아래 별도 문서**. 원문은 `related_works/*.pdf` |
-| [ms_dev/notes/slosserve-comparison.md](ms_dev/notes/slosserve-comparison.md) | **SLOs-Serve 대 FluidServe (정본).** 차별점은 **두 시스템이 같은 min(인스턴스 위 가장 빡빡한 예산)을 지목하고 대응이 반대**라는 것 — 그들은 그 제약 아래에서 토큰 배분을 최적화하고 우리는 제약이 취해지는 집합을 바꾼다(게이트 50.0 → 100.0). **§6에 철회 기록**: "한 번에 평가 대 순차 질의"는 비교 축이 아니다(우리 술어도 인스턴스별 로컬이다). **§10이 baseline 계획** — 새 정책 없이 `affinity=off, pend=off` 조합, 설계서 §6.3의 미측정 칸도 함께 채운다 |
+| [ms_dev/notes/related-works-review.md](ms_dev/notes/related-works-review.md) | **관련 연구 검토 (논문 일곱 편 + 배포된 시스템 하나)** — §0~§7 SLOs-Serve/PolyServe/AdaGen/Scorpio, §8~§10 JITServe/QoServe/Simple is Better. **§9가 "엔진 레벨 SLO 스케줄러가 있는데 왜 라우팅 계층이 필요한가"에 대한 답이고 논문 motivation의 정본**(순서 대 구성의 구분, 단순 조합 일곱 개의 해부, EXP-40·EXP-25 근거, 최소 조건 셋, §9.7의 미측정 ablation). §11은 SLOs-Serve 요약이고 **정본은 아래 별도 문서**. **§12가 llm-d predicted-latency scheduling** — 논문이 아니라 llm-d v0.8에 배포된 기능이고, **인스턴스 위 가장 빡빡한 TPOT 예산을 판정 조건에 넣는 방식이 우리 것과 같은 형태다**(소스 확인). 남는 차이 여섯, 거절이 배포 형태에 달려 있다는 것, 예측기가 무엇을 학습하는지가 거기 있다. 원문은 `related_works/*.pdf` |
+| [ms_dev/notes/slosserve-comparison.md](ms_dev/notes/slosserve-comparison.md) | **SLOs-Serve 대 FluidServe (정본).** 차별점은 **두 시스템이 같은 min(인스턴스 위 가장 빡빡한 예산)을 지목하고 대응이 반대**라는 것 — 그들은 그 제약 아래에서 토큰 배분을 최적화하고 우리는 제약이 취해지는 집합을 바꾼다(게이트 50.0 → 100.0). **§6에 철회 기록**: "한 번에 평가 대 순차 질의"는 비교 축이 아니다(우리 판정 조건도 인스턴스마다 따로 계산한다). **§10이 baseline 계획** — 새 정책 없이 `affinity=off, pend=off` 조합, 설계서 §6.3의 미측정 칸도 함께 채운다 |
 | [ms_dev/notes/qoserve-niyama-fidelity.md](ms_dev/notes/qoserve-niyama-fidelity.md) | QoServe(Niyama) 이식의 원본 대조·수정·한계 |
 | [deploy/profiling/README.md](deploy/profiling/README.md) | 지연 프로파일 테이블의 출처·신뢰도 |
 | [ms_dev/notes/](ms_dev/notes/) | 클러스터 셋업/배포/장애 기록 |
