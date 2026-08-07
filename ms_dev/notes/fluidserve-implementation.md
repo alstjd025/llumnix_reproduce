@@ -6994,7 +6994,7 @@ EXP-59의 94.50과 맞는다.
 
 ## 64.5 그림
 
-`results/aggregate_analysis/motivation/qoserve_cross.png`
+`results/aggregate_analysis/exp62/qoserve_cross.png`
 (`analysis_scripts/request_level/qoserve_cross.py`). 패널 셋이다 — A가 엔진 스케줄러가
 바꾸는 양(짝지은 차이), B가 그것이 메워야 할 격차, C가 그럴 큐가 어디 있는가.
 

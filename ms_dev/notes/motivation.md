@@ -438,8 +438,8 @@ Llumnix SLO 1.25배). 다른 세션의 정적 조건에서도 같은 모양이�
    어느 엔진에서도 지킬 수 있는 집합이 거의 비어 있어 정렬로 건질 것이 없고 동적 청킹의
    처리량 대금만 나간다. 정적 파티션은 큐가 한 곳에 있어 그 안에서 고를 여지가 남는다.
 
-   **그림**: `results/aggregate_analysis/motivation/qoserve_cross.png`
-   (`qoserve_cross.py`) — 패널 A가 엔진 스케줄러가 바꾸는 양(짝지은 차이), B가 그것이
+   **그림**: `results/aggregate_analysis/exp62/`의 `qoserve_levels.png`(세 지표의 수준)와
+   `qoserve_cross.png`(짝지은 차이와 엔진 큐) — 패널 A가 엔진 스케줄러가 바꾸는 양(짝지은 차이), B가 그것이
    메워야 할 격차, C가 그럴 큐가 어디 있는가. ⚠ **A의 FluidServe 45 req/s 칸은 읽으면
    안 된다** — 그 arm이 그 도착률에서 양상태라 짝지은 차이가 +11.80과 −10.62다.
 
