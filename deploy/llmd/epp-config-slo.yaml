@@ -1,0 +1,72 @@
+# arm `llmd-slo` — llm-d predicted-latency scheduling with per-request budgets.
+#
+# This is upstream's own predicted-latency-slo.values.yaml plugin block
+# (llm-d/guides/predicted-latency-routing/router/predicted-latency-slo.values.yaml),
+# lifted out of the Helm values and applied directly as the EPP's config file.
+# Nothing in the plugin list or the profile order is ours.
+#
+# The dataLayer block is deliberately absent: under path B the EPP's defaults
+# supply pool-based discovery and the metrics source, which is what the upstream
+# values file relies on. Path A's config (epp-config-base.yaml) has to spell the
+# block out because it substitutes file-discovery for the pool.
+#
+# What each piece does, and why the arm needs all of it:
+#   - predicted-latency-producer with streamingMode: true is what makes the TPOT
+#     side live at all. With the default false the producer sets TPOTValid=true
+#     and Headroom=0 and the per-token budget stops being consulted
+#     (predictedlatency/prediction.go:111-115), which would leave TTFT as the
+#     only budget and make the arm something other than what it claims to be.
+#   - slo-headroom-tier-filter splits candidates into "predicted to meet the
+#     budget" and "predicted to miss it", keeping the first tier 99% of the time.
+#   - latency-scorer's default "least" strategy then packs onto the endpoint
+#     closest to its budget rather than the one with the most room.
+#   - latency-slo-admitter rejects, but only requests whose priority is negative,
+#     which is why deploy/llmd/pathb.yaml exists.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llmd-epp-config
+  namespace: llmd
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+    llmd.arm: slo
+data:
+  config.yaml: |
+    apiVersion: llm-d.ai/v1alpha1
+    kind: EndpointPickerConfig
+    plugins:
+      - type: approx-prefix-cache-producer
+        parameters:
+          # Upstream uses 262144 for a 256K-context agentic case. Our longest
+          # prompts are the swe transcripts at roughly 5.6k input tokens and the
+          # engine's max-model-len is 40960, so the chart default range is more
+          # than enough and a smaller value costs less CPU per request.
+          maxPrefixTokensToMatch: 65536
+      - type: predicted-latency-producer
+        parameters:
+          streamingMode: true
+      - type: prefix-cache-affinity-filter
+        name: strict-affinity-filter
+        parameters:
+          affinityThreshold: 0.99
+          ttftSource: latencyPredictor
+          maxTTFTPenaltyMs: 5000
+      - type: prefix-cache-affinity-filter
+        name: loose-affinity-filter
+        parameters:
+          affinityThreshold: 0.8
+          ttftSource: latencyPredictor
+          maxTTFTPenaltyMs: 5000
+      - type: latency-scorer
+      - type: weighted-random-picker
+      - type: slo-headroom-tier-filter
+      - type: latency-slo-admitter
+    schedulingProfiles:
+      - name: default
+        plugins:
+          - pluginRef: predicted-latency-producer
+          - pluginRef: strict-affinity-filter
+          - pluginRef: slo-headroom-tier-filter
+          - pluginRef: loose-affinity-filter
+          - pluginRef: latency-scorer
+          - pluginRef: weighted-random-picker

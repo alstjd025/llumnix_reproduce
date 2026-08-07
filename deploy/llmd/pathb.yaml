@@ -1,0 +1,150 @@
+# Path B — InferencePool discovery, which is what makes rejection possible.
+#
+# Path A (file-discovery) routes correctly but cannot reject anything: without a
+# controller manager the InferenceObjective reconciler never starts, so every
+# request's priority falls back to the hard-coded 0 and llm-d's
+# latency-slo-admitter, which only rejects a negative priority, never fires.
+# The EPP says so itself at start-up (cmd/epp/runner/runner.go:1041).
+#
+# Two things follow from InferencePool's own rules and shape this file:
+#   1. The pool selects pods by label WITHIN ITS OWN NAMESPACE -- cross-namespace
+#      selection is not supported. Our engine pod lives in llumnix, so the
+#      InferencePool object has to live there too. It is an inert object: no
+#      controller other than our EPP reads it, and nothing in the Llumnix stack
+#      knows the API group exists.
+#   2. targetPorts takes up to 8 entries as of GIE v1.4.0 and every entry is a
+#      distinct endpoint addressed as podIP:port. That is what lets our four
+#      vLLM servers inside one pod appear as four endpoints without splitting
+#      the engine deployment.
+#
+# The EPP runs in the llmd namespace and reads a pool in llumnix, so its
+# permissions are cluster-scoped rather than the namespace Role the upstream
+# chart uses.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: llmd-epp
+  namespace: llmd
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: llmd-epp
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+rules:
+  # Endpoint discovery: the pool selects pods, and the EPP scrapes /metrics
+  # from each one.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["inference.networking.k8s.io"]
+    resources: ["inferencepools/status"]
+    verbs: ["get", "update", "patch"]
+  # Per-request priority, which is the whole reason for path B.
+  - apiGroups: ["llm-d.ai"]
+    resources: ["inferenceobjectives", "inferencemodelrewrites"]
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["llm-d.ai"]
+    resources: ["inferenceobjectives/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: llmd-epp
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+subjects:
+  - kind: ServiceAccount
+    name: llmd-epp
+    namespace: llmd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: llmd-epp
+---
+apiVersion: inference.networking.k8s.io/v1
+kind: InferencePool
+metadata:
+  name: llmd-engines
+  # In llumnix because the selector cannot cross namespaces.
+  namespace: llumnix
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+spec:
+  # neutral-0 carries llumnix.io/infer-type=neutral. The pod is the unit; the
+  # four ports below turn it into four endpoints.
+  selector:
+    matchLabels:
+      llumnix.io/infer-type: neutral
+  targetPorts:
+    - number: 8000
+    - number: 8001
+    - number: 8002
+    - number: 8003
+  # endpointPickerRef has no namespace field in v1, so the Service it names has
+  # to be in the pool's namespace. Nothing in our deployment reads this field --
+  # a gateway controller would use it to find the EPP, and our Envoy is
+  # configured to reach it on localhost -- but the field is required, so the
+  # alias below makes the reference resolve to the real thing instead of
+  # dangling.
+  endpointPickerRef:
+    name: llmd-router-epp
+    port:
+      number: 9002
+---
+# DNS alias in llumnix for the EPP Service that lives in llmd. ExternalName
+# creates no endpoints and selects no pods; it exists so endpointPickerRef above
+# names something real.
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmd-router-epp
+  namespace: llumnix
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+spec:
+  type: ExternalName
+  externalName: llmd-router-epp.llmd.svc.cluster.local
+  ports:
+    - { name: grpc, protocol: TCP, port: 9002 }
+---
+# The EPP's real ext_proc Service, in the namespace where the pod runs.
+apiVersion: v1
+kind: Service
+metadata:
+  name: llmd-router-epp
+  namespace: llmd
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+spec:
+  type: ClusterIP
+  selector: { app: llmd-router }
+  ports:
+    - { name: grpc, protocol: TCP, port: 9002, targetPort: 9002 }
+---
+# Every request carries x-llm-d-inference-objective: sheddable, so every class
+# is eligible for rejection. Our own admission can reject any request, and this
+# matches that. A negative priority is what latency-slo-admitter requires
+# (admitter/latencyslo/plugin.go:111); leaving requests at the default 0 would
+# report a rejection rate of zero that is a property of this file rather than of
+# the policy, which is why the choice is written into the experiment record.
+apiVersion: llm-d.ai/v1alpha2
+kind: InferenceObjective
+metadata:
+  name: sheddable
+  namespace: llumnix
+  labels:
+    app.kubernetes.io/part-of: llmd-baseline
+spec:
+  priority: -1
+  poolRef:
+    group: inference.networking.k8s.io
+    name: llmd-engines

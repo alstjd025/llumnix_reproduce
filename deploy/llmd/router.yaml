@@ -174,20 +174,31 @@ spec:
         app: llmd-router
         app.kubernetes.io/part-of: llmd-baseline
     spec:
+      # Path B: the EPP reads an InferencePool in the llumnix namespace, so it
+      # needs the cluster-scoped permissions in deploy/llmd/pathb.yaml.
+      serviceAccountName: llmd-epp
       containers:
         - name: epp
           image: ghcr.io/llm-d/llm-d-router-endpoint-picker:main
           imagePullPolicy: IfNotPresent
           args:
             - --config-file=/etc/epp/config.yaml
-            # In file-discovery mode these two are labels for metrics and log
-            # lines only, not Kubernetes references (cmd/epp/runner/runner.go).
-            - --pool-name=file-discovery
-            - --pool-namespace=llmd
+            # Path B. These name a real InferencePool now, unlike path A where
+            # they were only labels for metrics and log lines. Switching back to
+            # path A means setting them to file-discovery/llmd, applying
+            # epp-config-base.yaml, and restoring the endpoints mount below.
+            - --pool-name=llmd-engines
+            - --pool-namespace=llumnix
             - --grpc-port=9002
             - --grpc-health-port=9003
             - --metrics-port=9090
             - --secure-serving=false
+            # Explicit because the default is true and it bit us: with auth on,
+            # /metrics answers 401 to a plain scrape, and llumnix_metrics.py
+            # scrapes with a plain requests.get. Leaving it at the default would
+            # also make the behaviour depend on which ServiceAccount happens to
+            # be attached, which is not something a measurement should turn on.
+            - --metrics-endpoint-auth=false
             - --v=2
           ports:
             - { containerPort: 9002, name: grpc }
@@ -206,6 +217,10 @@ spec:
             limits:   { cpu: "8000m", memory: "8Gi" }
           volumeMounts:
             - { name: epp-config, mountPath: /etc/epp/config.yaml, subPath: config.yaml }
+            # Path A only. Harmless under path B -- the file is present and the
+            # file-discovery plugin that would read it is not loaded -- and
+            # keeping it mounted means switching paths touches only the args and
+            # the config ConfigMap.
             - { name: endpoints,  mountPath: /etc/epp/endpoints.yaml, subPath: endpoints.yaml }
         - name: envoy
           image: docker.io/envoyproxy/envoy:distroless-v1.33.2

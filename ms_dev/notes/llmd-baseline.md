@@ -120,38 +120,33 @@ CPU만 쓴다. 매니페스트는 `llm-d-latency-predictor/deploy/base/`의 것�
 **엔진은 건드리지 않는다.** neutral-0도, Llumnix 스케줄러·게이트웨이도 그대로 둔다. llm-d는
 같은 엔진 넷을 옆에서 가리킬 뿐이다. 그래야 arm 사이에 엔진이 같다는 것이 보장된다.
 
-### 3.2 EPP 플러그인 구성 셋
+### 3.2 EPP 플러그인 구성 — `llmd-slo` 하나만 돌린다 (2026-08-07 사용자 결정)
 
-`EndpointPickerConfig` 파일 하나가 arm 하나다. ConfigMap 셋으로 두고 EPP를 재시작하며 바꾼다.
+**arm은 `llmd-slo` 하나다.** 처음 계획은 `llmd-base`(예측 없음) → `llmd-pred`(예측만) →
+`llmd-slo`(예측 + 예산 + 거절) 셋이었는데, 사용자 결정으로 마지막 하나만 돌린다.
 
-| arm | 플러그인 | 무엇을 재나 |
+⚠ **그 대신 포기하는 것을 적어 둔다**: 셋을 다 돌리면 "예측을 갖는 것"과 "그 예측을 예산에
+대고 쓰는 것" 중 무엇이 값을 만드는지가 갈렸다. 하나만 돌리면 **llm-d 안에서의 그 분해는 못
+한다.** 남는 것은 llm-d 전체 대 우리 전체의 비교이고, 그것이 이 실험의 주 질문이다.
+`llmd-base` 구성(`deploy/llmd/epp-config-base.yaml`)은 경로 A 배관 확인에 쓰였고 파일로 남아
+있으므로, 나중에 그 분해가 필요해지면 그대로 돌릴 수 있다.
+
+| arm | 구성 | 파일 |
 |---|---|---|
-| `llmd-base` | queue-scorer + kv-cache-utilization-scorer + prefix-cache-scorer + no-hit-lru-scorer (llm-d 기본 구성) | 예측을 안 쓰는 llm-d. 사실상 부하 균등화 + prefix 선호 |
-| `llmd-pred` | predicted-latency-producer + prefix-cache-affinity-filter + latency-scorer + weighted-random-picker (**SLO 헤더 없음**) | 예측만 켠 것 |
-| `llmd-slo` | 위 + slo-headroom-tier-filter + latency-slo-admitter, `streamingMode: true` (**SLO 헤더 있음**) | 예측 + 예산 + 거절. `predicted-latency-slo.values.yaml`의 구성 그대로 |
+| `fluidserve` | 배포 바이너리 `c2d970ca`, EXP-27 이후와 같은 플래그 | — |
+| **`llmd-slo`** | 상류 `predicted-latency-slo.values.yaml`의 플러그인 묶음 그대로. `streamingMode: true` | `deploy/llmd/epp-config-slo.yaml` |
+| (`llmd-base`) | 예측 없는 llm-d 기본 구성. **이번에는 안 돌린다** | `deploy/llmd/epp-config-base.yaml` |
 
-`streamingMode: true`가 있어야 토큰당 시간 쪽 판정이 살아난다(기본값은 false이고, false면
-그 부분이 통째로 꺼진다). 우리 클라이언트는 이미 전부 스트리밍이므로 조건은 만족한다.
+`streamingMode: true`가 있어야 토큰당 시간 쪽 판정이 살아난다(기본값 false면 그 부분이 통째로
+꺼진다). 우리 클라이언트는 전부 스트리밍이므로 조건은 만족한다.
 
-#### `llmd-pred`와 `llmd-slo`의 차이 — 점수의 방향이 뒤집힌다
+#### 왜 `llmd-slo`가 우리와 방향이 같은가
 
-둘 다 같은 예측값을 쓰는데 **부하를 퍼뜨리느냐 모으느냐가 반대**가 된다. 이유는
-`latency-scorer`가 headroom = 예산 − 예측으로 점수를 만들기 때문이다
-(`scorer/latency/plugin.go:181-247`).
-
-| | `llmd-pred` (SLO 헤더 없음) | `llmd-slo` (SLO 헤더 있음) |
-|---|---|---|
-| 예산 | 없음 → headroom = 0 − 예측 = **전부 음수** | 클래스별 예산 → headroom에 부호가 생긴다 |
-| 후보 가르기 | 전부 음수라 tier 필터가 할 일이 없다 | 지킬 수 있는 무리 / 없는 무리로 갈린다 |
-| 점수 | 음수 구간에서는 `least`가 강제되고, 그것은 **위반 폭이 가장 작은 것** = **예측 지연이 가장 짧은 것** → 부하를 **퍼뜨린다** | 양수 구간에서 `least`는 **예산 경계에 가장 가까운 것** → 부하를 예산 한계까지 **모은다** |
-| 거절 | 없다 | `latency-slo-admitter` |
-
-**그래서 `llmd-pred`는 "학습한 지연 추정치로 하는 부하 균등화"이고 `llmd-slo`는 "예산에
-맞춘 best-fit packing"이다.** 우리 설계와 방향이 같은 것은 뒤쪽이고, 앞쪽은 Llumnix
-부하 균등화의 더 똑똑한 판이다. 둘을 같이 두는 이유가 여기 있다 — **예측을 갖는 것과 그
-예측을 예산에 대고 쓰는 것이 다른 일이라는 것을 이 두 arm의 차이가 직접 잰다.**
-
----
+`latency-scorer`는 headroom = 예산 − 예측으로 점수를 만든다. **예산 헤더가 있으면** 양수
+구간에서 `least`가 **예산 경계에 가장 가까운 곳**을 고른다 → 부하를 예산 한계까지 모은다.
+예산 헤더가 없으면 headroom이 전부 음수가 되고 `least`가 **예측 지연이 가장 짧은 곳**이 되어
+부하를 퍼뜨린다. 근거는 `scorer/latency/plugin.go:181-247`. **그래서 `llmd-slo`가 best-fit
+packing이고 우리 `room` 정렬과 방향이 같다.**
 
 ## 4. 우리 쪽에서 고쳐야 하는 것
 
@@ -377,9 +372,9 @@ predicted-latency 플러그인이 안 실려서다. `llmd-pred`·`llmd-slo`에�
 | **1** | 예측기 둘을 Deployment로 띄운다 | ✅ **2026-08-07 통과.** `deploy/llmd/predictor.yaml`. 학습 1 + 예측 3 파드 전부 Ready. **모델 동기화 링크가 실제로 돈다** — 예측 서버들이 `GET /model/{ttft,tpot}/info` 200을 받는다. 학습 루프가 1초마다 돌며 `Skipping training: only 0 samples (< 10)`을 찍는다(= 설정이 먹었고 첫 학습 문턱이 10개) |
 | **2** | 경로 A(file-discovery)로 EPP + Envoy를 띄우고 `llmd-base` 구성으로 `curl` 한 번 | ✅ **2026-08-07 통과.** `deploy/llmd/{router,epp-config-base}.yaml`. 응답 200, 접근 로그에 `10.42.0.150:8001`. **file-discovery와 core-metrics-extractor 조합이 실제로 동작한다** — §10의 1번이 닫혔다 |
 | **3** | 요청 → 엔진 연결 | ✅ **2026-08-07 통과, 100%.** 12건 전부 조인, 엔진 넷에 3/4/3/3으로 분산. **클라이언트 변경이 필요 없다** — §4.1 참조 |
-| **4** | `llmd-pred`, `llmd-slo` 구성으로 각각 smoke | EPP 로그에 예측값이 찍히고, 예측 대 실측 히스토그램이 채워진다 |
-| **5** | 경로 B로 옮긴다 (GIE CRD 설치, InferencePool + InferenceObjective) | `llmd-slo`에서 **거절이 0이 아니다.** 0이면 표시가 안 먹은 것이므로 멈춘다 |
-| **6** | 본 실험 | 아래 판정 규칙 |
+| **4** | `llmd-slo` 구성이 예측을 실제로 내는가 | ✅ **2026-08-07 통과.** `inference_objective_request_predicted_{ttft,tpot}_seconds_count` 와 실측 `..._{ttft,tpot}_seconds_count` 가 함께 찬다. 학습 서버가 요청당 표본 2개를 받는다 |
+| **5** | 경로 B로 옮긴다 (GIE CRD 설치, InferencePool + InferenceObjective) | ⚠ **절반 통과 (2026-08-07).** 파드 하나의 네 포트가 `neutral-0-rank-0`~`3` 네 엔드포인트로 잡히고, **`inference_objective_request_total{priority="-1"}` 로 sheddable 표시가 실제로 도달한다** = 거절의 전제 조건 성립. **실제 거절이 나는지는 부하가 있어야 보이므로 smoke에서 확인한다** |
+| **6** | smoke 한 rate → 본 sweep | §7.1 그리고 §7의 판정 규칙 |
 
 **단계 3이 가장 중요한 점검이다.** 여기서 요청 → 엔진 연결이 100%가 아니면 3·4번 질문에
 답할 수 없고, 그러면 이 실험의 고유한 값이 없어진다.
@@ -389,35 +384,64 @@ predicted-latency 플러그인이 안 실려서다. `llmd-pred`·`llmd-slo`에�
 ## 7. 본 실험 설계 — 실행 전에 판정 규칙을 적는다
 
 ```
-정적 sweep : 35 / 45 / 55 / 70 req/s, 8분, 반복 2회
-arm        : fluidserve / llmd-base / llmd-pred / llmd-slo
-조건 수    : 4 arm × 4 rate × 2 반복 = 32조건
-소요       : 약 6시간
-믹스       : m1 (mix_short_m1_balanced.json) — 지금까지의 정적 조건과 같은 것
+정적 sweep : 15 / 25 / 35 / 45 / 50 / 55 / 60 / 70 req/s  (= EXP-53과 같은 여덟 개)
+믹스       : m1 (mix_short_m1_balanced.json) — EXP-53과 같다
+arm        : llmd-slo
+반복       : 2회
+조건 수    : 8 rate × 2 반복 = 16
+소요       : 조건당 약 15분(§5.1) → 약 4시간
 ```
 
-기존 arm(Llumnix, Llumnix SLO, PolyServe)은 이미 EXP-53·EXP-57에 있으므로 다시 안 돌린다.
-**단 세션이 다르므로, 인용할 때 반복 편차를 밝히고 비교한다**(CLAUDE.md의 반복 규칙).
+**rate를 EXP-53과 같게 맞추는 이유는 그 표에 이미 FluidServe·PolyServe·Llumnix SLO·Llumnix가
+있기 때문이다.** 그래서 이 실험은 그 표에 열을 하나 더하는 형태가 된다.
+
+⚠ **그러면 절차가 같아야 한다.** §5.1의 예열 주행은 예측기를 위해 필요한데 **EXP-53에는 그런
+구간이 없었다.** 예열 주행이 엔진의 prefix cache까지 데우므로, 그대로 두면 llm-d만 더 데워진
+엔진에서 측정된다. → **예열 주행이 끝나면 엔진을 다시 재시작한다.** 예측기 파드는 안 건드리므로
+모델은 살아남고, 엔진은 EXP-53과 같은 상태(차가운 캐시 + 러너의 60초 예열)에서 측정을 시작한다.
+
+```
+① 엔진 재시작 + 예측기 재시작
+② 예열 주행 3분 (같은 도착률·믹스) — 예측기가 학습한다. 결과는 버린다
+③ 엔진만 다시 재시작 ← EXP-53과 같은 엔진 상태를 만든다. 예측기 모델은 유지된다
+④ endpoints/파드 IP 갱신 (llmd_endpoints.py) — 경로 B에서는 InferencePool이 알아서 따라간다
+⑤ 러너의 기존 60초 예열 + 본 측정 8분  ← EXP-53과 같은 절차
+```
+
+**이 순서가 §5.2의 걱정을 없앤다.** 예열 주행이 만드는 것은 예측기 모델뿐이고 엔진 상태는
+EXP-53과 같아진다. 대가는 조건마다 엔진 재시작이 한 번 더 드는 것이다.
 
 **판정 규칙 (결과를 보기 전에 적는다):**
 
 | 관측 | 결론 |
 |---|---|
-| `llmd-slo`가 `fluidserve`보다 반복 편차보다 크게 낮다 | 예측을 학습하는 것이 우리 방식보다 낫지 않다. §12.3의 차이 여섯 중 어느 것이 원인인지가 다음 질문 |
-| `llmd-slo` ≈ `fluidserve` (편차 안) | **우리 기여 주장을 좁혀야 한다.** 점수가 같다면 남는 것은 입력의 세기(그들은 요청 단위 학습, 우리는 클래스 분포)와 배포 비용이다 |
-| `llmd-slo` > `fluidserve` | 요청 단위 예측이 값을 갖는다. EXP-64(길이 오라클)가 그 상한을 재는 실험이 되고, 우리 설계에 예측기를 붙이는 것이 다음 방향 |
-| `llmd-base` ≈ `llmd-pred` | 예측 자체는 값이 없고 예산을 보는 것이 값이다 |
-| `llmd-pred` ≈ `llmd-slo` | 반대로 예산·거절이 값이 없다 |
-| 세 llm-d arm의 클래스당 유효 인스턴스 수가 4.0 근처 | prefix 선호로는 클래스가 안 갈린다 → **분리가 클래스를 보는 데서만 나온다는 우리 주장이 강해진다** |
-| 세 llm-d arm의 클래스당 유효 인스턴스 수가 우리와 비슷 | **prefix 선호만으로 같은 분리가 나온다** → 우리 주장을 "클래스를 봐야 한다"에서 "무엇이든 요청을 갈라 놓는 신호가 있어야 한다"로 넓혀야 한다 |
+| `llmd-slo`가 EXP-53의 FluidServe보다 반복 간 편차보다 크게 낮다 | 학습한 요청 단위 예측이 우리 방식보다 낫지 않다. **어느 차이가 원인인지는 이 실험이 답하지 않는다**(related-works-review §12.3의 여섯) |
+| `llmd-slo` ≈ FluidServe (편차 안) | **우리 기여 주장을 좁혀야 한다.** 남는 것은 입력의 세기와 배포 비용이다 |
+| `llmd-slo` > FluidServe | 요청 단위 예측이 값을 갖는다. EXP-64가 그 상한을 재는 실험이 되고, 우리 설계에 예측기를 붙이는 것이 다음 방향 |
+| `llmd-slo`가 Llumnix SLO보다 높고 PolyServe보다 높다 | 예산 인식 라우팅이 이 워크로드에서 값을 갖는다는 것을 우리 것 말고도 하나 더 확인한 셈 |
+| llm-d의 클래스당 유효 인스턴스 수 ≈ 4.0 | prefix 선호로는 클래스가 안 갈린다 → 우리 주장이 강해진다 |
+| llm-d의 클래스당 유효 인스턴스 수 ≈ 우리 값 | **prefix 선호만으로 같은 분리가 나온다** → 주장을 "클래스를 봐야 한다"에서 "요청을 갈라 놓는 신호가 하나 있어야 한다"로 넓혀야 한다 |
 
-⚠ **45 req/s는 반복 사이의 편차가 10점을 넘는 구간이므로 그 하나로 판정하지 않는다.**
+⚠ **45 req/s는 반복 간 편차가 10점을 넘는 구간이므로 그 하나로 판정하지 않는다.**
 55와 70 req/s가 판정의 기준이다.
 
-⚠ **`llmd-slo`의 점수를 인용하기 전에 5장의 예측 오차 지표를 본다.** 예측이 수렴하지 않은
-조건이 섞여 있으면 그 조건은 predicted-latency를 잰 것이 아니다.
+⚠ **점수를 인용하기 전에 §5.4의 예측 오차를 본다.**
 
----
+⚠ **EXP-53과 세션이 다르다.** 총계 지표는 세션을 잘 건너가지만 엔진별 사건은 안 건너간다
+(CLAUDE.md의 반복 규칙). 인용할 때 밝힌다.
+
+### 7.1 그 전에 smoke — 한 rate
+
+**본 sweep 전에 45 req/s 한 조건을 돌린다.** 확인할 것:
+
+1. `metrics.csv`가 정상이고 거절이 `is_rejected`로 집계되는가(오류가 아니라)
+2. 요청 → 엔진 연결이 100%인가
+3. 예측 오차 히스토그램이 채워지고 예열 3분이 충분한가
+4. 엔진 넷에 다 분산되는가
+5. 조건당 소요가 계산대로인가(약 15분)
+
+**거절이 0건이면 45 req/s가 거절이 나올 부하가 아닌 것일 수 있다** — 그 경우 60이나 70에서
+한 번 더 본다. 거절이 어느 부하에서도 0이면 그때 멈추고 원인을 찾는다.
 
 ## 8. 파일을 어디에 두는가
 
