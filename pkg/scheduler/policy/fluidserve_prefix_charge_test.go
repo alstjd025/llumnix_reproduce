@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+// first drops the uncalibrated half of the pair so the existing assertions,
+// which are about what the DECISION sees, read unchanged.
+func first(charged, _ float64) float64 { return charged }
+
 func chargeReq(prompt int, hashes []uint64) *fluidserveRequest {
 	return &fluidserveRequest{id: "r", tier: 50, promptTokens: prompt, promptHashes: hashes}
 }
@@ -16,7 +20,7 @@ func TestPrefillChargeFallsBackToTheFleetFraction(t *testing.T) {
 	p := fsPolicy(t, "50:decode", nil)
 	p.capacity.prefillFraction = 0.2
 
-	if got := p.prefillChargeFor(chargeReq(1000, nil), "A"); math.Abs(got-200) > 1e-9 {
+	if got := first(p.prefillChargeFor(chargeReq(1000, nil), "A")); math.Abs(got-200) > 1e-9 {
 		t.Fatalf("with the flag off the charge should be prompt x fraction = 200, got %.3f", got)
 	}
 
@@ -24,13 +28,13 @@ func TestPrefillChargeFallsBackToTheFleetFraction(t *testing.T) {
 	p.cfg.prefixAware = true
 	p.cfg.prefixCalibrate = true
 	p.prefix = newPrefixIndex(4, 100)
-	if got := p.prefillChargeFor(chargeReq(1000, nil), "A"); math.Abs(got-200) > 1e-9 {
+	if got := first(p.prefillChargeFor(chargeReq(1000, nil), "A")); math.Abs(got-200) > 1e-9 {
 		t.Fatalf("a request with no hashes should be charged 200, got %.3f", got)
 	}
 
 	// Flag on, hashes present, but nothing was ever dispatched anywhere.
 	h := hashPrompt(seq(0, 40), 4)
-	if got := p.prefillChargeFor(chargeReq(1000, h), "A"); math.Abs(got-200) > 1e-9 {
+	if got := first(p.prefillChargeFor(chargeReq(1000, h), "A")); math.Abs(got-200) > 1e-9 {
 		t.Fatalf("an empty index should charge the whole prompt, got %.3f", got)
 	}
 }
@@ -49,8 +53,8 @@ func TestPrefillChargeIsPerInstance(t *testing.T) {
 	h := hashPrompt(seq(0, 40), 4) // 10 blocks, 40 tokens of a 1000-token prompt
 	p.prefix.note(h, "A")
 
-	onA := p.prefillChargeFor(chargeReq(1000, h), "A")
-	onB := p.prefillChargeFor(chargeReq(1000, h), "B")
+	onA := first(p.prefillChargeFor(chargeReq(1000, h), "A"))
+	onB := first(p.prefillChargeFor(chargeReq(1000, h), "B"))
 	if math.Abs(onA-960) > 1e-9 {
 		t.Fatalf("A holds 40 tokens of the prompt, so the charge is 960, got %.3f", onA)
 	}
@@ -75,7 +79,7 @@ func TestPrefillChargeNeverGoesNegative(t *testing.T) {
 	p.prefix.note(h, "A")
 
 	// The recorded prompt length is smaller than what the hashes cover.
-	if got := p.prefillChargeFor(chargeReq(100, h), "A"); got != 0 {
+	if got := first(p.prefillChargeFor(chargeReq(100, h), "A")); got != 0 {
 		t.Fatalf("the charge must clamp at zero, got %.3f", got)
 	}
 }
@@ -92,7 +96,7 @@ func TestPrefillChargeAppliesTheCalibration(t *testing.T) {
 
 	h := hashPrompt(seq(0, 40), 4)
 	p.prefix.note(h, "A")
-	got := p.prefillChargeFor(chargeReq(1000, h), "A")
+	got := first(p.prefillChargeFor(chargeReq(1000, h), "A"))
 	if math.Abs(got-960*1.5) > 1e-6 {
 		t.Fatalf("want (1000-40) x 1.5 = 1440, got %.3f", got)
 	}
@@ -183,5 +187,48 @@ func TestEvaluateIsCheaperOnTheInstanceHoldingThePrefix(t *testing.T) {
 	if !(ca.prefillMs < cb.prefillMs) {
 		t.Fatalf("the cached instance must predict a shorter time to first token: "+
 			"%.1f vs %.1f", ca.prefillMs, cb.prefillMs)
+	}
+}
+
+// The calibration has to converge to the residual it is correcting, not to its
+// square root. Dividing the engine's computed tokens by the ALREADY CALIBRATED
+// charge makes the factor an input to its own measurement: at equilibrium
+// kappa = computed / (raw * kappa), so kappa^2 = computed/raw. This simulates
+// both loops directly rather than arguing about them, because the first
+// implementation had the wrong one and it looked plausible.
+func TestCalibrationConvergesToTheResidual(t *testing.T) {
+	const raw, computed = 1000.0, 400.0 // true residual 0.4
+
+	// notePrefill's numerator is derived from engine timings, which a unit test
+	// cannot supply meaningfully, so the two loops are driven through the same
+	// fixed point directly. Everything except the denominator is identical, and
+	// the denominator is the whole question.
+	sim := func(divideByCalibrated bool) float64 {
+		k := 1.0
+		for i := 0; i < 20000; i++ {
+			den := raw
+			if divideByCalibrated {
+				den = raw * k
+			}
+			ratio := computed / den
+			if ratio > fsPrefillResidualMax {
+				ratio = fsPrefillResidualMax
+			}
+			if ratio < fsPrefillResidualMin {
+				ratio = fsPrefillResidualMin
+			}
+			k += 0.01 * (ratio - k)
+		}
+		return k
+	}
+	fixed, broken := sim(false), sim(true)
+	if math.Abs(fixed-0.4) > 1e-3 {
+		t.Fatalf("dividing by the uncalibrated charge should settle at the residual 0.400, got %.4f", fixed)
+	}
+	if math.Abs(broken-0.632) > 2e-3 { // sqrt(0.4) = 0.6325
+		t.Fatalf("dividing by the calibrated charge settles at sqrt(residual) = 0.632, got %.4f", broken)
+	}
+	if !(broken > fixed) {
+		t.Fatal("the broken loop must overcharge, which is why it was safe but wasteful")
 	}
 }

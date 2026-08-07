@@ -1169,6 +1169,9 @@ type candidate struct {
 	// same number the decision was made from, which is what the calibration
 	// divides by.
 	prefillCharge float64
+	// prefillRaw is the same charge BEFORE the calibration multiplies it. The
+	// calibration divides by this, not by prefillCharge; see prefillChargeFor.
+	prefillRaw float64
 
 	// snapFeasible is what the SAME test would have returned had the instance
 	// been judged on the KV it holds right now instead of on the projection.
@@ -1391,21 +1394,32 @@ func anyInstance(instances map[string]*instanceViewScheduling) *instanceViewSche
 // With no hashes -- no token ids from the gateway, or a prompt shorter than one
 // block -- the hit is zero and the two regimes coincide, so a request the index
 // cannot speak about is charged exactly what it was charged before.
+// The two returns are the SAME quantity before and after the calibration, and
+// they are both needed because they go to different places. `charged` is what
+// the decision is made from. `raw` is what the calibration must divide by, and
+// dividing by `charged` instead makes the factor feed back on itself: with
+// kappa applied to the charge and then measured as computed/charge, the
+// equilibrium is kappa^2 = computed/raw, so kappa settles at the SQUARE ROOT of
+// the residual it is meant to be. That was the first implementation, and it
+// showed up in EXP-67 as kappa sitting at 0.55 to 0.8 where the design said
+// 1.0 +/- 0.25. The direction is safe -- sqrt(r) > r for r < 1, so it charges
+// more than it should rather than less -- but it leaves the whole gap between
+// r and sqrt(r) unclaimed. See TestCalibrationConvergesToTheResidual.
 func (p *fluidserveDispatchPolicy) prefillChargeFor(
-	req *fluidserveRequest, instanceID string) float64 {
+	req *fluidserveRequest, instanceID string) (charged, raw float64) {
 
-	tokens := float64(req.promptTokens)
+	raw = float64(req.promptTokens)
 	if p.cfg.prefixAware && p.prefix != nil {
 		hit := float64(p.prefix.hitTokens(req.promptHashes, instanceID))
-		if hit > tokens {
-			hit = tokens
+		if hit > raw {
+			hit = raw
 		}
-		tokens -= hit
+		raw -= hit
 		if !p.cfg.prefixCalibrate {
-			return tokens
+			return raw, raw
 		}
 	}
-	return tokens * p.capacity.prefillFractionOf()
+	return raw * p.capacity.prefillFractionOf(), raw
 }
 
 // costOf is the KV a request adds over the horizon: its prompt, plus the tokens
@@ -1440,7 +1454,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	//
 	// The KV footprint below is NOT discounted, because the latency model counts
 	// logical tokens and a shared block is charged to every request holding it.
-	c.prefillCharge = p.prefillChargeFor(req, f.id)
+	c.prefillCharge, c.prefillRaw = p.prefillChargeFor(req, f.id)
 	newPending := f.effectivePrefill + c.prefillCharge
 	newN := f.nDecode + 1
 	newKv := f.proj + cost
@@ -1969,7 +1983,8 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 	if f != nil {
 		id = f.id
 	}
-	steps := prefillSteps(p.prefillChargeFor(req, id), chunk)
+	charge, _ := p.prefillChargeFor(req, id)
+	steps := prefillSteps(charge, chunk)
 	if steps <= 0 {
 		return 0
 	}
@@ -2042,7 +2057,7 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 		metrics.Labels{}).Observe(float64(ord))
 
 	p.registry.onDispatch(c.flux.id, req.id, req.tier, req.promptTokens,
-		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs, c.prefillCharge)
+		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs, c.prefillRaw)
 	// Recorded only for a placement that was actually made. A pended or shed
 	// request never reached an engine and therefore put nothing in a cache.
 	if p.cfg.prefixAware {
