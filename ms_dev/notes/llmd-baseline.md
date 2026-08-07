@@ -798,11 +798,17 @@ goodput 70 req/s: **22,308 대 17,990 (+24%)**. EXP-53 값은 `numbers.tsv`에�
 **판정 규칙(§7)이 지목하는 결론**: "요청 단위 예측이 값을 갖는다. EXP-64가 그 상한을 재는
 실험이 되고, 우리 설계에 예측기를 붙이는 것이 다음 방향."
 
+**그림**: `results/aggregate_analysis/exp66r1/`. 정본은 그 디렉토리의 `README.md`이고,
+그림마다 무엇을 주장하고 무엇을 말하지 않는지가 거기 있다. 다시 만드는 명령은
+`bash analysis_scripts/redraw_static_sweep_llmd.sh`이고, **EXP-53의 그림은 건드리지 않는다**
+(llm-d는 반복 1회·다른 세션·예열 주행이라 정본 비교에 아직 넣지 않는다).
+
 ### ⚠ 아직 결론이 아닌 이유 넷
 
 1. **반복 1회다.** 우리 규칙이 조건당 1회로 판정하지 않는 것이고 EXP-53 열은 2회다. rep 2 필요.
-2. **예열 주행 3분이 llm-d에만 있다.** EXP-53은 60건으로 시작, 우리는 약 8,100건이 더 흐른 뒤
-   시작 → **prefix cache가 더 데워진 상태이고 llm-d에 유리하다. 크기를 아직 안 쟀다.**
+2. ~~**예열 주행 3분이 llm-d에만 있다.**~~ → **2026-08-08에 재고 해제했다(§9.11).** cold
+   restart 직후 예열 주행의 첫 1분이 이미 prefix hit 96.2%라서, 예열 주행이 더해 주는 것이
+   없다. llm-d의 93.5% 대 FluidServe의 75.1%는 예열이 아니라 라우팅이 만든 차이다.
 3. **세션이 다르다** (08-02 대 08-07).
 4. **m1f 대 m1** — llm-d·Llumnix SLO는 m1f, FluidServe·PolyServe는 m1.
 
@@ -871,6 +877,151 @@ KV보다 시간이 먼저 바닥나기 때문이고(motivation.md의 "KV는 55%�
 축 1(예측의 정확도와 보수성), 2(붙들기), 3(가르는 신호), 6(요청 자신의 미래)이고,
 **그중 3번이 EXP-66의 원래 질문**이다. rep 2가 끝나면 **클래스당 유효 인스턴스 수와 엔진별
 prefix hit rate**로 축 3에 답한다.
+→ **답했다. §9.11이다** (rep 2를 기다리지 않고 rep 1 데이터로 잴 수 있는 양이었다).
+
+---
+
+## 9.11 축 3에 답한다 — 격차의 원인은 클래스 분리가 아니라 **prefix cache 재사용**이다 (2026-08-08)
+
+**결론 두 줄.**
+① **llm-d는 클래스를 거의 분리하지 않는다.** 부하가 높을수록 오히려 더 퍼진다.
+② **엔진이 보고하는 prefix cache hit rate가 llm-d 93.5%, FluidServe 75.1%, Llumnix SLO
+79.9%다.** 그만큼 prefill에서 실제로 계산해야 하는 토큰이 줄고, 그 시간이 decode로 간다.
+
+### 먼저 배관 — llm-d는 엔진 귀속을 어디서 얻는가
+
+`build_request_engine_map.py`는 쓸 수 없다. 그것은 클라이언트의 `request_ids.jsonl`과
+**Llumnix 스케줄러의 dispatch 로그**를 요청 uuid로 붙이는데, llm-d에서는 Llumnix 스케줄러가
+요청 경로에 아예 없고 `scheduler_dispatch.log`에 이 run의 줄이 하나도 없다. 엔진 이름은
+**Envoy access log의 `%UPSTREAM_HOST%`**에 있고, 그것이 `<pod-ip>:<port>`라서 엔진 파드 위
+vLLM API 서버 넷 중 하나를 그대로 지목한다.
+
+붙이는 키는 식별자가 아니라 **시각과 소요 시간**이다 — 양쪽이 공유하는 식별자가 없기
+때문이다(Envoy는 자기 `x-request-id`를 만들고 클라이언트는 vLLM의 `cmpl-<uuid>`를 적는데
+후자는 응답 본문 안이라 Envoy가 못 본다). 새 스크립트가
+`analysis_scripts/request_level/llmd_engine_map.py`다.
+
+**이것이 충분한지를 가정하지 않고 쟀다.** 도착 간격 평균이 14 ms인 가장 빽빽한 조건
+(70 req/s)에서 짝지어진 쌍의 시작 시각 차이 중앙값이 **1.6 ms**, 소요 시간 차이 중앙값이
+**3.0 ms**로, 소요 시간 자체의 폭(17~30초)보다 두 자릿수 작다. 비용이 작은 쌍부터 순서대로
+집어 양쪽 모두 재사용을 금지하는 방식으로 1:1을 만들었고, **여덟 조건 전부 99.88~99.97%가
+매칭됐다.** 거절된 요청은 양쪽에서 뺀다(Envoy는 upstream을 `-`로 적고 클라이언트는
+`is_rejected`로 적는다).
+
+### 축 3 — 클래스 분리는 llm-d 쪽이 **더 약하다**
+
+클래스당 유효 인스턴스 수(`1/Σ s_i²`, 창별 중앙값. 4.0 = 네 대에 고르게, 1.0 = 한 대):
+
+| arm, rate | chat | deepresearch | swe | 평균 |
+|---|---|---|---|---|
+| llm-d 15 req/s | 2.97 | 2.76 | 2.57 | 2.77 |
+| llm-d 45 req/s | 3.63 | 3.41 | 3.31 | 3.45 |
+| llm-d 70 req/s | 3.93 | 3.79 | 3.52 | 3.75 |
+| FluidServe 45 req/s | 3.27 | 3.39 | 3.37 | 3.34 |
+| FluidServe 70 req/s | 2.67 | 2.40 | 2.15 | 2.41 |
+
+**두 시스템이 부하에 대해 반대로 움직인다.** llm-d는 한가할 때 2.6~3.0대에 몰아넣고
+(`headroomSelectionStrategy: least`가 **예산 경계에 가장 가까운 후보를 고르는 best-fit
+packing**이므로 의도한 동작이다) 부하가 오르면 네 대로 퍼진다 — 여유가 남은 엔드포인트가
+없어지면 몰아넣기가 성립하지 않기 때문이다. FluidServe는 반대로 퍼진 상태에서 시작해
+모여든다(클래스 선호가 클래스끼리 경쟁하기 시작해야 작동할 것이 생긴다).
+**점수 격차가 가장 큰 55~70 req/s에서 llm-d가 가장 덜 분리한다.** 그러므로 llm-d의 점수를
+만드는 것은 클래스 분리가 아니다.
+
+### 그러면 무엇인가 — 엔진 계층의 총계 (70 req/s, Prometheus, 클라이언트와 독립)
+
+| arm | decode tok/s | prompt tok/s | prefix hit | 평균 배치 | KV | preemption |
+|---|---|---|---|---|---|---|
+| **llm-d** | **20,661** | 70,533 | **93.5%** | 238 | **22.2%** | 0 |
+| FluidServe | 16,562 | 49,292 | 75.1% | 219 | 35.9% | 60 |
+| Llumnix SLO | 11,990 | 65,807 | 79.9% | 158 | 36.0% | 0 |
+| PolyServe | 16,087 | 87,015 | 47.9% | 334 | 36.3% | 344 |
+
+`prompt_tokens_total`은 캐시로 채운 토큰까지 세므로, **실제로 계산한 prefill 토큰**은
+`prompt × (1 − hit)`이다: llm-d 4,585 tok/s 대 FluidServe 12,274 tok/s로 **llm-d가 2.7분의
+1만 계산한다.** 그 시간이 decode로 가서 20,661 대 16,562(+25%)가 되고, 캐시 블록을 공유하는
+만큼 KV 점유도 22.2% 대 35.9%로 낮다. **요청 단위 지표에는 이 중 어느 것도 안 보인다.**
+
+### ⚠ 그런데 이것이 예열 주행 때문인가 → **아니다. 쟀다**
+
+이것이 §9.9의 caveat ②였다. 조건마다 엔진을 cold restart한 직후의 3분 예열 주행과, 그
+뒤의 8분 측정 구간을 1분 단위로 나눠 hit rate를 보면(70 req/s):
+
+```
+예열 주행   96.2  93.6  94.4  93.6  93.8
+측정 구간   95.5  94.1  94.1  93.0  93.0  92.9  94.3  93.4  93.1  93.3
+```
+
+**cold engine에서 시작한 예열 주행의 첫 1분이 이미 96.2%다.** 즉 예열 주행이 더해 주는 것이
+없고, 측정 구간의 첫 1분이 스스로 만들었을 상태와 같다. 같은 열 개 창에서 FluidServe는
+84.4 89.2 79.7 76.1 79.9 74.2 72.0 76.9 71.7 78.1, Llumnix SLO는 79.8 79.2 81.3 79.9 80.6
+79.3 80.4 79.3 76.7 81.0이다.
+→ **§9.9의 인용 금지 이유 넷 중 ②는 해제된다.** ①(반복 1회) ③(다른 세션) ④(m1 대 m1f)는
+그대로다.
+
+### 워크로드가 같다는 것도 확인했다
+
+`mix_short_m1_balanced.json`과 `mix_short_m1_slofair.json`을 키 단위로 비교하면 **`slo`
+블록 하나만 다르다**(swe의 `ttft_ms` 11,800 → 2,500, `tbt_ms` 25 → 52). 클래스 비율,
+task 집합, 도착 과정은 동일하므로 위의 prefix cache 비교는 같은 요청 흐름에 대한 것이다.
+
+### 남은 것
+
+`prefix-cache-affinity-filter`와 예측기 특징의 `prefix_cache_score`가 라우팅에 직접
+들어가고, 우리는 그 자리에 클래스 선호를 넣는다(§9.8). **그래서 축 3의 답은 "가르는 신호가
+클래스냐 prefix냐"이고, 이 워크로드에서는 prefix 쪽이 훨씬 크게 이긴다.** 이것이
+**측정 가능한 설계 항목**이라는 것이 EXP-66이 준 것이고, 다음에 답해야 하는 것은
+**우리 판정 조건 안에 prefix 재사용을 넣으면 얼마를 회수하는가**이다.
+
+---
+
+## 9.12 llm-d의 예측기는 정확히 무엇을 예측하는가 (2026-08-08, 소스 확인)
+
+사용자 질문: "각 request가 얼마나 더 run 할지, 새 request의 TTFT·TBT가 어떨지, 전에 돌던
+request들의 TTFT·TBT가 어떨지까지 전부 예측하나?" — **셋 중 하나만 예측한다.**
+
+`pkg/epp/framework/plugins/requestcontrol/dataproducer/predictedlatency/prediction.go`의
+`generatePredictions`가 정본이다. 후보 엔드포인트마다 **한 쌍**을 낸다:
+**지금 도착한 요청 하나를 그 엔드포인트에 놓았을 때의 (TTFT, TPOT)**.
+
+특징은 열한 개이고 전부 **그 엔드포인트의 현재 상태 + 그 요청의 입력**이다
+(`latencypredictorclient/types.go:PredictionRequest`):
+
+`kv_cache_percentage`, `input_token_length`, `num_request_waiting`,
+`num_request_running`, `num_tokens_generated`, `prefix_cache_score`,
+`encoder_input_size`, `encoder_matched_size`, `pod_type`,
+`prefill_tokens_in_flight`, `decode_tokens_in_flight`.
+
+| 질문 | 답 | 근거 |
+|---|---|---|
+| 각 요청이 앞으로 얼마나 더 도는지 예측하는가 | **아니다.** 출력 길이 추정이 아예 없다. 스케줄링 시점 호출은 `generatedTokenCounts[i] = 1`로 고정이다 | `prediction.go:71` |
+| 새 요청의 TTFT·TPOT를 예측하는가 | **그렇다. 이것 하나만 한다** | `prediction.go:86` |
+| 이미 돌던 요청들의 TTFT·TPOT가 어떻게 되는지 예측하는가 | **아니다.** 기존 요청은 두 경로로만 들어온다 — (a) 현재 상태 특징(KV·running·waiting·in-flight)에 **집계된 값**으로, (b) `podMinTPOTSLO` = **그 엔진에서 돌고 있는 요청들의 TPOT 예산 중 가장 빡빡한 것**으로. (b)는 예측이 아니라 **문턱값**이다 | `prediction.go:161-173`, `plugin.go:493-501` |
+
+판정 조건은 따라서 이렇게 읽힌다:
+
+```
+pred.TPOT(새 요청 | 이 엔진의 현재 상태) < min(새 요청의 TPOT 예산,
+                                            그 엔진 위 가장 빡빡한 TPOT 예산) × buffer
+```
+
+**기존 요청이 무엇을 잃는지는 묻지 않고, 새 요청이 가장 빡빡한 예산을 지키는지를 대신
+묻는다.** decode에서 토큰당 시간이 대체로 배치 전체의 성질이라 이 대체가 완전히 틀린 것은
+아니지만, **우리 `overIncumbents`가 재는 양과는 다른 양이다**(related-works-review §12.2의
+차이 2번).
+
+**그리고 이 조건은 기본 구성에서 꺼져 있다** — `streamingMode`가 기본 `false`이고 false면
+TPOT 쪽이 통째로 `TPOTValid=true, Headroom=0`으로 중화되어 판정에 TTFT만 남는다
+(`prediction.go:111-115`). EXP-66은 `epp-config-slo.yaml`에서 `streamingMode: true`를
+명시했으므로 켜진 상태로 돌았다.
+
+### 그래서 "예측기가 너무 좋은가"에 대한 답
+
+**아니다. 예측 자체는 특별히 좋지 않다.** rep 1에서 잰 값은 p90 목표 대비 coverage
+88.1%/89.9%, 예측/실측 비 1.20배/1.13배로 **13~20% 보수적으로 과대예측**한다. 예측 하나에
+9.7 ms가 걸리고 2~3초마다 재학습한다.
+**격차를 만든 것은 예측의 정확도가 아니라 §9.11의 prefix cache 재사용이다** — 그것은
+예측기가 아니라 `prefix-cache-affinity-filter`와 `prefix_cache_score`가 만든다.
 
 ---
 
