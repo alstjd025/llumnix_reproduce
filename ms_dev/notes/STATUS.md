@@ -10,15 +10,76 @@
 
 ---
 
-## §1 지금 상태 (2026-08-07 23:30 KST 확인)
+## §1 지금 상태 (2026-08-08 02:00 KST 확인)
 
-**정본 절**: implementation.md **§65**. 그 앞이 §64(EXP-62), §63(EXP-58~61).
+**정본 절**: implementation.md **§65**. prefix 작업의 정본은
+[fluidserve-prefix.md](fluidserve-prefix.md)이고 **§8이 가장 중요하다**.
 
-**도는 실험: EXP-66 rep 2** — llm-d 기준선. 23:24 KST 시작, **≈02:10 KST 종료**.
-`/home/nxclab/tools/exp66_rep2.log`, 감시도 같이 떠 있다. 결과 접두사
-`exp66r2_llmdslo_m1f`, 8조건. 드라이버는
-`Agent_applications/.../k8s/exp07/run_exp66_llmd.sh rep 2`.
-**끝나면**: `python3 analysis_scripts/request_level/exp22_fluidserve.py --runs results/*exp66r2_llmdslo_m1f_rpm_* --out-dir results/aggregate_analysis/exp66r2 --no-figures`
+**사용자 목표 (2026-08-08 지시)**: **llm-d보다 SLO 달성률(offered·admitted)과 token
+goodput이 높을 것.** 그 관점에서 넷을 지시했다 — ① 우리 시스템에 prefix caching을 넣고
+설계·디버깅·실험·기록 ② 워크로드의 prefix hit rate를 현실적으로 낮추고 클래스 비율도 손볼 것
+③ 그러면 우리 강점(미래 예측·PEND)이 드러날 것으로 예상 ④ 정적 rate가 의도대로 나오면
+한 시간 trace도.
+
+### 지금 도는 것 둘
+
+1. **EXP-66 rep 2** — llm-d 기준선 8조건. `/home/nxclab/tools/exp66_rep2.log`.
+   02:00 시점 7/8(3600 rpm 측정 중), **≈02:27 KST 종료**.
+   **끝나면**: `python3 analysis_scripts/request_level/exp22_fluidserve.py --runs results/*exp66r2_llmdslo_m1f_rpm_* --out-dir results/aggregate_analysis/exp66r2 --no-figures`
+   그 뒤 두 반복을 합쳐 `bash analysis_scripts/redraw_static_sweep_llmd.sh` 를 다시 돌린다
+   (llm-d 글롭을 `*exp66r*`로 넓혀서).
+2. **EXP-67** — `/home/nxclab/tools/exp67_after_exp66.sh`, 로그 `/home/nxclab/tools/exp67.log`.
+   **rep 2가 끝나기를 기다렸다가 자동으로 시작한다.** 감시도 같이 떠 있다.
+   배포 → 사전점검(양쪽 arm) → `fluidserve`(대조)와 `fspfx`(처리) × 45/55/70 req/s × 2반복
+   = **12조건, 약 4.5시간**, ≈07:00 KST 종료 예상. 결과 접두사 `exp67r{1,2}_{fluidserve,fspfx}`.
+
+### EXP-67이 무엇을 재는가
+
+도착 프롬프트의 prefill 비용이 `promptTokens × prefillFractionOf()`(fleet 스칼라 하나)에서
+**`(promptTokens − 그 인스턴스가 이미 들고 있다고 믿는 앞부분) × κ`**로 바뀐다. 스케줄러가
+자기가 어디로 보냈는지를 블록 단위로 기억한다. **"몇 토큰인가"만 교체하고 "그 토큰이 엔진
+시간으로 얼마인가"는 지금의 측정 경로가 그대로 답한다.** KV 발자국은 할인하지 않는다.
+κ는 옛 `prefillFraction`인데 **분모가 바뀌어 뜻이 "예측의 오차"가 된다**(범위도 [0.02,1.0] →
+[0.25,4.0]). 설계·판정 규칙은 `fluidserve-prefix.md`와 `experiments/EXP-67_*.md`.
+
+⚠ **미리 아는 한계**: `sortCandidates`의 점수가 `w·share + (1−w)·room`(기본 w=1.0)인데
+**prefix는 그 어느 항에도 안 들어간다.** feasibility 판정과 TTFT 판정에만 들어가므로 **지역성은
+feasibility가 구속력을 가질 때만 생긴다.** H1(엔진 hit 75.1% → 85%↑)과 H2(task당 유효 엔진
+2.08 → 1.6↓)가 그것을 잰다. 둘 다 실패하면 다음 선택지는 score에 세 번째 항인데, **그러면
+"예측을 정확하게 만든다"가 "새 목적함수"가 되어 논지의 성격이 바뀌므로 따로 결정한다.**
+
+### ⚠ 가장 중요한 발견 — 워크로드가 prefix 재사용을 12배로 부풀리고 있었다
+
+`fluidserve-prefix.md` **§8**이 정본. `run_experiment.py:_worker_main`이 워커별로 데이터셋을
+나누는데(주석에 *"reduces exact-duplicate prefix-cache masking"*까지 적혀 있다) 조건이
+`isinstance(dataset, list)`이고 **mixed 워크로드는 dict를 돌려주므로 그 분할이 한 번도 돈 적이
+없다.** 워커 12개가 같은 프롬프트 열을 그대로 보냈고, **모든 프롬프트가 정확히 12.00번씩** 나갔다
+(chat 25,896/2,158, dr 5,184/432, swe 2,580/215, 45와 70 req/s 둘 다).
+
+- **영향받는 것은 prefix hit rate 하나뿐이다.** 도착률·클래스 비율·출력 길이·SLO 채점은 그대로다.
+  그런데 그 하나가 EXP-66에서 llm-d와 우리를 가른 바로 그 양이다 → **EXP-66은 prefix affinity로
+  라우팅하는 정책에 유리한 조건에서 측정됐다.**
+- 재사용은 `1 − (E/R)(1−s)`이고 R=12가 혼자서 90% 위로 밀어올린다.
+- **구조적 공유 s는 진짜다**: swe 프롬프트 1,500개가 평균 8,657토큰 중 **6,341토큰의 공통 접두사**를
+  공유해 s=73.3%(transcript에서 직접 측정), deepresearch는 고정 910토큰 시스템 프롬프트 /
+  4,639토큰 = **약 19.6%**.
+- ❌ **철회**: 앞서 `agent_logs`로 잰 "dr 99.8%"는 틀렸다 — 그 로그는 프롬프트를 약 500토큰에서
+  자른다. **`agent_logs`를 프롬프트 내용 분석에 쓰면 안 된다.**
+- **고치는 패치는 준비돼 있고 적용은 안 했다**: `/home/nxclab/tools/staging/fix_worker_prompt_duplication.py`
+  (`--check`로 적용 가능 여부 확인됨). **EXP-67이 도는 동안 `workloads/`를 고치면 조건마다 다른
+  코드가 되므로 EXP-67이 끝난 뒤에 적용한다.**
+- **비용**: 고치면 워크로드가 달라지므로 EXP-53·57·66의 값과 나란히 못 놓는다. 다섯 arm 재측정이
+  arm당 약 6시간이다. **사용자 결정이 필요하다** — `fluidserve-prefix.md` §8.6에 판단 재료를 적었다.
+  절충안은 FluidServe와 llm-d 둘만 먼저 재서 방향을 보는 것.
+
+### 워크로드 비율 (사용자가 물은 것)
+
+지금 `mix`는 **10:2:1**(chat:dr:swe)이고 1:1:1이 아니다. 요청 수로는 76.9/15.4/7.7%,
+**입력 토큰으로는 30.4/43.5/26.1%**(평균 입력 649/4,639/5,557), **출력 토큰으로는 75/11/14%**
+(`out_len` 386/275/728). decode가 엔진 시간을 지배하므로 부하는 chat이 지배한다.
+어느 축을 균형 잡을지는 정해진 적이 없고, `mix_short_m1_balanced.json`의 `_comment`가
+"요청 수 비율을 토큰 몫에 맞춰 다시 조정하지 않는다 — trace 파일과 이전 run들이 그 수를
+담고 있고, 워크로드와 믹스를 같은 단계에서 바꾸면 둘을 구별할 수 없다"고 적어 두었다.
 
 **최근 끝난 것 둘**:
 - **EXP-62**(04:09 KST, 18조건) — **QoServe가 PolyServe에서는 도움이 된다**(+0.98 / +2.65 /
