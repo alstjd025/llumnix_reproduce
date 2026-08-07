@@ -162,22 +162,35 @@ CPU만 쓴다. 매니페스트는 `llm-d-latency-predictor/deploy/base/`의 것�
 |---|---|---|---|
 | 1 | `workloads/swe_bench_coding/agent.py` | `LlumnixCompletionsLLM`에 `extra_headers` 인자를 추가하고 `.stream()`/`.invoke()`가 그것을 보내게 한다 | 약 10줄 |
 | 2 | 같은 파일 | 헤더 값을 `slo_spec`에서 유도한다 — `x-llm-d-slo-ttft-ms` = `ttft_ms`, `x-llm-d-slo-tpot-ms` = `tbt_ms`. 클래스별 `slo_spec`은 mixed 워크로드가 이미 요청마다 넣고 있다 | 약 10줄 |
-| 3 | 같은 파일 | `x-llm-d-inference-objective` 헤더(거절 대상 표시)와 `x-request-id`(엔진 연결용)를 보낸다 | 약 5줄 |
+| 3 | 같은 파일 | `x-llm-d-inference-objective` 헤더(거절 대상 표시)를 보낸다. ~~`x-request-id`~~는 **불필요**하다 — Envoy가 만들고 vLLM이 completion id로 되돌려 준다(§4.1) | 약 3줄 |
 | 4 | 같은 파일 | `_raise_if_llumnix_rejected`에 llm-d의 거절 본문(`no valid endpoint available to serve the request`)을 추가한다 | 2줄 |
 | 5 | `llumnix_deploy.py` | `restart_llumnix`가 `deploy/scheduler deploy/gateway`를 이름으로 고정하고 있다. llm-d에서는 `deploy/llmd-router`를 재시작해야 한다 | 인자 하나 |
-| 6 | `analysis_scripts/request_level/build_request_engine_map.py` | 스케줄러 배치 로그 대신 **Envoy 접근 로그**를 읽는 경로를 추가한다 | 새 함수 |
+| 6 | `analysis_scripts/request_level/build_request_engine_map.py` | 스케줄러 배치 로그 대신 **Envoy 접근 로그**를 읽는 경로를 추가한다. 조인 키는 `metrics.csv`의 request id에서 `cmpl-`를 뗀 것 | 새 함수 |
 | 7 | `k8s/exp07/run_exp66_llmd.sh` (신규) | arm 정의와 조건 루프. 기존 `run_exp27_mixsweep.sh`를 본뜨되 `set_scheduler_profiling.py` 대신 EPP ConfigMap 교체 | 신규 |
 
-### 4.1 요청이 어느 엔진에서 처리됐는지 알아내는 방법
+### 4.1 요청이 어느 엔진에서 처리됐는지 알아내는 방법 — 클라이언트 변경이 필요 없다
 
 지금은 클라이언트 `metrics.csv`와 스케줄러 `scheduler_dispatch.log`를 요청 번호로 맞춰
 붙인다. llm-d에는 그 로그가 없다. **대신 Envoy 접근 로그가 더 나은 것을 준다** —
 `%UPSTREAM_HOST%`가 실제로 요청을 처리한 `IP:포트`이고 `%REQ(X-REQUEST-ID)%`가 요청 번호다.
-한 줄에 둘 다 있으므로 **로그 두 개를 맞춰 붙일 필요가 없고, PolyServe 한 시간 조건에서
-86.4%만 덮였던 문제가 구조적으로 안 생긴다.**
+한 줄에 둘 다 있으므로 로그 두 개를 맞춰 붙일 필요가 없다.
 
-조건: 클라이언트가 `x-request-id`를 직접 만들어 보내고 그 값을 자기 기록에도 남겨야 한다
-(위 표의 4번 항목).
+**2026-08-07에 확인한 것: 그 요청 번호가 우리 클라이언트가 이미 기록하는 값과 같다.**
+Envoy가 `use_remote_address: true`이므로 들어오는 요청에 x-request-id를 새로 만들어 붙이고,
+vLLM이 그 값을 자기 completion id로 쓴다. 그래서
+
+```
+접근 로그:  ...  2deda94b-b6e0-4216-a91d-b6ec12151553  200  10.42.0.150:8001  ...
+응답 본문:  {"id": "cmpl-2deda94b-b6e0-4216-a91d-b6ec12151553", ...}
+```
+
+이고, 클라이언트의 `last_request_id`가 이미 그 본문 `id`를 저장한다. **`cmpl-` 접두사만 떼면
+조인된다.** 실측 12건에서 100%였고 엔진 넷에 3/4/3/3으로 분산됐다.
+
+⚠ **Envoy의 파일 접근 로그는 약 10초 버퍼링한다.** 요청을 보낸 직후에 읽으면 아직 안 쓰여
+있어서 조인 성공률이 0%로 보인다(2026-08-07에 실제로 그렇게 보였다). **조건이 끝난 뒤
+로그를 복사하기 전에 줄 수가 안정될 때까지 기다리거나, Envoy에 `--file-flush-interval-msec`를
+낮춰 준다.** 이것을 안 하면 조건 끝부분의 요청들이 통째로 빠진다.
 
 ### 4.2 거절 대상 표시를 어떻게 정할 것인가
 
@@ -267,8 +280,8 @@ CPU만 쓴다. 매니페스트는 `llm-d-latency-predictor/deploy/base/`의 것�
 |---|---|---|
 | **0** | ghcr.io에서 이미지 넷을 실제로 pull 한다 (EPP, envoy, 예측기 둘) | ✅ **2026-08-07 통과.** EPP 23 MB / Envoy 33 MB / 학습 617 MB / 예측 617 MB, 합계 약 1.3 GB. 네임스페이스 `llmd`에서 확인 |
 | **1** | 예측기 둘을 Deployment로 띄운다 | ✅ **2026-08-07 통과.** `deploy/llmd/predictor.yaml`. 학습 1 + 예측 3 파드 전부 Ready. **모델 동기화 링크가 실제로 돈다** — 예측 서버들이 `GET /model/{ttft,tpot}/info` 200을 받는다. 학습 루프가 1초마다 돌며 `Skipping training: only 0 samples (< 10)`을 찍는다(= 설정이 먹었고 첫 학습 문턱이 10개) |
-| **2** | 경로 A(file-discovery)로 EPP + Envoy를 띄우고 `llmd-base` 구성으로 `curl` 한 번 | 응답이 오고, Envoy 접근 로그에 `UPSTREAM_HOST`가 엔진 넷 중 하나로 찍힌다 |
-| **3** | 클라이언트 변경(4장의 1~4번)을 넣고 짧은 smoke — 8분 45 req/s 한 조건 | `metrics.csv`가 정상, 요청 → 엔진 연결이 **100%**, 엔진 넷에 다 분산됨 |
+| **2** | 경로 A(file-discovery)로 EPP + Envoy를 띄우고 `llmd-base` 구성으로 `curl` 한 번 | ✅ **2026-08-07 통과.** `deploy/llmd/{router,epp-config-base}.yaml`. 응답 200, 접근 로그에 `10.42.0.150:8001`. **file-discovery와 core-metrics-extractor 조합이 실제로 동작한다** — §10의 1번이 닫혔다 |
+| **3** | 요청 → 엔진 연결 | ✅ **2026-08-07 통과, 100%.** 12건 전부 조인, 엔진 넷에 3/4/3/3으로 분산. **클라이언트 변경이 필요 없다** — §4.1 참조 |
 | **4** | `llmd-pred`, `llmd-slo` 구성으로 각각 smoke | EPP 로그에 예측값이 찍히고, 예측 대 실측 히스토그램이 채워진다 |
 | **5** | 경로 B로 옮긴다 (GIE CRD 설치, InferencePool + InferenceObjective) | `llmd-slo`에서 **거절이 0이 아니다.** 0이면 표시가 안 먹은 것이므로 멈춘다 |
 | **6** | 본 실험 | 아래 판정 규칙 |
@@ -399,20 +412,24 @@ GPU     8/8 전부 neutral-0            → llm-d는 GPU를 안 쓴다
 
 ## 10. 아직 모르는 것
 
-1. **file-discovery와 predicted-latency 플러그인의 조합을 배포한 예가 없다.** 두 가이드가
-   별개다. 같은 `EndpointPickerConfig` 형식이라 합쳐질 것으로 보이지만 검증은 우리가 한다.
-   `dataLayer` 블록(discovery + metrics-source + extractor)을 직접 써야 한다.
+1. ~~file-discovery와 predicted-latency 플러그인의 조합~~ — **절반 닫혔다 (2026-08-07)**:
+   file-discovery + `core-metrics-extractor` + 기본 scorer 묶음(`llmd-base`)이 실제로 동작하고
+   요청이 엔진에 닿는다. **아직 안 해 본 것은 여기에 `predicted-latency-producer`를 얹는
+   것**이고 그것이 단계 4다.
 2. **엔드포인트 주소가 리터럴 IPv4여야 한다** — 호스트명을 해석하지 않는다. `neutral-0`의
    파드 IP는 재시작마다 바뀌므로 드라이버가 조건마다 다시 써야 한다(`watchFile: true`가
    그것을 받는다). 경로 B로 가면 이 문제가 없어진다.
-3. **ghcr.io에서 실제로 pull 되는지 안 해 봤다.** 단계 0이 그것이다.
-4. **EPP가 요구하는 지표 이름을 우리 vLLM에 맞게 설정해야 한다** — `kv_cache_usage_perc`.
-   플래그 이름과 기본값을 EPP `--help`로 확인한다.
+3. ~~ghcr.io에서 실제로 pull 되는지~~ — **닫혔다 (2026-08-07)**: 넷 다 받아졌다.
+4. ~~EPP가 요구하는 지표 이름~~ — **닫혔다 (2026-08-07)**: EPP의 내장 vLLM 설정이 이미
+   `vllm:kv_cache_usage_perc` · `vllm:num_requests_waiting` · `vllm:num_requests_running`을
+   쓰고, 그것이 우리 vLLM 0.12.1.dev0이 내는 이름이다. 재정의가 필요 없다
+   (`datalayer/extractor/metrics/factories.go`의 `defaultEngineConfigs`).
 5. **예측기의 수렴 시간을 모른다.** 5장이 그것을 재는 방법이고, 재기 전에는 점수를 인용하지
    않는다.
-6. **Envoy 접근 로그의 형식을 아직 안 정했다.** `%UPSTREAM_HOST%`와 `%REQ(X-REQUEST-ID)%`를
-   넣는 것까지는 정했고, 파일로 뺄지 표준 출력으로 둘지는 단계 2에서 정한다. 한 시간 조건은
-   요청이 십만 건대이므로 크기를 먼저 계산한다.
+6. ~~Envoy 접근 로그의 형식~~ — **닫혔다 (2026-08-07)**: 탭으로 구분한 일곱 칸(시각 /
+   요청 번호 / 응답 코드 / **처리한 엔진** / 소요 ms / 응답 플래그 / 경로)을 hostPath
+   `/home/nxclab/tools/llmd-envoy/envoy_access.log`에 쓴다. 한 줄이 약 120바이트이므로 한 시간
+   조건(요청 십수만 건)이 20 MB 안쪽이다. **남은 것은 버퍼링 대기를 드라이버에 넣는 것**(§4.1).
 
 ---
 
