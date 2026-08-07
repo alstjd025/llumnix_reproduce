@@ -61,6 +61,13 @@ DEFAULT_GLOBS = [
     "ms_dev/notes/slosserve-comparison.md",
     "ms_dev/notes/why-the-routing-layer.md",
     "CLAUDE.md",
+    # The figure README is a claim-making document: it states what each paper
+    # figure shows, and a figure drawn from superseded data is exactly the error
+    # this checker exists to find. Adding it on 2026-08-07 immediately reported
+    # that motivation_throughput_vs_goodput.png carries the pre-refit PolyServe
+    # row (16,363 / 3,509 / 14.4 at 70 req/s).
+    "Agent_applications/agent_motivation_experiment/results/aggregate_analysis/"
+    "motivation/README.md",
 ]
 # Lines that are allowed to hold a retracted value: the ones whose job is to say
 # it is retracted.
@@ -68,6 +75,12 @@ DEFAULT_GLOBS = [
 # itself, keeps the old number on purpose.
 EXEMPT = re.compile(r"인용하면 안|retracted|수정 전|프로파일 수정|pre-refit|"
                     r"정정|철회|이전 값|옛 값|EXP-5[34] 이전|낡은|→|->|EXP-57 이전")
+# A retracted number can collide with an unrelated quantity that happens to have
+# the same digits: "8분 27.5%" is deepresearch's attainment over an eight-minute
+# window and has nothing to do with PolyServe's 27.5 at 45 req/s. Suppress those
+# individually and say why, rather than loosening the pattern above, which would
+# also stop catching the real ones.
+SUPPRESS = re.compile(r"numbers-ok:")
 
 
 def load_retracted():
@@ -115,6 +128,8 @@ def check_retracted(paths, rows):
         # reported.
         block = False
         for i, line in enumerate(lines, 1):
+            if SUPPRESS.search(line):
+                continue
             if EXEMPT.search(line):
                 block = True
                 continue

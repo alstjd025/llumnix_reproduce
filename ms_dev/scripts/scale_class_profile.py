@@ -50,7 +50,20 @@ def main():
         raise SystemExit(f"no class named {a.klass}; have "
                          f"{[c['name'] for c in d['classes']]}")
     before = hit["mean"]
-    hit["grid"] = [x * a.factor for x in hit["grid"]]
+    # `grid` is []int on the Go side (fluidserve_profile.go classProfile), so a
+    # float here makes the scheduler exit at start-up with "cannot unmarshal
+    # number 0.0 into Go struct field classProfile.classes.grid of type int".
+    # That is how EXP-63's first attempt died: ten conditions were queued behind
+    # a profile the scheduler could not parse.
+    grid = [int(round(x * a.factor)) for x in hit["grid"]]
+    # Rounding can collide adjacent points at small factors, and the survival
+    # lookup assumes a strictly increasing grid. Keep it strictly increasing by
+    # pushing duplicates up; the distribution is unchanged where it matters
+    # because survival is flat across a collided pair.
+    for i in range(1, len(grid)):
+        if grid[i] <= grid[i - 1]:
+            grid[i] = grid[i - 1] + 1
+    hit["grid"] = grid
     for k in SCALED:
         if k in hit:
             hit[k] = hit[k] * a.factor
