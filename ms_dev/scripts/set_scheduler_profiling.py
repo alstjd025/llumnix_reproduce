@@ -151,6 +151,16 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-52. Not a boolean: the value is passed through as a float, so the
     # set_flag path must not turn it into --flag=true.
     "FS_GATE_SLACK": "--fluidserve-gate-slack",
+    # EXP-67. Charge an arriving prompt only for the blocks the candidate
+    # instance is not already believed to hold. Off in the shipped default, so
+    # the control arm needs no environment variable and the treatment arm sets
+    # FS_PREFIX=true. See ms_dev/notes/fluidserve-prefix.md.
+    "FS_PREFIX": "--fluidserve-prefix-aware",
+    # On by default in the binary, so the ablation arm sets it to false.
+    "FS_PREFIX_CALIBRATION": "--fluidserve-prefix-calibration",
+    # Integers, not booleans.
+    "FS_PREFIX_BLOCK_TOKENS": "--fluidserve-prefix-block-tokens",
+    "FS_PREFIX_CAPACITY": "--fluidserve-prefix-capacity",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -512,6 +522,13 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-kv-slope-projection", "kvslope"),
         ("--fluidserve-gate-slack", "gateslack"),
         ("--fluidserve-z-safety", "z"),
+        # EXP-67. The whole point of this arm is that the treatment differs from
+        # the control, so a flag that did not take effect makes them the same
+        # run under two names -- the failure this function exists to catch.
+        ("--fluidserve-prefix-aware", "prefix"),
+        ("--fluidserve-prefix-calibration", "prefixcalib"),
+        ("--fluidserve-prefix-block-tokens", "prefixblock"),
+        ("--fluidserve-prefix-capacity", "prefixcap"),
     ]
     bad = []
     for flag, key in checks:

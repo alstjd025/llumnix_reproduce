@@ -499,6 +499,18 @@ go build -buildvcs=false \
   같은 문서에 적힌 "배포값" 숫자 자체도 파일과 달랐다 — **인용하기 전에 파일을 연다.**
   §32(클라이언트 TBT 1/1.92)·§40(평균끼리 나눔)과 같은 모양이다: **같은 이름의 두 양이
   같은 정의로 만들어졌는지 확인하지 않은 것.**
+- **`isinstance`로 갈라지는 보호 장치는 자료형이 바뀌면 조용히 꺼진다 (2026-08-08).**
+  `run_experiment.py`의 `_worker_main`에 워커별로 데이터셋을 나누는 줄이 있고 주석이 이유까지
+  적어 뒀다 — *"Disjoint-ish slice per worker so streams differ (reduces exact-duplicate
+  prefix-cache masking)"*. 그런데 조건이 `isinstance(dataset, list)`이고 **mixed 워크로드의
+  `load_dataset`은 dict를 돌려주므로** 그 분할이 통째로 건너뛰어졌다. 예외도 경고도 없다.
+  결과: **워커 12개가 같은 프롬프트 열을 그대로 보내서 모든 프롬프트가 정확히 12번씩 나갔고**,
+  mixed 워크로드를 쓴 모든 run의 **prefix cache hit rate가 부풀려져 있었다**(llm-d 93.5%,
+  FluidServe 75.1%). 도착률·클래스 비율·출력 길이·SLO 채점은 영향이 없다.
+  → **보호 장치를 쓸 때는 그것이 실제로 걸렸는지를 출력한다.** 건너뛴 경우를 조용히 두면
+  기본값으로 도는 것과 구별되지 않는다. 자세한 것은 `ms_dev/notes/fluidserve-prefix.md` §8.
+  → 그리고 **`agent_logs/`는 프롬프트를 약 500 토큰에서 자르므로 프롬프트 내용 분석에 쓰면
+  안 된다.** 그걸로 재서 deepresearch의 공통 접두사를 99.8%로 읽었는데 실제는 약 19.6%다.
 - **"결정했다"를 세는 카운터를 "일어났다"로 읽지 않는다 (2026-08-08, EXP-66).**
   `exp53_compare.py`의 migration 열은 스케줄러 로그의 `Generate rescheduling pairs, count: N`만
   세고 있었다. 그런데 엔진을 migration 없이 띄우면 **스케줄러는 그대로 pair를 결정하고 호출만

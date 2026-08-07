@@ -2179,13 +2179,18 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, "+
-		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, classpin=%v, "+
-		"prefix=%v, prefixcalib=%v, prefixblock=%d, prefixcap=%d, budgets %q",
+		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
+		// The prefix fields sit BEFORE classpin because the deployment script
+		// reads the pin with `classpin=(.+?), budgets `, which needs those two
+		// to stay adjacent. A field inserted between them is swallowed by that
+		// group and the pin check silently compares the wrong text.
+		"prefix=%v, prefixcalib=%v, prefixblock=%d, prefixcap=%d, "+
+		"classpin=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.enableFlux, cfg.classHarm,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
-		formatClassPin(cfg.classPin),
 		cfg.prefixAware, cfg.prefixCalibrate, cfg.prefixBlockToks, cfg.prefixCapacity,
+		formatClassPin(cfg.classPin),
 		p.FluidserveClassBudgets)
 
 	go policy.reportLoop()
