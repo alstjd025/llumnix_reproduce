@@ -14,9 +14,13 @@
 
 **목표**: llm-d보다 SLO 달성률(offered·admitted)과 token goodput이 높을 것.
 
-**현재 버전은 [fluidserve-v0.1.2](fluidserve-v0.1.2.md)** (2026-08-08, 바이너리
-`5a572dc2`). 기본 설정에서는 v0.1.1과 같은 결정을 내리고, 새 메커니즘 셋은 전부 플래그
-뒤에 있다. ⚠ **논문에 쓰려는 arm은 기본 설정이 아니다** — 그 문서 §3.
+**현재 버전은 [fluidserve-v0.2](fluidserve-v0.2.md)** (2026-08-08, 바이너리 `a96dac12`,
+파드에서 검증). v0.1.2와 코드가 같고 **`--fluidserve-prefix-aware`의 기본값만 켜졌다.**
+
+⚠ **arm 이름 규약이 바뀌었다.** `fspfx` = 배포 기본 설정(prefix 켬), `fluidserve` =
+prefix를 끈 ablation. **네 드라이버의 `fluidserve` arm에 `FS_PREFIX=false`를 명시로 박아서**
+기존 `results/*_fluidserve_*`와 같은 설정을 유지한다 — 안 그러면 한 arm 이름이 v0.2 전후로
+다른 설정을 뜻하게 된다. **논문의 "FluidServe"는 `fspfx` 수치다.**
 
 **정본**: prefix 작업 [fluidserve-prefix.md](fluidserve-prefix.md) · 워크로드 결정
 [workload-decision.md](workload-decision.md) · llm-d [llmd-baseline.md](llmd-baseline.md) §9.9 ·

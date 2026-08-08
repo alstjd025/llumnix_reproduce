@@ -423,14 +423,35 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"between trade the two off continuously, which is what makes the degree "+
 			"of class separation an axis that can be swept rather than a switch. "+
 			"Ignored when --fluidserve-enable-affinity=false.")
-	flags.BoolVar(&c.FluidservePrefixAware, "fluidserve-prefix-aware", false,
+	// On by default since v0.2. EXP-69 measured the control and the treatment
+	// with this as the only difference, two repeats at each of three rates, and
+	// every metric moved the same way: offered attainment 64.2 -> 77.6, 49.3 ->
+	// 59.4 and 38.0 -> 48.3 at 35, 45 and 55 req/s, token goodput +13.9 to
+	// +21.7%, rejection 25.3 -> 16.0, 43.2 -> 35.4 and 53.7 -> 46.3%, and the
+	// admitted denominator up as well. The gains are far outside the repeat
+	// spread, which is 0.1 to 4.9 points. The cost is measured rather than
+	// estimated: hashing a prompt is 5.2 to 50.7 microseconds and a lookup is
+	// 0.42 to 4.5, so a request evaluating four instances pays about 70 in the
+	// worst case.
+	//
+	// What it does is charge prefill per instance, which makes the feasibility
+	// test stop refusing instances that could have taken the request. It is NOT
+	// prefix-aware routing: the engine's own cache hit rate is slightly LOWER
+	// with this on at 45 and 55 req/s, and prefix enters neither term of the
+	// candidate sort score. See EXP-69 section 3.2.
+	//
+	// Turning it off reproduces every arm measured before EXP-67. The driver
+	// arms named `fluidserve` set it off explicitly for that reason, so that a
+	// results directory carrying that arm name means the same configuration
+	// whenever it was produced.
+	flags.BoolVar(&c.FluidservePrefixAware, "fluidserve-prefix-aware", true,
 		"Charge an arriving prompt only for the blocks the instance under "+
 			"consideration is not already believed to hold, instead of for a "+
 			"fleet-wide fraction of it. The scheduler keeps its own index of which "+
 			"instance each block of prompt was last dispatched to; it does not query "+
 			"the engines, so it cannot see eviction, and the error that causes is "+
-			"measured by the calibration below. Off by default so that every arm "+
-			"measured before EXP-67 reproduces unchanged. See "+
+			"measured by the calibration below. On by default since v0.2; set it "+
+			"false to reproduce every arm measured before EXP-67. See "+
 			"ms_dev/notes/fluidserve-prefix.md.")
 	flags.BoolVar(&c.FluidservePrefixCalibration, "fluidserve-prefix-calibration", true,
 		"Multiply the prefix-aware charge by the measured ratio between what the "+
