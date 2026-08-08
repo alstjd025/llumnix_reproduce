@@ -10,76 +10,71 @@
 
 ---
 
-## §1 지금 상태 (2026-08-08 02:00 KST 확인)
+## §1 지금 상태 (2026-08-08 11:15 KST 확인)
 
-**정본 절**: implementation.md **§65**. prefix 작업의 정본은
-[fluidserve-prefix.md](fluidserve-prefix.md)이고 **§8이 가장 중요하다**.
+**정본 절**: prefix 작업은 [fluidserve-prefix.md](fluidserve-prefix.md), 워크로드 결정은
+[workload-decision.md](workload-decision.md), llm-d는 [llmd-baseline.md](llmd-baseline.md) §9.9.
+그 앞의 정책 이력은 implementation.md §65.
 
-**사용자 목표 (2026-08-08 지시)**: **llm-d보다 SLO 달성률(offered·admitted)과 token
-goodput이 높을 것.** 그 관점에서 넷을 지시했다 — ① 우리 시스템에 prefix caching을 넣고
-설계·디버깅·실험·기록 ② 워크로드의 prefix hit rate를 현실적으로 낮추고 클래스 비율도 손볼 것
-③ 그러면 우리 강점(미래 예측·PEND)이 드러날 것으로 예상 ④ 정적 rate가 의도대로 나오면
-한 시간 trace도.
+**사용자 목표**: **llm-d보다 SLO 달성률(offered·admitted)과 token goodput이 높을 것.**
 
-### 지금 도는 것 둘
+### 도는 것
 
-1. **EXP-66 rep 2** — llm-d 기준선 8조건. `/home/nxclab/tools/exp66_rep2.log`.
-   02:00 시점 7/8(3600 rpm 측정 중), **≈02:27 KST 종료**.
-   **끝나면**: `python3 analysis_scripts/request_level/exp22_fluidserve.py --runs results/*exp66r2_llmdslo_m1f_rpm_* --out-dir results/aggregate_analysis/exp66r2 --no-figures`
-   그 뒤 두 반복을 합쳐 `bash analysis_scripts/redraw_static_sweep_llmd.sh` 를 다시 돌린다
-   (llm-d 글롭을 `*exp66r*`로 넓혀서).
-2. **EXP-67** — `/home/nxclab/tools/exp67_after_exp66.sh`, 로그 `/home/nxclab/tools/exp67.log`.
-   **rep 2가 끝나기를 기다렸다가 자동으로 시작한다.** 감시도 같이 떠 있다.
-   배포 → 사전점검(양쪽 arm) → `fluidserve`(대조)와 `fspfx`(처리) × 45/55/70 req/s × 2반복
-   = **12조건, 약 4.5시간**, ≈07:00 KST 종료 예상. 결과 접두사 `exp67r{1,2}_{fluidserve,fspfx}`.
+**EXP-68 smoke** — 워크로드 수정을 검증하는 3분 조건. `/home/nxclab/tools/exp68smoke.log`.
+확인할 것 셋: ① `[mixed] shard k/12` 줄이 찍히는가 ② task_id 중복이 12.00 → 1에 가까워지는가
+③ chat 10,000 대화가 메모리·로딩에 문제가 없는가.
 
-### EXP-67이 무엇을 재는가
+### 밤사이 끝난 것 셋
 
-도착 프롬프트의 prefill 비용이 `promptTokens × prefillFractionOf()`(fleet 스칼라 하나)에서
-**`(promptTokens − 그 인스턴스가 이미 들고 있다고 믿는 앞부분) × κ`**로 바뀐다. 스케줄러가
-자기가 어디로 보냈는지를 블록 단위로 기억한다. **"몇 토큰인가"만 교체하고 "그 토큰이 엔진
-시간으로 얼마인가"는 지금의 측정 경로가 그대로 답한다.** KV 발자국은 할인하지 않는다.
-κ는 옛 `prefillFraction`인데 **분모가 바뀌어 뜻이 "예측의 오차"가 된다**(범위도 [0.02,1.0] →
-[0.25,4.0]). 설계·판정 규칙은 `fluidserve-prefix.md`와 `experiments/EXP-67_*.md`.
+**EXP-66 rep 2 (llm-d 기준선, 두 반복 완결)** — 요청 단위 offered:
+15/25/35에서 **우리가 100.0 대 94.8~98.5로 이기고**, 45가 무승부(90.2 대 90.5),
+50~60에서 llm-d가 +9.7~13.0, **70은 확립 안 됨**(차이 +6.0인데 llm-d 반복 폭이 11.7).
+**교차점이 45다.** 격차는 거의 전부 swe이고 우리가 3배 더 거절한다(24.6% 대 7.9%).
 
-⚠ **미리 아는 한계**: `sortCandidates`의 점수가 `w·share + (1−w)·room`(기본 w=1.0)인데
-**prefix는 그 어느 항에도 안 들어간다.** feasibility 판정과 TTFT 판정에만 들어가므로 **지역성은
-feasibility가 구속력을 가질 때만 생긴다.** H1(엔진 hit 75.1% → 85%↑)과 H2(task당 유효 엔진
-2.08 → 1.6↓)가 그것을 잰다. 둘 다 실패하면 다음 선택지는 score에 세 번째 항인데, **그러면
-"예측을 정확하게 만든다"가 "새 목적함수"가 되어 논지의 성격이 바뀌므로 따로 결정한다.**
+**EXP-67 (prefix 인식, 12조건)** — 같은 세션 대조군과 플래그 하나 차이.
 
-### ⚠ 가장 중요한 발견 — 워크로드가 prefix 재사용을 12배로 부풀리고 있었다
+| req/s | 대조 → 처리 | goodput | 거절 | llm-d 대비 |
+|---|---|---|---|---|
+| 45 | 85.2 → **96.2** (+11.0) | +6.7% | −80% | **달성률·goodput 둘 다 앞섬** |
+| 55 | 64.7 → **72.5** (+7.8) | +11.7% | −30% | 달성률 −9.8 (격차 절반), **goodput +1.4%** |
+| 70 | 49.5 → **52.1** (+2.6) | +6.7% | −22% | 달성률 −13.9, goodput −0.6% |
 
-`fluidserve-prefix.md` **§8**이 정본. `run_experiment.py:_worker_main`이 워커별로 데이터셋을
-나누는데(주석에 *"reduces exact-duplicate prefix-cache masking"*까지 적혀 있다) 조건이
-`isinstance(dataset, list)`이고 **mixed 워크로드는 dict를 돌려주므로 그 분할이 한 번도 돈 적이
-없다.** 워커 12개가 같은 프롬프트 열을 그대로 보냈고, **모든 프롬프트가 정확히 12.00번씩** 나갔다
-(chat 25,896/2,158, dr 5,184/432, swe 2,580/215, 45와 70 req/s 둘 다).
+**goodput만 보면 세 rate 전부 llm-d와 같거나 앞선다.** 이득의 대부분이 swe.
+H1 통과(엔진 hit 76.6 → 86.4 at 70), H3 통과. **H2 실패 — 워크로드 때문이다**(§아래).
+H5는 예상이 틀렸다: **memory는 0%이고 gate가 92~96%로 병목**이다.
 
-- **영향받는 것은 prefix hit rate 하나뿐이다.** 도착률·클래스 비율·출력 길이·SLO 채점은 그대로다.
-  그런데 그 하나가 EXP-66에서 llm-d와 우리를 가른 바로 그 양이다 → **EXP-66은 prefix affinity로
-  라우팅하는 정책에 유리한 조건에서 측정됐다.**
-- 재사용은 `1 − (E/R)(1−s)`이고 R=12가 혼자서 90% 위로 밀어올린다.
-- **구조적 공유 s는 진짜다**: swe transcript 1,500개가 **공유 접두사 38.04 M자 / 전체 51.94 M자
-  = s 73.2%**(64자 블록으로 직접 측정; 비율은 문자 비라 토큰화에 안 기댄다. 토큰으로는 기록된
-  평균 6,812 중 약 4,989). deepresearch는 고정 910토큰 시스템 프롬프트 / 4,639토큰 = **약 19.6%**.
-- ❌ **철회**: 앞서 `agent_logs`로 잰 "dr 99.8%"는 틀렸다 — 그 로그는 프롬프트를 약 500토큰에서
-  자른다. **`agent_logs`를 프롬프트 내용 분석에 쓰면 안 된다.**
-- **고치는 패치는 준비돼 있고 적용은 안 했다**: `/home/nxclab/tools/staging/fix_worker_prompt_duplication.py`
-  (`--check`로 적용 가능 여부 확인됨). **EXP-67이 도는 동안 `workloads/`를 고치면 조건마다 다른
-  코드가 되므로 EXP-67이 끝난 뒤에 적용한다.**
-- **비용**: 고치면 워크로드가 달라지므로 EXP-53·57·66의 값과 나란히 못 놓는다. 다섯 arm 재측정이
-  arm당 약 6시간이다. **사용자 결정이 필요하다** — `fluidserve-prefix.md` §8.6에 판단 재료를 적었다.
-  절충안은 FluidServe와 llm-d 둘만 먼저 재서 방향을 보는 것.
+**EXP-67b (κ 되먹임 수정, 55 req/s 2반복)** — **음성.** κ는 의도대로 내려갔는데
+(최소 0.55 → 0.41) **달성률이 72.4 대 72.5로 안 움직인다.** goodput +1.1%, 거절 −10%로 잡음 안.
+→ **prefill 항을 정확히 만들고 나니 더는 prefill이 병목이 아니고 gate가 병목이다.**
 
-### 워크로드 비율 (사용자가 물은 것)
+### 결함 둘을 찾았고 둘 다 고쳤다
 
-지금 `mix`는 **10:2:1**(chat:dr:swe)이고 1:1:1이 아니다. 요청 수로는 76.9/15.4/7.7%,
-**입력 토큰으로는 30.4/43.5/26.1%**(평균 입력 649/4,639/5,557), **출력 토큰으로는 75/11/14%**
-(`out_len` 386/275/728). decode가 엔진 시간을 지배하므로 부하는 chat이 지배한다.
-어느 축을 균형 잡을지는 정해진 적이 없고, `mix_short_m1_balanced.json`의 `_comment`가
-"요청 수 비율을 토큰 몫에 맞춰 다시 조정하지 않는다 — trace 파일과 이전 run들이 그 수를
-담고 있고, 워크로드와 믹스를 같은 단계에서 바꾸면 둘을 구별할 수 없다"고 적어 두었다.
+1. **워커별 데이터셋 분할이 mixed 워크로드에서 한 번도 안 돌았다.** `_worker_main`의 조건이
+   `isinstance(dataset, list)`인데 dict를 돌려준다. 워커 12개가 같은 프롬프트 열을 보내서
+   **모든 프롬프트가 정확히 12.00번씩, 사본 간격 0.11초, 전체 2.1초 안에** 나갔다.
+   → prefix hit rate를 부풀리고, **task 지역성의 상한을 정한다**(H2가 두 arm에서 2.33 대 2.33).
+   **2026-08-08 11:00에 고쳤고 chat 풀을 1,000 → 10,000 대화로 올렸다.**
+2. **κ가 자기 자신에 되먹임됐다** — 참값의 제곱근으로 수렴. 고쳤고 배포됐다(`5a572dc2`).
+
+### 유효성 확인 둘 (사용자 질문)
+
+- **oracle 아니다.** `SchedulingRequest`에 출력 길이 필드가 없고, `requestBudget(tier)`는 인자가
+  tier 하나이며, 디코드 중 추정은 엔진 step 카운터에서 추론한 진행량을 쓴다. 클라이언트는 전부
+  `max_tokens=4096` 고정. transcript의 실제 길이는 분석에만 쓰인다.
+- **프로파일 수정 안 됐다.** ConfigMap이 저장소 파일과 일치(swe 494.0 / chat 428.0 /
+  deepresearch 984.8 = 2026-08-02 재적합). EXP-63 스케일본이 아니다.
+
+### 다음
+
+1. **smoke 확인 후 재측정** — FluidServe·fspfx·llm-d × 45/55/70 × 2반복(18조건, 약 6.5시간).
+   ⚠ 워크로드가 바뀌었으므로 **EXP-53·57·66·67과 나란히 놓을 수 없다.**
+2. **길이 프로파일 재확인** — task 집합이 바뀌면 출력 길이 분포도 움직일 수 있다(함정 A).
+   `classes[]`만 대조하고 2.5% 안이면 그대로 둔다.
+3. **gate가 새 병목** — swe가 gate에 막히는 것은 인스턴스에 chat이 하나라도 있으면 허용 속도가
+   chat 예산 50 ms가 되기 때문이다. 이미 탐색한 축(`gateSlack`, `ownBudgetGate`, EXP-46/50/52)을
+   다시 볼 값어치가 있다.
+4. **한 시간 trace는 아직 못 고쳤다** — 도착 181,733건(chat 142,067 / dr 21,512 / swe 18,154)이라
+   chat은 42,357 대화, **swe는 transcript 18,154건이 필요한데 short7k는 1,500건뿐**이다.
 
 **최근 끝난 것 둘**:
 - **EXP-62**(04:09 KST, 18조건) — **QoServe가 PolyServe에서는 도움이 된다**(+0.98 / +2.65 /
