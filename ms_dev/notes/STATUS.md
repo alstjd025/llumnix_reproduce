@@ -14,6 +14,10 @@
 
 **목표**: llm-d보다 SLO 달성률(offered·admitted)과 token goodput이 높을 것.
 
+**현재 버전은 [fluidserve-v0.1.2](fluidserve-v0.1.2.md)** (2026-08-08, 바이너리
+`5a572dc2`). 기본 설정에서는 v0.1.1과 같은 결정을 내리고, 새 메커니즘 셋은 전부 플래그
+뒤에 있다. ⚠ **논문에 쓰려는 arm은 기본 설정이 아니다** — 그 문서 §3.
+
 **정본**: prefix 작업 [fluidserve-prefix.md](fluidserve-prefix.md) · 워크로드 결정
 [workload-decision.md](workload-decision.md) · llm-d [llmd-baseline.md](llmd-baseline.md) §9.9 ·
 실험 `experiments/EXP-66/67/68_*.md`.
