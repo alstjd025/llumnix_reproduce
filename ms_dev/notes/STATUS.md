@@ -10,7 +10,7 @@
 
 ---
 
-## §1 지금 상태 (2026-08-08 18:45 KST 확인)
+## §1 지금 상태 (2026-08-08 22:20 KST 확인)
 
 **목표**: llm-d보다 SLO 달성률(offered·admitted)과 token goodput이 높을 것.
 
@@ -68,6 +68,31 @@ chat을 43.2% 거절하고 반복 2는 68.8% 거절한다. 예측기가 조건�
 python3 analysis_scripts/request_level/exp22_fluidserve.py   --runs $(ls -d results/*exp68sr*_rpm_* | grep -v PRERUN)   --out-dir results/aggregate_analysis/exp68sweep
 ```
 
+### 끝난 것: EXP-69 대조군 — **prefix 인식은 우위의 30~39%이고 나머지는 기본 정책이다**
+
+`fluidserve`(prefix 없음) 6조건, 20:19 KST 완료. `fspfx`와 **환경변수 `FS_PREFIX` 하나만
+다르고** 바이너리는 같은 `5a572dc2`다. 정본은 `experiments/EXP-69_prefix-control.md`,
+그림은 `results/aggregate_analysis/exp69_control`.
+
+| req/s | `fluidserve` 대조 | `fspfx` | **prefix의 이득** | llm-d | 기본 정책의 몫 |
+|---|---|---|---|---|---|
+| 35 | 64.2 | **77.6** | **+13.5** | 42.9 | **+21.2** |
+| 45 | 49.3 | **59.4** | **+10.2** | 24.9 | **+24.3** |
+| 55 | 38.0 | **48.3** | **+10.3** | 21.0 | **+17.0** |
+
+**대조군이 prefix 인식 없이도 llm-d를 세 rate 전부에서 앞선다.** goodput +13.9~21.7%,
+거절 −7.4~9.2%p. EXP-68의 H3이 닫혔다.
+
+⚠ **기제가 "캐시 있는 곳으로 보낸다"가 아니다.** 엔진 prefix hit rate가 45/55에서 오히려
+1.5%p 낮은데(23.9 → 22.3, 24.8 → 23.3) 거절이 7%p 줄고 토큰은 10% 늘었다. **prefill 비용을
+인스턴스별로 정확히 매기게 되어 admission이 덜 보수적이 된 것**이다. prefix는
+`sortCandidates` 점수에 안 들어가고 feasibility·TTFT 판정에만 들어간다.
+→ **"prefix-aware routing"이라고 쓰면 안 된다.** "prefill 비용을 인스턴스별로 정확히 매긴다"다.
+
+⚠ **task당 유효 엔진 수는 이 워크로드에서 어느 방향으로도 못 잰다** — 수정 전에는 사본 12개가
+동시에 와서, 수정 후에는 task가 요청을 하나만 내서다(55 req/s에서 요청 2개 이상인 task가
+8~92개뿐). EXP-67 H2의 값을 인용하면 안 된다.
+
 ### 첫 탐침 결과 — 70 req/s에서 **뒤집혔다** (EXP-68 §4, 4조건 완료)
 
 | 70 req/s (2반복 평균, 괄호는 폭) | **fspfx** | llm-d |
@@ -110,8 +135,8 @@ llm-d 57.9 → 17.7,
 
 ### 결정이 필요한 것
 
-1. **대조군 `fluidserve`를 새 워크로드에서 잴 것인가** — "prefix 인식이 새 워크로드에서 얼마를
-   벌었나"에 답한다. +6조건 약 2.3시간.
+1. ~~대조군 `fluidserve`~~ — **닫혔다 (EXP-69)**. prefix 인식이 +13.5 / +10.2 / +10.3점이고
+   기본 정책이 나머지 +21.2 / +24.3 / +17.0점이다.
 2. **한 시간 trace** — 아직 못 고쳤다. chat 42,357 대화, **swe transcript 18,154건**이 필요한데
    short7k는 1,500건뿐이다. 새로 만드는 것이 별도 작업.
 3. **믹스 비율과 swe 시스템 프롬프트** — 같은 단계에서 안 바꾸기로 했다. "agent 약 60%"에
