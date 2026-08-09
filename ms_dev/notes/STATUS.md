@@ -52,14 +52,30 @@ EXP-70이 무릎을 v0.2 28.1 / llm-d **18.7**로 쟀는데 예전 대역은 93%
 
 ### 도는 것 / 대기 중
 
-| | 무엇 | 종료 (2026-08-09 18:00 KST 기준) |
+| | 무엇 | 종료 (2026-08-09 20:35 KST 기준) |
 |---|---|---|
-| 도는 중 | **EXP-71 arms** pass 2 — Llumnix SLO 진행 중, 그다음 PolyServe | ≈19:25 KST |
-| 대기 | **EXP-72** — 그 둘의 **정적** sweep, 8 rate × 1반복 = 16조건 | ≈23:45 KST |
-| **준비만 됨, 안 걸었다** | **EXP-73** — 보유·클래스 선호의 2×2 귀착 사다리, 4 arm × 3 rate × 2반복 = 24조건 약 6.5시간. `bash /home/nxclab/tools/exp73_ladder.sh` | — |
+| 도는 중 | **EXP-72** — PolyServe·Llumnix SLO의 **정적** sweep, 8 rate × 1반복 = 16조건. 20:30에 다시 걸었다 | ≈00:50 KST |
+| **준비만 됨, 안 걸었다** | **EXP-73** — 보유·클래스 선호의 2×2 귀착 사다리, 4 arm × 3 rate × 2반복 = 24조건 약 6.5시간. `bash /home/nxclab/tools/exp73_ladder.sh` (EXP-72 종료를 기다린다) | — |
+| 끝남 | **EXP-71** — 네 컨트롤플레인 × 2반복 한 시간 trace (20:20 KST) | — |
 
-**pass 1은 네 arm 다 끝났고 채점·그림·기록까지 했다** — `experiments/EXP-71_*.md` §3.5,
-`results/aggregate_analysis/exp71_four/`(README 포함).
+⚠ **EXP-72의 첫 시도는 20:23에 3분 만에 죽었다.** 체인이 rate 목록을 공백으로 넘겼는데
+`run_experiment.py --rate-list`는 쉼표로 나눈다. **체인은 정상 종료했고 결과만 0이었다** —
+자세한 것은 CLAUDE.md 함정 B의 새 항목. 두 스크립트 다 고쳤고 인자 검사를 넣었다.
+
+**EXP-71은 네 arm × 2반복으로 끝났고 채점·그림·기록까지 했다** —
+`experiments/EXP-71_*.md` §3.5, `results/aggregate_analysis/exp71_four/`(pass 1, README 포함)와
+`.../exp71_four_b/`(pass 2).
+
+| 한 시간 trace (2반복, 괄호는 폭) | offered | 거절 | goodput | 총 출력 |
+|---|---|---|---|---|
+| **FluidServe v0.2** | **81.0** (1.5) | 15.8% | **10,865** | 11,501 |
+| llm-d | 56.7 (1.8) | 38.7% | 8,367 | 8,864 |
+| Llumnix SLO | 37.6 (0.2) | 31.3% | 5,503 | 10,007 |
+| **PolyServe** | **11.2** (0.0) | 0.0% | **1,566** | **11,145** |
+
+**정적 파티션이 우리의 96.9%에 해당하는 토큰을 만들고 규칙 안에 도착하는 것은 6.9배 적다.**
+그리고 **반복 폭이 정책마다 0.0에서 1.8까지 다르다** — 배정이 구성으로 정해지는 둘이 거의
+완벽하게 재현된다(EXP-71 §3.5.1).
 
 EXP-72가 끝나면 `python3 paper_figures/fig_intro_capacity.py` 한 번으로 intro 그림이
 막대 넷이 된다.
