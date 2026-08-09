@@ -157,7 +157,7 @@ admission의 공격성을 재고, 믹스 스케줄이 작동할 여유가 없다
 **사고 하나**: `llm-d @15`가 `ABORT: engines not serving after restart`로 빠졌다(함정 F,
 우리 변경과 무관). 체인이 건너뛰고 진행했고 데이터 오염은 없다. 재실행 중.
 
-### 끝난 것: EXP-69 대조군### 끝난 것: EXP-69 대조군 — **prefix 인식은 우위의 30~39%이고 나머지는 기본 정책이다**
+### 끝난 것: EXP-69 대조군 — **prefix 인식은 우위의 30~39%이고 나머지는 기본 정책이다**
 
 `fluidserve`(prefix 없음) 6조건, 20:19 KST 완료. `fspfx`와 **환경변수 `FS_PREFIX` 하나만
 다르고** 바이너리는 같은 `5a572dc2`다. 정본은 `experiments/EXP-69_prefix-control.md`,
