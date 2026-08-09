@@ -52,13 +52,22 @@ EXP-70이 무릎을 v0.2 28.1 / llm-d **18.7**로 쟀는데 예전 대역은 93%
 
 ### 도는 것 / 대기 중
 
-| | 무엇 | 종료 |
+| | 무엇 | 종료 (2026-08-09 18:00 KST 기준) |
 |---|---|---|
-| 도는 중 | **EXP-71 arms** — Llumnix SLO·PolyServe 한 시간 trace, 2 arm × 2 pass | ≈18:30 KST |
-| 대기 | **EXP-72** — 그 둘의 **정적** sweep, 8 rate × 1반복 = 16조건. 앞 체인의 프로세스 종료를 기다린다 | ≈22:50 KST |
+| 도는 중 | **EXP-71 arms** pass 2 — Llumnix SLO 진행 중, 그다음 PolyServe | ≈19:25 KST |
+| 대기 | **EXP-72** — 그 둘의 **정적** sweep, 8 rate × 1반복 = 16조건 | ≈23:45 KST |
+| **준비만 됨, 안 걸었다** | **EXP-73** — 보유·클래스 선호의 2×2 귀착 사다리, 4 arm × 3 rate × 2반복 = 24조건 약 6.5시간. `bash /home/nxclab/tools/exp73_ladder.sh` | — |
+
+**pass 1은 네 arm 다 끝났고 채점·그림·기록까지 했다** — `experiments/EXP-71_*.md` §3.5,
+`results/aggregate_analysis/exp71_four/`(README 포함).
 
 EXP-72가 끝나면 `python3 paper_figures/fig_intro_capacity.py` 한 번으로 intro 그림이
 막대 넷이 된다.
+
+**EXP-73을 걸지 말지가 지금 가장 큰 판단이다.** `motivation_v2.md` §3.3의 분류 격자에서
+비어 있는 칸 하나(A2×B3 = `--fluidserve-enable-pend=false`)가 **"라우팅과 admission이 같은
+판정 조건에서 나와야 한다"는 주장이 서는지 무너지는지를 정한다.** 코드 변경 0줄이고 판정
+규칙은 실행 전에 `experiments/EXP-73_attribution-ladder.md` §3에 적어 뒀다.
 
 ---
 
@@ -147,6 +156,21 @@ EXP-72가 끝나면 `python3 paper_figures/fig_intro_capacity.py` 한 번으로 
   docstring과 `paper_figures/README.md`.
 - `results/aggregate_analysis/motivation_llmd/` — motivation 그림 3에 llm-d를 올린 판.
   ⚠ **수정 이전 워크로드라 거기서는 llm-d가 45.8로 1위다.** intro 그림과 섞으면 안 된다.
+- `results/aggregate_analysis/exp71_four/` — **네 컨트롤플레인이 한 시간 trace에서 처음으로
+  한 표에 들어간 그림 묶음** (2026-08-09). 주 그림은 `compare_rpm_hour.png`(엔진 계층 4×4)와
+  `class_goodput_hour.png`(PolyServe의 chat goodput이 한 시간 내내 사실상 0). 폴더의
+  `README.md`에 그림마다 무엇을 주장하고 무엇을 말하지 않는지가 있다. **pass 1 1반복.**
+
+### 새 문서 하나
+
+- **[motivation_v2.md](motivation_v2.md)** (2026-08-09) — motivation 논증을 **목표 정의 →
+  라우팅 계층의 문제임 → 기존 연구 분류(admission 축 × routing 축) → 어려움 셋 → 설계 대응**
+  순서로 다시 쌓은 판. **측정의 정본은 여전히 `motivation.md`이고, 수치가 어긋나면 그쪽이
+  맞다.** 이 판이 새로 담은 것 셋: ① §1.2가 **물리적으로 참인 것과 우리 admission 규칙이
+  만든 것을 갈라 적는다**(`gateAllowance` 50.0 대 `tightestAllowance` 68.3~72.7), ② §3의
+  분류가 **격리 대 혼합을 측정된 반례로 버리고** 두 축으로 바꿨다, ③ §7.5가 **설계 요소의
+  측정된 효과 크기 순위가 서사 순서와 다르다는 것을 그대로 적는다**. §10에 측정 신뢰도
+  단서를 모아 뒀다.
 
 ## §2 어느 문서부터 읽나
 
