@@ -55,7 +55,7 @@ EXP-70이 무릎을 v0.2 28.1 / llm-d **18.7**로 쟀는데 예전 대역은 93%
 | | 무엇 | 종료 (2026-08-09 20:35 KST 기준) |
 |---|---|---|
 | 도는 중 | **EXP-72** — PolyServe·Llumnix SLO의 **정적** sweep, 8 rate × 1반복 = 16조건. 20:30에 다시 걸었다 | ≈00:50 KST |
-| **준비만 됨, 안 걸었다** | **EXP-73** — 보유·클래스 선호의 2×2 귀착 사다리, 4 arm × 3 rate × 2반복 = 24조건 약 6.5시간. `bash /home/nxclab/tools/exp73_ladder.sh` (EXP-72 종료를 기다린다) | — |
+| 대기 | **EXP-73** — 보유(PEND)·클래스 선호의 2×2 귀착 사다리, 4 arm × 3 rate × 2반복 = 24조건. **2026-08-09 22:07 KST에 걸었고 EXP-72 종료를 프로세스 생사로 기다린다** | ≈07:25 KST |
 | 끝남 | **EXP-71** — 네 컨트롤플레인 × 2반복 한 시간 trace (20:20 KST) | — |
 
 ⚠ **EXP-72의 첫 시도는 20:23에 3분 만에 죽었다.** 체인이 rate 목록을 공백으로 넘겼는데
@@ -80,10 +80,11 @@ EXP-70이 무릎을 v0.2 28.1 / llm-d **18.7**로 쟀는데 예전 대역은 93%
 EXP-72가 끝나면 `python3 paper_figures/fig_intro_capacity.py` 한 번으로 intro 그림이
 막대 넷이 된다.
 
-**EXP-73을 걸지 말지가 지금 가장 큰 판단이다.** `motivation_v2.md` §3.3의 분류 격자에서
-비어 있는 칸 하나(A2×B3 = `--fluidserve-enable-pend=false`)가 **"라우팅과 admission이 같은
-판정 조건에서 나와야 한다"는 주장이 서는지 무너지는지를 정한다.** 코드 변경 0줄이고 판정
-규칙은 실행 전에 `experiments/EXP-73_attribution-ladder.md` §3에 적어 뒀다.
+**EXP-73이 지금 가장 중요한 실험이다.** `motivation_v2.md` §3.3의 분류 격자에서 비어 있는
+칸 하나(A2×B3 = `--fluidserve-enable-pend=false`)가 **"라우팅과 admission이 같은 판정
+조건에서 나와야 한다"는 주장이 서는지 무너지는지를 정한다.** 코드 변경 0줄이고 판정 규칙과
+**반증 조건**은 실행 전에 `experiments/EXP-73_attribution-ladder.md` §3에 적어 뒀다.
+→ **결과가 나오면 §3을 먼저 읽고 그 규칙대로 판정한다. 규칙을 결과에 맞춰 고치지 않는다.**
 
 ---
 
