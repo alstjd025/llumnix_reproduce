@@ -1598,3 +1598,100 @@ python3 ms_dev/scripts/check_numbers.py ms_dev/notes/motivation_v2.md
 ```
 
 ⚠ **`check_numbers.py`의 기본 대상 목록에 이 파일이 아직 없다.** 인자로 직접 줘야 검사된다.
+
+---
+
+## 부록 A. 논문에 그대로 옮길 수 있는 여덟 문장 (영문)
+
+**논증을 떠받치는 문장을 영어로 적어 둔다.** 논문은 영어로 쓸 것이고, 번역 단계에서 단서가
+떨어져 나가는 것이 이 프로젝트가 반복해서 겪은 오류이기 때문이다. 각 문장 뒤에 **그 문장이
+성립하려면 캡션이나 각주에 같이 있어야 하는 것**을 적었다.
+
+⚠ **여덟이 필요하고 다섯으로는 안 된다.** 앞의 다섯만 읽으면 "그러면 엔진 스케줄러를
+고치면 되지 않나"와 "그러면 클래스마다 인스턴스를 떼어 주면 되지 않나"에 답이 없고,
+"7.0배"가 무엇의 배수인지도 정의되지 않는다. 6·7·8번이 그 셋을 각각 막는다.
+
+### 1. 메커니즘 (§1.2.1)
+
+> An instance produces one token-generation rate at a time, shared by every
+> request resident on it. Admitting a request therefore does not consume capacity
+> in proportion to that request: it changes the rate every other resident
+> receives.
+
+같이 적을 것: 이것은 연속 배칭의 성질이다. **"따라서 그 인스턴스는 새 요청을 받으면 안
+된다"는 여기서 따라 나오지 않는다** — 그것은 admission 규칙이 정하고, 규칙에 따라 명목
+예산의 최솟값(50.0 ms)과 남은 예산의 최솟값(68.3~72.7 ms) 중 어느 것으로 재느냐가 갈린다.
+
+### 2. 그래서 용량이 라우터의 함수가 된다 (§1.2.1)
+
+> Capacity is therefore not additive over requests. It depends on how requests
+> are grouped, and the grouping is the router's output.
+
+같이 적을 것: 스텝 법칙 `t = 16.361 + 1.2822e-5·M + 0.07643·n`(R² 0.952, 표본 377,838)의
+두 변수가 모두 그 인스턴스에 무엇을 보냈는지로 정해진다는 것.
+
+### 3. 문제가 실제로 있다 (§1.4.2)
+
+> On the same four engines, the same request mix and the same latency rules, a
+> static class partition produces 96% as many output tokens as our policy and
+> delivers 7.0 times fewer of them inside their own latency rule.
+
+같이 적을 것: 한 시간 trace, **pass 1 한 번**, 수정 후 워크로드. 11,126 대 11,563 tok/s,
+goodput 1,571 대 10,975. **PolyServe는 하나도 거절하지 않는다.**
+
+### 4. 위반의 원인이 미래에 있다 (§4.2)
+
+> A per-token latency budget is violated by requests that arrive after the
+> request in question has already been placed. Admission cannot honour such a
+> budget by deciding once at arrival; it has to constrain what is placed next.
+
+같이 적을 것: 첫 토큰까지의 시간에는 이 성질이 없다. **이것이 admission과 routing을 같은
+결정으로 묶어야 하는 첫 번째 이유다.**
+
+### 5. 판정 조건은 필요조건이고 충분조건이 아니다 (§3.5)
+
+> Testing a candidate instance against the tightest budget resident on it is
+> necessary but not sufficient. It says the current placement is bad; what
+> placement to build instead is decided by the tie-break among the candidates
+> that pass, and every existing system breaks that tie by load.
+
+같이 적을 것: llm-d가 같은 형태의 조건(`podMinTPOTSLO`)을 갖고도 한 시간 trace에서
+**채팅 없는 (인스턴스, 시각) 쌍이 0.1%**이고 38.7%를 거절한다는 것(2반복).
+
+### 6. 엔진 계층으로는 못 고친다 (§2.2)
+
+> A deadline-aware engine scheduler recovers 2.8 points inside an instance whose
+> queue the router should not have created, in the same session in which the
+> placement itself costs 60 points.
+
+같이 적을 것: EXP-62, PolyServe × {FIFO, QoServe}, 45 req/s. **되찾은 2.8점이 전부 채팅
+클래스의 것**이고 나머지 둘은 이미 99~100%였다. 그리고 같은 실험을 Llumnix 위에서 하면
+부호가 반대다(−0.9~−1.1).
+
+### 7. capacity의 정의 (§1.3)
+
+> We report the highest offered request rate at which at least 90% of arriving
+> requests meet their own per-class latency rule, counting rejections as
+> violations, interpolated between the two measured rates that bracket the
+> threshold.
+
+같이 적을 것: **거절이 위반으로 세어지므로 거절해서 이 값을 살 수 없다.** 그리고 통과선을
+70·80·90% 어디에 그어도 정책 간 비가 1.49~1.52다(95%에서는 2.08). ⚠ **90%를 지나는 지점이
+반복 1회 구간에 있다**(§10.2).
+
+### 8. 반대 극단도 답이 아니다 (§4.4)
+
+> Giving each class its own instances removes that failure and introduces a
+> different one: the allocation is integral, so a class that needs 2.56 of four
+> instances receives one, and the class that needs it is 76.9% of the requests.
+
+같이 적을 것: 그 배분이 **우리와 같은 길이 프로파일에서 유도된다**(EXP-57 이후). 그러므로
+"당신들만 워크로드 정보를 갖고 있어서 불공정하다"는 반론이 이 표에 대해서는 성립하지 않는다.
+남는 차이는 그 정보를 **어떻게 쓰는가**다.
+
+---
+
+⚠ **이 여덟 개 중 어느 것도 "우리가 이긴다"가 아니다.** 그것은 evaluation의 문장이고,
+motivation은 **문제가 있고, 그 문제가 라우팅 계층의 것이며, 자연스러운 답 둘이 둘 다
+어긋난다**까지만 말한다.
+
