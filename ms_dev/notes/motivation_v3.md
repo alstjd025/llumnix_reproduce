@@ -1153,6 +1153,22 @@ lazy promotion(미구현), DSLO 채점(미사용). **특히 lazy promotion은 �
 
 # 6. 지금 초고(`paper-draft-sec2-3.tex`)와 측정이 어긋나는 곳
 
+**먼저 한 표로.** 초고를 고칠 때 이 순서로 하면 된다.
+
+| # | 초고의 문장 | 왜 어긋나나 | 대신 쓸 것 |
+|---|---|---|---|
+| 1 | "Llama 3.3 70B" | 실제로 도는 것이 다르다 | **Llama-3.1-70B** (§6.1) |
+| 2 | "ideal serving capacity is where SLO attainment and token goodput is maximized" | 두 지표가 같은 점에서 최대가 되지 않고 순위가 뒤집힌다 | §2.3.1의 운영적 정의 (§6.2) |
+| 3 | Approaches가 셋 | 가장 강한 기준선 llm-d가 빠져 있다 | llm-d를 넣고, Llumnix는 수정 후 재측정이 필요하다고 밝힌다 (§6.3) |
+| 4 | Metrics가 넷 | 거절률과 세 갈래 분해가 없다 | 다섯으로 (§3.1의 Metrics, §6.4) |
+| 5 | "Llumnix and Polyserve constantly maximize throughput" | 어느 arm도 그렇지 않다 | §3.1.1 표 3 아래 세 줄 (§6.5의 ①) |
+| 6 | "collapse in all three approaches from 25~35 req/s" | 무너지는 지점이 정책마다 1.78배 다르고 **그 차이가 논문의 주장이다** | 정책별 값을 따로 (§6.5의 ②) |
+| 7 | "goodput dropped about 30%" | 수정 후 워크로드에서는 92%다 | 어느 워크로드·어느 도착률인지 밝힌다 (§6.5의 ③) |
+| 8 | "(3) Engine is already working with maximum effort" | 반증된다 | "총 출력보다 goodput이 훨씬 크게 갈린다" (§6.6) |
+| 9 | "(2) some others are busy, while others are not?" | 정책마다 다르다 | 정책별로 따로 적는다 (§6.6) |
+| 10 | "impossible to capture the effect of existing requests" | 과한 표현이다 | "스냅샷 신호에 상주 요청의 미래 출력이 없다" (§6.7) |
+| 11 | teaser 그림 `exp55_class_knees.pdf` | 수정 전 워크로드다 | `intro_capacity_curves.pdf` (§6.8) |
+
 **초고는 형식의 정본이지 내용의 정본이 아니다**(작성자 본인이 그렇게 밝혔다). 아래는 그
 초고의 문장을 그대로 쓰면 측정과 어긋나는 자리와, 대신 쓸 수 있는 문장이다. **번호가 아니라
 초고의 위치로 정렬했다.**
