@@ -1,0 +1,93 @@
+% 사용자가 2026-08-10에 붙여 준 실제 논문 초고의 §2(Background)와 §3(Motivation).
+% 사용자의 말: "내용은 꼭 이거일 필요는 없어(틀렸거나, 확실히 주장하기 어려운 것들이
+% 있을텐데 일단 그냥 써본거야)". 즉 이 파일은 **내용의 정본이 아니라 형식의 정본**이다 —
+% depth가 깊어지는 정도, 흐름, 어휘, 문장 스타일을 여기에 맞춘다.
+% motivation_v3.md가 이 뼈대를 따른다.
+
+\section{Background}
+\subsection{Heterogeneous LLM Workloads and SLOs}
+\begin{itemize}
+    \item Interactive (TTFT, TBT), Non-interactive (E2EL)
+    \item \blue{Mixed, min request rate from max rate diverges to xx.., compound changes across time}
+\end{itemize}
+\subsection{LLM Serving Infrastructures}
+\begin{itemize}
+    \item Scalability, Multi-instance, router, scheduler architecture, scheduling and routing for TBT, TTFT, load balancing [?], load shedding(drops or rejects to handle or prevent overloaded scenarios) [?], schedulings(EDF [?], FIFO [?])
+\end{itemize}
+To efficiently serve,, in such envinronments(hetero SLO, fluctuating, mixed load),, serving infrastructures adopt multi-instance which consist of router and serving instances where each instance serves as an serving engine e.g., vllm~\cite{vllm}, sglang~\cite{SGLang}.
+
+To meet the distinct SLO target of LLM inference, existing schedulers in serving engine utilize various techniques. First, in terms of TTFT, which is determined by prefill, existing works devides prefill computation in fine grained units, i.e., chunks, to minimize the blocking effect and adapt deadline based dynamic scheduling that prioritizes or preempts the prefill computation~\cite{QoServe,vllm,jitserve,sarathi_serve, Agentix}.
+For TBT, xxx,,, limiting the batch size or KV cache size of batch,,,
+
+While each instance works as xxx, their xxx is limited as they are agnostic to other instances in the same node. routers...?
+
+
+\subsection{Maintaining Ideal Serving Capacity}
+The goal of routing plane is to maintain the ideal serving capacity of instances. The ideal serving capacity is where SLO attainment and token goodput is maximized.
+
+
+
+
+\section{Motivation}
+\subsection{Problems with Existing Routing Schemes}
+To highlight and analyze the limitations of existing routing approaches, we conduct a motivational experiment. The experiment setups are as follows.
+
+\noindent\textbf{Testbed.}
+Llama 3.3 70B [?], NVIDIA B200x8, 4 vllmd instances, FCFS scheduler unless otherwise mentioned.
+
+\noindent\textbf{Workloads.}
+To follow the .... we mixed three different types of workloads,, xx (more details are in section~\ref{sec:eval})
+
+\noindent\textbf{Approaches.}
+We use three state of the art request routers. Llumnix~\cite{Llumnix} routes.... xxx, Llumnix SLO routes requests based on estimated TTFT and TPOT, which is... Polyserve~\cite{polyserve} isolates...
+
+\noindent\textbf{Metrics.}
+Throughput, Token goodput, SLO attainment (offered), SLO attainment (admitted).
+
+\textbf{Routing makes difference.}
+In figure~\ref{fig:exp_motivation} (a), except for Llumnix SLO, Llumnix and Polyserve constantly maximize throughput under high request rate. However, the \textbf{(b) goodput tokens} and \textbf{(c) request SLO attainment}, start to collapse in all three approaches from 25$\sim$35 req/s xxxx (additional details).
+Load shedding failures. There exists rejection mechansims in routing layer. Llumnix SLO xxxx (additional details), goodput tokens dropped about $30\%$ compared to its peak.
+(1) By changing the routing policy,, (2) some others are busy, while others are not? (3) Engine is already working with maximum effort.
+
+
+
+\subsubsection{SLO-centric Engine Schedulers.}
+Even with SLO-centric engine schedulers~\cite{QoServe,jitserve,Agentix}, once the capacity overshoots, they fail to meet SLOs. Hence the instances expect to control plan to maintain thier serving capacity [?], their rejection mechanisms are naive, i.e., waiting time based timeout, TTFT, TBT estimation based on current batch [?]. Also, re-routing with SLO aware schedulers fails due to global agnosticity and wastes..
+
+
+\begin{itemize}
+    \item throughput
+    \item goodput token, slo attain drop
+    \item hidden load shedding failure,
+\end{itemize}
+
+% \begin{figure}
+%     \centering
+%     \includegraphics[width=1\linewidth]{EXP_FIG/exp55_class_knees.pdf}
+%     \caption{SLO attainment and token goodput over varying request rates.}
+%     \label{fig:exp_teaser}
+% \end{figure}
+
+\noindent\textbf{Goal.} In this paper,
+
+\subsection{Challenge}
+However, achieving such a goal is non-trivial due to...
+\subsubsection{Binded SLOs.} Unlike... can be controlled by scheduling~\cite{clockwork}..., due to the continous batching~\cite{Orca}, every running decode requests in an instance generaetes single token within one forward step.
+
+\subsubsection{Heterogeneous Load Signals.} To make efficient routing decisions, i.e., where to route, pend or reject, observing the precise information about instances service load is important. However, due to the request heterogeneity, the load signals are often imprecise, resulting in poor routing decisions.
+
+Unlike traditional, large-scaled distributed systems~\cite{Protego, Aequitas} which exploit load signals such as queue length, arriving request rates and SLIs(service-level-indicators, i.e., latency), the LLM serving system
+\begin{itemize}
+    \item Data (3 workloads, req rate-SLO attainment, avg KV occupancy, queue length, batch size)
+    \item One dimension can fail while another is safe $\rightarrow$ overload signal is heterogeneous across workloads. So, parameter centric approaches~\cite{Llumnix, LMETRIC}(dyanamo, vllm) are inefficient
+    \item Snapshot based load estimations
+    \item Common signals, TTFT, TBT, SLIs (service level indicators), can lead to cascading failure, because it is impossible to capture the effect of existing requests by admitting a new request $\rightarrow$ falls into bad feedback cycle[?].
+    \item \ms{this leads to modeling based approach? then what it the difference between modeling based approaches?(SLOs-Serve, AdaGen..)}
+\end{itemize}
+
+\subsubsection{Isolation VS. Mixture.} One simple solution is isolation, where routing requests in SLO typed bins,,,xxx. However, the isolation easily falls into resource underutilization or overadmission xxxx. Hence, its efficiency is limited under highly controlled and predictable environments, where the number of requests SLOs met the size of instance pool and xx.. Even though Polyserve~\cite{polyserve},, xxxx ,,, still inefficient,,,.
+On the other hand, the mixing stretagy,,
+\begin{itemize}
+    \item Inefficiency of isolation
+    \item Inefficiency of mixture
+\end{itemize}
