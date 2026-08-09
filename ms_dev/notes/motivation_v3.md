@@ -102,6 +102,11 @@ mixed 워크로드에서 한 번도 실행되지 않아서, 워커 12개가 같�
 | deepresearch | 검색 결과로 긴 보고서 작성 | 10초 | 토큰 하나당 **100 ms** | 4,639 | 985 | 15.4% |
 | swe | 코딩 에이전트의 한 호출 | 11.8초 | **전체가 30초 안에** 끝날 것 | 5,557 | 520 | 7.7% |
 
+⚠ **요청 비중 76.9%는 정적 조건의 값이다.** 위 비율 10:2:1을 요청 수로 그대로 돌리면
+76.9 / 15.4 / 7.7%가 되고, 정적 sweep이 그것이다. **한 시간 trace는 구성이 15분마다
+바뀌므로 전체를 합친 실측이 78.1 / 11.9 / 10.0%**로 조금 다르다. 이 문서는 정적 조건의
+수치 옆에는 76.9%를, 한 시간 trace의 수치 옆에는 78.1%를 쓴다.
+
 **여기서 논문이 써야 하는 사실은 "예산의 크기가 다르다"가 아니라 "예산의 형태가 둘이다"라는
 것이다.** chat과 deepresearch는 토큰당 시간으로 판정되고 swe는 전체 시간으로 판정된다.
 **전체 시간 예산은 토큰당 임계 하나로 표현되지 않는다** — 남은 토큰이 많으면 느려도 되고
@@ -585,7 +590,7 @@ chat이 요청의 76.9%이므로 chat은 곧 모든 인스턴스에 도달한다
 
 > **Giving each class its own instances removes that failure and introduces a
 > different one: the allocation is integral, so a class that needs 2.56 of four
-> instances receives one — and that class is 76.9% of the requests.**
+> instances receives one — and that class is 78.1% of the requests.**
 
 격리는 실제 시스템이고(PolyServe, QoServe의 silo 구성), §3.2.1의 첫 실패는 실제로 사라진다.
 그런데 셋이 새로 생긴다.
@@ -783,7 +788,7 @@ A3│ 배치와 같은│ —          │ ★ class-pin   │ ★ affinity=off 
 
 llm-d는 §3.2.2에서 본 대로 **우리와 같은 형태의 판정 조건**을 갖는다. 즉 §3.2.1의 메커니즘을
 알고 있다. 그런데 축 B에서 B2다 — 결합을 만들지 않고, 판정을 통과한 후보 중 부하가 적은 곳을
-고른다. 그러면 같은 클래스가 흩어지고, chat이 요청의 76.9%이므로 곧 네 인스턴스 전부에 chat이
+고른다. 그러면 같은 클래스가 흩어지고, chat이 요청의 78.1%이므로 곧 네 인스턴스 전부에 chat이
 올라간다. **그 상태가 되고 나면 같은 판정 조건이 이번에는 거절을 만든다 — 한 시간 trace에서
 38.7%다.**
 
@@ -1154,7 +1159,7 @@ FluidServe의 775보다 작다. **거절하는 정책 아래에서 엔진은 최
 
 > Giving each class its own instances removes that failure and introduces a
 > different one: the allocation is integral, so a class that needs 2.56 of four
-> instances receives one, and the class that needs it is 76.9% of the requests.
+> instances receives one, and the class that needs it is 78.1% of the requests.
 
 같이 적을 것: 그 배분이 **우리와 같은 길이 프로파일에서 유도된다.** 그러므로 "당신들만
 워크로드 정보를 갖고 있어서 불공정하다"는 반론이 이 표에 대해서는 성립하지 않는다.
