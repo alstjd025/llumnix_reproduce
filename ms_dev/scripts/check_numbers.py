@@ -52,11 +52,17 @@ NUMBERS = os.path.join(REPO, "ms_dev/notes/numbers.tsv")
 # reader to ignore the output, which is worse than not checking.
 DEFAULT_GLOBS = [
     "ms_dev/notes/motivation.md",
+    # The second motivation draft restates most of the first one's numbers in a
+    # different order, which is exactly the shape of copy that goes stale when a
+    # re-measurement lands. It has to be checked too.
+    "ms_dev/notes/motivation_v2.md",
     "ms_dev/notes/paper-outline.md",
     "ms_dev/notes/STATUS.md",
     "ms_dev/notes/fluidserve-how-it-works.md",
     "ms_dev/notes/fluidserve-v0.1.md",
     "ms_dev/notes/fluidserve-v0.1.1.md",
+    "ms_dev/notes/fluidserve-v0.1.2.md",
+    "ms_dev/notes/fluidserve-v0.2.md",
     "ms_dev/notes/polyserve-fidelity.md",
     "ms_dev/notes/slosserve-comparison.md",
     "ms_dev/notes/why-the-routing-layer.md",
