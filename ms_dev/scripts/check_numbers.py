@@ -56,6 +56,7 @@ DEFAULT_GLOBS = [
     # different order, which is exactly the shape of copy that goes stale when a
     # re-measurement lands. It has to be checked too.
     "ms_dev/notes/motivation_v2.md",
+    "ms_dev/notes/motivation_v3.md",
     "ms_dev/notes/paper-outline.md",
     "ms_dev/notes/STATUS.md",
     "ms_dev/notes/fluidserve-how-it-works.md",
