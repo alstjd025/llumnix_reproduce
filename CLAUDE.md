@@ -213,7 +213,7 @@ go build -buildvcs=false \
 | [ms_dev/notes/fluidserve-v0.1.1.md](ms_dev/notes/fluidserve-v0.1.1.md) | 현재 상태의 자족적 명세 — 실측 표(정적·한 시간), **v0.1.1이 아닌 것**, 그리고 **미해결 일곱 개를 우선순위로** |
 | [ms_dev/notes/fluidserve-v0.1.md](ms_dev/notes/fluidserve-v0.1.md) | **FluidServe v0.1 명세 (정본). 결정 규칙·용량 모델·상수 아홉 개는 여기가 정본.** 무엇을 측정하고 무엇을 설정하는가, 남은 상수 9개, 실측 결과, **v0.1이 아닌 것** |
 | [ms_dev/notes/fluidserve-design.md](ms_dev/notes/fluidserve-design.md) | FluidServe 설계 원안 |
-| [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | **FluidServe 구현 결정의 시간순 정본. 끝이 항상 가장 최신이다.** §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
+| [ms_dev/notes/fluidserve-implementation.md](ms_dev/notes/fluidserve-implementation.md) | **구현 결정의 시간순 기록. §65(2026-08-07)에서 멈추고 §66이 '그 뒤는 버전 문서와 실험 파일'이라고 가리킨다** — 2026-08-08부터 버전마다 자족적 명세를 쓰는 방식으로 바꿨다. §13 v9~v18과 반증된 가정, §15~§22 v19~v22, §21 보류 항목 |
 | [ms_dev/notes/polyserve-fidelity.md](ms_dev/notes/polyserve-fidelity.md) | **PolyServe 이식의 원문 대조 (정본).** "Isolation의 대표주자로 세울 수 있는가"에 대한 답 — **세울 수 있으나 이름을 "고정 fleet 위의 정적 클래스 파티션"으로 좁혀야 한다.** §2가 `--polyserve-tier-decode-tokens` 프로파일 오류를 다룬다 — **§48·§49와 같은 오류가 기준선 쪽에만 남아 있었던 것**이고 수치와 경위는 함정 A에 있다 |
 | [POLYSERVE_DESIGN_KO.md](POLYSERVE_DESIGN_KO.md) | PolyServe 이식 설계 (정본) |
 | [POLYSERVE_PROGRESS.md](POLYSERVE_PROGRESS.md) | PolyServe 구현 시간순 기록, 함정 |
