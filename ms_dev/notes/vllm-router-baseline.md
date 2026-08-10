@@ -1,7 +1,8 @@
 # vLLM router의 기본 정책 `cache_aware`를 기준선으로 세우는 계획 (2026-08-10)
 
-**상태**: 계획만 있고 아무것도 안 돌렸다. `llmd-baseline.md`와 같은 형식이다 — 답하려는 질문,
-무엇을 이식하는가, 실행 전에 적어 두는 판정 규칙, 그리고 **이 기준선이 답하지 않는 것**.
+**상태 (2026-08-10)**: **이식은 끝났고 부하 신호의 결함도 고쳤다. 아직 아무 조건도 안 돌렸다.**
+`llmd-baseline.md`와 같은 형식이다 — 답하려는 질문, 무엇을 이식하는가, 실행 전에 적어 두는
+판정 규칙, 그리고 **이 기준선이 답하지 않는 것**.
 
 ⚠ **실행 전에 §5의 사전 판정 규칙을 읽는다. 결과에 맞춰 고치지 않는다.**
 
@@ -89,18 +90,19 @@ routing이라고 쓰면 안 된다"**고 적어 둔 바로 그 구분이고, 지
 
 ## 3. 이식 — **끝났다** (2026-08-10)
 
-**바이너리**: `/home/nxclab/tools/staging/scheduler-vllmcache` (`1f9d07ce`). **아직 배포 안 했다.**
-`bin/`을 덮어쓰지 않았다.
+**바이너리**: `/home/nxclab/tools/staging/scheduler-vllmcache` (**`ab6d327d`**, 부하 신호를 고친 판).
+**아직 배포 안 했다** — `bin/`을 덮어쓰지 않았다. ⚠ 고치기 전 `1f9d07ce`는 §3.1(원본에서
+벗어난 곳)의 결함을 갖고 있으므로 쓰지 않는다.
 
 | 무엇 | 어디 |
 |---|---|
 | 정책 | `pkg/scheduler/policy/vllmcache.go` — 파일 머리 주석이 알고리즘과 벗어난 곳 둘을 적는다 |
-| 단위 테스트 | `pkg/scheduler/policy/vllmcache_test.go` — 네 개, 전부 통과 |
+| 단위 테스트 | `vllmcache_test.go` 여섯 개와 `vllmcache_startup_test.go` 하나, 전부 통과. 뒤엣것은 기동 줄이 `set_scheduler_profiling.py`가 읽는 형태인지를 지킨다 |
 | 정책 이름 | `consts.SchedulingPolicyVllmCache = "vllm-cache"` |
 | 화이트리스트 | `verifySchedulingPolicy`의 full-mode 집합 (빠지면 기동 시 panic) |
 | 등록 | `newDispatchPolicyInternal`의 case |
 | 플래그 다섯 | `cmd/config/config.go`. `--help`에 다섯 다 나온다 |
-| 배포 스크립트 | `set_scheduler_profiling.py --policy vllm-cache` |
+| 배포 스크립트 | `set_scheduler_profiling.py --policy vllm-cache`. `_verify_vllm_cache`가 기동 줄을 되읽어 상수 다섯과 `localaccount`를 대조하고, 어긋나면 조건을 돌리지 않는다 |
 | 드라이버 arm | `run_exp67_prefix.sh`의 `vllmcache)` |
 | 그림 arm 표 셋 | `exp22_fluidserve.py`, `exp27_figures.py`, `exp38_policy_compare.py`에 **돌리기 전에** 등록했다(CLAUDE.md 함정 E) |
 
@@ -111,7 +113,11 @@ routing이라고 쓰면 안 된다"**고 적어 둔 바로 그 구분이고, 지
 뜻이 **"프롬프트 문자의 몇 %를 어느 인스턴스가 이미 봤는가"에서 "토큰의 몇 %"**로 바뀐다.
 모양은 같고 **토큰 단위가 문자 단위보다 정확하므로, 굳이 따지면 기준선에 유리한 쪽**이다.
 
-**둘. ⚠⚠ 부하 신호가 틀렸다 — 이 arm은 고치기 전에 돌리면 안 된다 (2026-08-10 발견).**
+**둘. 부하 신호 — 틀렸던 것을 찾아서 고쳤다 (2026-08-10 발견, 같은 날 고침).**
+
+> **지금 상태: 고쳐졌고 arm을 돌려도 된다.** 아래는 무엇이 틀렸고 무엇으로 바꿨는지의 기록이다.
+> 코드는 `pkg/scheduler/policy/vllmcache.go`의 `vllmCacheLoad`, 새 바이너리
+> `/home/nxclab/tools/staging/scheduler-vllmcache` = **`ab6d327d`**(고치기 전 `1f9d07ce`).
 
 처음에 "엔진의 큐는 라우터의 발송 수와 같은 양을 한 단계 더 가까이에서 잰 것"이라고 적었다.
 **틀렸다. 둘은 다른 양이고, 차이는 갱신 시점이다.**
@@ -129,24 +135,69 @@ routing이라고 쓰면 안 된다"**고 적어 둔 바로 그 구분이고, 지
 불균형을 알아채고 알아챈 뒤에도 낡은 최솟값으로 몰아낸다.**
 
 > **그대로 재서 "vLLM router가 우리보다 낮다"고 쓰면 우리가 만든 결함을 그쪽 알고리즘의
-> 성질로 보고하는 것이 된다.** 그래서 **이 arm은 고치기 전에는 돌리지 않는다.**
+> 성질로 보고하는 것이 된다.**
 
-**고치는 방법 — 원본이 하는 그대로.** 정책 안에 **인스턴스별 in-flight 카운터**를 두고
-**선택할 때 +1, 완료 시 −1**. 완료 신호가 남은 문제다.
+**어떻게 고쳤나 — 계획했던 셋 중 ①은 아니었고 ②였다.**
 
-1. **먼저 확인할 것**: `fluidserve.go:1299`의 `p.registry.forget(req.id)`가 걸리는 훅이 이
-   정책에도 닿는가. 닿으면 그 자리에서 감소시키면 끝이다.
-2. **닿지 않으면 차선**: **엔진 스냅샷을 기준선으로 두고, 마지막 폴링 이후에 그 인스턴스로
-   보낸 건수를 더한다.** 폴링이 갱신되면 더한 값을 0으로 되돌린다. 이것은 원본과 **정확히 같은
-   양**이 되고, 완료 회계가 필요 없다. ⚠ **"발송 카운터와 폴링값 중 큰 값" 같은 것은 지어내는
-   것이므로 쓰지 않는다.**
-3. 고친 뒤 **단위 테스트를 하나 더 넣는다**: 폴링이 한 번도 안 갱신된 사이에 같은 인스턴스로
-   두 번 보내면 두 번째 결정이 보는 부하가 첫 번째보다 커야 한다.
+**① `forget` 훅은 완료 신호가 아니다.** `fluidserve.go:1299`의 `p.registry.forget(req.id)`를
+확인했더니 **SHED(거절) 자리에서만 불린다** — 붙들려 있던 요청이 거절될 때 도착 기록을 지우는
+것이고, 요청이 끝났을 때 불리는 것이 아니다. 애초에 **이 스케줄러에는 완료 콜백이 없다**:
+FluidServe도 완료를 추론으로 안다(`requestRegistry.reconcile`이 자기 장부를 엔진이 보고한
+running 개수로 잘라낸다). 그래서 ①은 성립하지 않는다.
+
+**② 필요한 양이 이미 인프라에 있었다.** `cms.InstanceView.NumInflightDispatchRequests`가
+**정확히 "마지막 폴링 이후 이 인스턴스로 보낸 건수"**다.
+
+- **+1**: `scheduling_policy.go:378`에서 인스턴스가 선택된 **바로 그 자리**
+  (`cmsClient.AddRequestLocalAccount`).
+- **−1**: 엔진의 다음 status 보고가 그 요청을 `RecentWaitingRequests`에 담아 오면
+  (`instance_status_local_account.go:66-73`). **같은 갱신에서** 그 요청은 엔진의
+  `NumWaitingRequests`/`NumRunningRequests`에 들어가므로 **이중으로 세지 않는다.**
+
+그래서 부하를 이렇게 바꿨다:
+
+```
+load = Status.NumWaitingRequests + Status.NumRunningRequests   // 마지막 폴링의 엔진 보고
+     + NumInflightDispatchRequests                             // 그 뒤의 발송분
+```
+
+**이제 증가 쪽은 원본과 정확히 같다**(발송 즉시). **감소 쪽만 폴링을 기다린다** — 한 폴링 간격
+(`--cms-pull-status-interval-ms`, 이 배포에서 **500 ms**) 안에 끝난 요청이 아직 세어진다.
+
+⚠ **남은 오차를 정확히 적는다**: 부하가 **한 폴링 간격의 완료 건수만큼 높게** 읽힌다. 완료율이
+인스턴스마다 비슷하면 **그 오차는 모든 인스턴스에 공통이고**, 이 값을 읽는 두 갈래(불균형 판정,
+shortest queue)가 **둘 다 인스턴스끼리의 비교**이므로 공통 오프셋은 어느 쪽도 움직이지 않는다.
+완료율이 인스턴스마다 크게 다르면 오차도 달라지는데, **그 상황은 부하가 실제로 불균형한
+상황이고 판정이 그때 옳은 방향으로 움직인다.**
+
+**셋. 단위 테스트 둘을 넣었고, 고치기 전 정의에서 둘 다 실패하는 것을 확인했다.**
+
+- `TestVllmCacheLoadCountsDispatchesSinceTheLastPoll` — 엔진 보고를 고정한 채 발송을 두 번
+  하면 부하가 5 → 6 → 7이어야 하고, 폴링이 그 둘을 흡수하면(inflight −2, waiting +2) **7 그대로**
+  여야 한다(인계 시점에 이중으로 세지 않는다는 것). 고치기 전 정의에서는 첫 발송 뒤에도 5다.
+- `TestVllmCacheShortestQueueDoesNotPileOntoAStaleMinimum` — 한 인스턴스는 비었고 다른 쪽은
+  5건을 들고 있을 때, 불균형 문턱을 1로 두면 **빈 쪽으로 네 번 가고 다섯 번째는 가지 않는다**
+  (그때 차이가 1이 되어 불균형 판정이 안 서고 트리 갈래로 넘어간다). 고치기 전 정의에서는 빈
+  쪽이 영원히 0으로 읽히므로 **다섯 번째도 그리로 간다** — 이것이 몰림 그 자체다.
+
+⚠ **이 고침이 조용히 꺼질 수 있는 경로가 하나 있다.** `NumInflightDispatchRequests`는
+`--enable-instance-status-local-account`가 true일 때만 유지된다(컴파일 기본값이 true이고
+배포 어디에도 이 플래그를 설정하는 곳이 없다 — `k8s/`, `deploy/`, `ms_dev/`, `/home/nxclab/tools/`
+전부 grep했다). false면 더하는 값이 항상 0이 되어 **고치기 전 동작으로 조용히 돌아간다.**
+그래서 둘을 넣었다:
+
+- **기동 줄에 `localaccount=true`를 찍는다** — `set_scheduler_profiling.py`가 이미 되읽는 줄이다.
+  false면 `DO NOT MEASURE THIS ARM`을 포함한 error 줄을 같이 찍는다(기동을 막지는 않는다.
+  CrashLoopBackOff는 드라이버에서 느린 롤아웃과 구분되지 않으므로 — CLAUDE.md 함정 B,
+  실험을 걸기 전에 읽는 묶음).
+- **`scheduler_vllmcache_inflight_seen_total` 카운터**를 결정마다 더한다. **이 값이 0으로
+  남아 있는 run은 부하 신호가 폴링 스냅샷으로 되돌아간 run이다.** §4.1(조건마다 돌리는 유효성 검사)에 넣었다.
 
 ### 3.2 단위 테스트가 무엇을 막는가
 
 **다른 프로젝트의 소스에서 옮겨 쓴 코드의 실패 방식은 "돌아가고, 그럴듯하게 라우팅하고,
-비교 대상이 아닌 것"이다.** 어떤 종단 측정도 그것을 못 잡는다. 그래서 네 갈래를 직접 잡았다.
+비교 대상이 아닌 것"이다.** 어떤 종단 측정도 그것을 못 잡는다. 그래서 네 갈래를 직접 잡았고,
+**부하 신호를 고치면서 둘을 더 넣어 여섯이다**(뒤의 둘은 §3.1의 "셋"에 적혀 있다).
 
 1. **접두사 일치는 집합 교집합이 아니다.** `[1,2,3,4]`를 넣고 `[1,2,9,4]`를 물으면 **2**여야
    한다(4를 세면 3이 된다).
@@ -162,7 +213,23 @@ routing이라고 쓰면 안 된다"**고 적어 둔 바로 그 구분이고, 지
 ## 3.9 남은 것 — 배포와 실행
 
 **배포는 안 했다.** `bin/scheduler-exp07`을 덮어쓰면 그 순간부터 모든 arm이 새 바이너리로
-돈다. **다음 실험을 걸 때 한 번에 배포하고**, 기동 줄에서 정책 이름과 상수 다섯을 대조한다.
+돈다. **다음 실험을 걸 때 한 번에 배포하고**, 기동 줄에서 정책 이름과 상수 다섯,
+그리고 **`localaccount=true`**(§3.1)를 대조한다.
+
+배포할 것: `/home/nxclab/tools/staging/scheduler-vllmcache` = **`ab6d327d`**
+(부하 신호를 고친 판. 고치기 전 `1f9d07ce`는 §3.1의 결함을 갖고 있으므로 쓰지 않는다).
+`bin/scheduler-exp07`의 현재 백업은 `bin-backup/`에 있고 **이미 있으면 덮어쓰지 않는다**(CLAUDE.md 함정 B: 죽은 연쇄를 다시 돌리면 새 바이너리를
+"이전 것"으로 백업해 원본을 잃는다).
+
+**대조는 손으로 하지 않아도 된다** — `set_scheduler_profiling.py`에 `_verify_vllm_cache`를
+넣어서 FluidServe와 같은 취급을 받는다: 기동 줄을 찾아 상수 다섯과 `localaccount`를 대조하고,
+어긋나면 그 조건을 **돌리지 않고 실패한다.** ⚠ **드라이버 arm은 `--vllm-cache-*` 플래그를 하나도
+넘기지 않고 컴파일 기본값으로 돈다.** 그래서 검사기는 요청되지 않은 상수를 **vllm-router 0.1.15의
+기본값**(0.3 / 64 / 1.5 / 120 / 2²⁶)과 대조한다 — 그렇게 하지 않으면 실제로 쓰는 경로에서 상수가
+하나도 검증되지 않고, 기본값이 다른 바이너리로 다시 빌드하면 같은 이름으로 다른 정책이 돈다.
+일부러 다른 값을 쓰려면 플래그로 넘기면 되고 그때는 넘긴 값과 대조한다.
+실제 기동 줄과 실패 세 경우로 검사기를 한 번 돌려서 확인했다(무장하기 전에 답을 아는 경우로
+돌려 본다 — CLAUDE.md 함정 B의 자기 검증 항목).
 
 ## 3.5 이식이 요구한 것 (기록)
 
@@ -210,12 +277,17 @@ EXP-54에서 Llumnix 부하 균등화가 40분에 네 엔진을 포화시키자 
 
 ### 4.1 매 조건마다 확인하는 유효성 검사 (실행 전에 정한다)
 
-**이 둘 중 하나라도 걸리면 그 조건은 정책이 아니라 부하 생성기를 잰 것이므로 버린다.**
+**1과 2 중 하나라도 걸리면 그 조건은 정책이 아니라 부하 생성기를 잰 것이므로 버린다.
+3이 걸리면 정책이 아니라 우리가 만든 결함을 잰 것이므로 버린다.**
 
 1. `metrics.csv`의 `error_msg`를 종류별로 세어 **`client connection exhausted`가 0건**이어야
    한다.
 2. **"시작된 호출 / 초"가 그 조건의 도착률을 넘지 않아야 한다.** 넘으면 클라이언트가 헛돌고
    있는 것이다.
+3. **기동 줄이 `localaccount=true`여야 하고, `scheduler_vllmcache_inflight_seen_total`이
+   0보다 커야 한다.** 둘 다 §3.1의 부하 신호가 실제로 걸렸는지를 묻는 것이다 — 이 값이 0이면
+   마지막 폴링 이후의 발송분을 하나도 못 세고 있는 것이고, 그러면 폴링 간격(500 ms) 안의 모든
+   결정이 같은 큐 깊이를 보는 고치기 전 동작이다.
 
 ## 5. 사전 판정 규칙 (실행 전에 쓴다)
 
@@ -275,7 +347,15 @@ production-stack의 라우팅 선택지 여섯과 Helm 기본값 `roundrobin`,
 `RoundRobinRouter.route_request`가 엔진 통계를 안 쓴다는 것, PyPI `vllm-router`가 다른
 물건이고 기본값이 `cache_aware`라는 것.
 
-**확인 안 했다**: production stack이 우리 엔진 구성(vLLM V1, TP2 네 인스턴스)에 그대로 붙는지.
-**우리는 그 스택을 배포하지 않고 알고리즘만 우리 스케줄러에 이식하므로 이 확인은 필요 없지만,
-논문에 "we compare against the vLLM production stack"이라고 쓰면 안 되고 "we port its
-round-robin routing logic"이라고 써야 한다.**
+그리고 **`NumInflightDispatchRequests`가 어디서 증가·감소하는지**(§3.1의 "둘") — 증가는
+`scheduling_policy.go:378`, 감소는 `instance_status_local_account.go:66-73`. 정책과 무관하게
+유지되고 `--enable-instance-status-local-account`(기본 true) 하나에만 걸려 있다.
+
+**확인 안 했다**: 두 스택 중 어느 것도 우리 엔진 구성(vLLM V1, TP2 네 인스턴스)에 그대로 붙는지
+확인하지 않았다. **우리는 스택을 배포하지 않고 알고리즘만 우리 스케줄러에 이식하므로 이 확인은
+필요 없지만, 논문에 "we compare against the vLLM production stack"이라고 쓰면 안 된다.** 쓸 수
+있는 문장은 **"we port the default routing policy of the vLLM router (`cache_aware`), from the
+SGLang model gateway source it forked"**이고, §3.1(원본에서 벗어난 곳)의 둘 — 트리가 토큰 ID 위에 있다는 것과 완료 신호가 폴링을
+기다린다는 것 — 을 같이 적는다.
+⚠ 이 항목은 원래 `roundrobin`을 이식하려던 계획의 문장을 갖고 있었다 — 이식 대상이
+`cache_aware`로 바뀌었으므로 고쳤다.

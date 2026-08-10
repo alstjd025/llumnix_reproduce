@@ -42,18 +42,37 @@ ms_dev/notes/vllm-router-baseline.md rather than left in code comments alone.
      already seen" instead of "fraction of its characters". The shapes agree and
      token-level matching is the more precise of the two, so if anything this
      favours the baseline.
-  2. !! THE LOAD SIGNAL IS WRONG AND THIS POLICY MUST NOT BE MEASURED UNTIL IT IS
-     FIXED. The original keeps its own per-worker counter, incremented when it
-     dispatches and decremented when the response completes, so CONSECUTIVE
-     DECISIONS SEE EACH OTHER. What is read below is the engine's
-     `NumWaitingRequests + NumRunningRequests`, which arrives on the CMS polling
-     interval, so every decision taken between two polls sees the same stale
-     depth and they all herd onto whichever instance looked emptiest at the last
-     poll. Both the imbalance test and the shortest-queue branch read it, so the
-     policy notices the herd only after it has formed and then drains it toward a
-     stale minimum. Measuring this and reporting that the vLLM router scores
-     lower than us would be reporting our own defect as a property of their
-     algorithm. The fix and the two ways to get the completion signal are in
+  2. COMPLETION IS OBSERVED ON THE POLL; DISPATCH IS NOT. The original keeps its
+     own per-worker counter, incremented when it dispatches and decremented when
+     the response completes, so consecutive decisions see each other. There is no
+     completion callback in this scheduler -- fluidserve infers completion the
+     same way, by trimming its ledger to the count the engine reports -- so the
+     load read by vllmCacheLoad below is the engine's own `NumWaitingRequests +
+     NumRunningRequests` from the last poll PLUS `NumInflightDispatchRequests`,
+     the dispatches made since that poll. The addend is incremented in
+     scheduling_policy.go the moment an instance is selected and released when
+     the engine's next status report names the request, so the increment side
+     matches the original exactly and only the decrement waits for a poll.
+
+     What that leaves: a request that finished less than one poll ago is still
+     counted, so load is high by at most the completions in one poll interval
+     (`--cms-pull-status-interval-ms`, 500 ms in this deployment). That error is
+     the SAME for every instance under a roughly even completion rate, and both
+     branches that read load -- the imbalance test and the shortest queue -- are
+     comparisons between instances, so a common offset does not move either one.
+
+     What it fixes, and why the arm could not be measured before this: reading
+     only the poll made every decision between two polls see the same depth, so
+     22 arrivals at 45 req/s all chose whichever instance looked emptiest 500 ms
+     ago, and the policy could only notice that pile-up after it had formed. That
+     is a defect of this port and not a property of the vLLM router, so measuring
+     it would have attributed our own artifact to their algorithm.
+
+     !! `NumInflightDispatchRequests` is only maintained when
+     `--enable-instance-status-local-account` is true (the compile default). If
+     it is false the addend is always zero and the stale-signal behaviour above
+     returns silently, so the policy logs the flag on the startup line and logs
+     an error naming this paragraph when it is off. Recorded in
      ms_dev/notes/vllm-router-baseline.md section 3.1.
 
 THE CONSTANT THAT WOULD HAVE BEEN GOT WRONG. `cacheThreshold` is 0.3 in
@@ -260,16 +279,11 @@ func (s *vllmCacheSelector) selectInstance(
 		tree *tokenTrie
 	}
 	cands := make([]cand, 0, len(instanceViews))
-	var maxLoad, minLoad int32
+	var maxLoad, minLoad, inflightSum int32
 	first := true
 	for _, v := range instanceViews {
-		// !! Stale between polls -- see deviation 2 in the file header. Do not
-		// run this arm for a measurement until this reads a count that updates
-		// on dispatch.
-		var load int32
-		if v.cmsView != nil {
-			load = v.cmsView.Status.NumWaitingRequests + v.cmsView.Status.NumRunningRequests
-		}
+		load := vllmCacheLoad(v)
+		inflightSum += vllmCacheInflight(v)
 		id := v.GetInstanceId()
 		t, ok := p.trees[id]
 		if !ok {
@@ -329,9 +343,54 @@ func (s *vllmCacheSelector) selectInstance(
 	chosen.tree.insert(req.tokens)
 	metrics.Counter("scheduler_vllmcache_decisions_total",
 		metrics.Labels{{Name: "reason", Value: reason}}).Inc()
-	klog.V(5).Infof("vllmcache routes %s to %s (%s, load %d, tree %d)",
-		req.id, chosen.view.GetInstanceId(), reason, chosen.load, chosen.tree.nodes)
+	// The dispatches this decision could see that the last poll could not. A run
+	// where this counter stays at zero is a run where the load signal collapsed
+	// back to the poll snapshot -- see deviation 2 in the file header -- so it is
+	// emitted rather than left as an assumption about the local-account flag.
+	metrics.Counter("scheduler_vllmcache_inflight_seen_total",
+		metrics.Labels{}).Add(int(inflightSum))
+	klog.V(5).Infof("vllmcache routes %s to %s (%s, load %d, inflight %d, tree %d)",
+		req.id, chosen.view.GetInstanceId(), reason, chosen.load,
+		vllmCacheInflight(chosen.view), chosen.tree.nodes)
 	return chosen.view
+}
+
+// vllmCacheInflight is the number of requests this instance has been sent since
+// the engine's last status report: incremented in scheduling_policy.go at the
+// moment an instance is selected, released when the engine's next report names
+// the request. It is separated out only so that the quantity can be counted and
+// logged on its own, because it is the part of the load that distinguishes this
+// from reading the poll alone.
+func vllmCacheInflight(v *instanceViewScheduling) int32 {
+	if v == nil || v.cmsView == nil {
+		return 0
+	}
+	return v.cmsView.NumInflightDispatchRequests
+}
+
+// vllmCacheLoad is the number of requests this instance has been sent and is not
+// known to have finished, which is the quantity the original router keeps in its
+// own per-worker counter.
+//
+// Two parts, because there is no completion callback in this scheduler and so no
+// single place that holds the whole number. The engine's `NumWaitingRequests +
+// NumRunningRequests` is what it reported at the last poll, and the inflight
+// count above covers the dispatches made since. Adding them double-counts
+// nothing: a request leaves the inflight count in the same update that first
+// reports it to the engine.
+//
+// A request that completed less than one poll interval ago is still counted.
+// Deviation 2 in the file header says why that does not change either decision
+// this feeds.
+func vllmCacheLoad(v *instanceViewScheduling) int32 {
+	if v == nil || v.cmsView == nil {
+		return 0
+	}
+	var engine int32
+	if v.cmsView.Status != nil {
+		engine = v.cmsView.Status.NumWaitingRequests + v.cmsView.Status.NumRunningRequests
+	}
+	return engine + v.cmsView.NumInflightDispatchRequests
 }
 
 func newVllmCacheDispatchFullMode(p *options.SchedulerConfig) *vllmCacheDispatchPolicy {
@@ -365,9 +424,22 @@ func newVllmCacheDispatchFullMode(p *options.SchedulerConfig) *vllmCacheDispatch
 		},
 	}
 	klog.Infof("vLLM router cache_aware policy created: cacheThreshold %.2f, "+
-		"balanceAbs %d, balanceRel %.2f, evictionSecs %d, maxTreeSize %d "+
-		"(tree over token ids; load = waiting + running)",
+		"balanceAbs %d, balanceRel %.2f, evictionSecs %d, maxTreeSize %d, "+
+		"localaccount=%v (tree over token ids; load = waiting + running + "+
+		"dispatched since the last poll)",
 		policy.cfg.cacheThreshold, policy.cfg.balanceAbs, policy.cfg.balanceRel,
-		policy.cfg.evictionSecs, policy.cfg.maxTreeSize)
+		policy.cfg.evictionSecs, policy.cfg.maxTreeSize,
+		p.EnableInstanceStatusLocalAccount)
+	if !p.EnableInstanceStatusLocalAccount {
+		// Not fatal, because a scheduler that will not start is reported by the
+		// drivers as "reported no policy", which is what a slow rollout also
+		// looks like. Loud instead, and paired with the inflight counter above so
+		// that a run made in this state can be identified after the fact.
+		klog.Errorf("vLLM router cache_aware: --enable-instance-status-local-account " +
+			"is false, so the dispatches made since the last poll are not counted " +
+			"and every decision between two polls will read the same queue depth. " +
+			"This is the defect described in deviation 2 of vllmcache.go and in " +
+			"ms_dev/notes/vllm-router-baseline.md section 3.1. DO NOT MEASURE THIS ARM.")
+	}
 	return policy
 }

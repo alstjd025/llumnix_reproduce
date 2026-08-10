@@ -1,6 +1,12 @@
 package policy
 
-import "testing"
+import (
+	"testing"
+
+	"llumnix/pkg/cms"
+	"llumnix/pkg/consts"
+	"llumnix/pkg/types"
+)
 
 // The tests below check the three branches the cache_aware algorithm can take
 // and the one property the tree has to have. They exist because the port was
@@ -90,5 +96,112 @@ func TestVllmCacheThresholdIsStrictlyGreater(t *testing.T) {
 	}
 	if byPrefix(0, 0) {
 		t.Fatal("an empty prompt must not take the prefix branch")
+	}
+}
+
+// vllmCacheView builds an instance view whose engine-reported queue depth is
+// fixed, so that the only thing that can move the load between two decisions is
+// the dispatch accounting.
+func vllmCacheView(id string, waiting, running int32) *instanceViewScheduling {
+	cmsView := &cms.InstanceView{
+		Instance: &types.LLMInstance{InferType: consts.InferTypeNeutral},
+		Status: &cms.InstanceStatus{
+			InstanceId:         id,
+			NumWaitingRequests: waiting,
+			NumRunningRequests: running,
+		},
+		Metadata: &cms.InstanceMetadata{InstanceId: id},
+	}
+	return &instanceViewScheduling{cmsView: cmsView, InstanceViewInterface: cmsView}
+}
+
+// vllmCacheDispatch does to the view what the scheduler does after a selection:
+// scheduling_policy.go calls cmsClient.AddRequestLocalAccount, which increments
+// exactly this field. That binding is asserted in
+// pkg/cms/instance_status_local_account_test.go rather than here, because this
+// package cannot reach the unexported editor that owns the counter.
+func vllmCacheDispatch(v *instanceViewScheduling) {
+	v.cmsView.NumInflightDispatchRequests++
+}
+
+func vllmCacheTestPolicy(cfg vllmCacheConfig) *vllmCacheDispatchPolicy {
+	return &vllmCacheDispatchPolicy{cfg: cfg, trees: map[string]*tokenTrie{}}
+}
+
+func vllmCacheDecide(
+	s *vllmCacheSelector, views map[string]*instanceViewScheduling,
+	tokens []uint32) *instanceViewScheduling {
+	req := &vllmCacheRequest{id: "r", tokens: tokens}
+	for _, v := range views {
+		v.schedulingCtx.vllmCacheRequest = req
+	}
+	return s.selectInstance(views, false)
+}
+
+func TestVllmCacheLoadCountsDispatchesSinceTheLastPoll(t *testing.T) {
+	// The property the port was missing: with the engine's report held fixed --
+	// which is what happens between two CMS polls, 500 ms apart in this
+	// deployment -- a second decision must see the first one's dispatch.
+	v := vllmCacheView("a", 2, 3)
+	if got := vllmCacheLoad(v); got != 5 {
+		t.Fatalf("load before any dispatch = %d, want 5 (2 waiting + 3 running)", got)
+	}
+	vllmCacheDispatch(v)
+	if got := vllmCacheLoad(v); got != 6 {
+		t.Fatalf("load after one dispatch = %d, want 6; a decision taken between "+
+			"two polls is not seeing the dispatch the previous decision made", got)
+	}
+	vllmCacheDispatch(v)
+	if got := vllmCacheLoad(v); got != 7 {
+		t.Fatalf("load after two dispatches = %d, want 7", got)
+	}
+	// And the release: the engine's next report names the request, the addend
+	// drops, and the depth it reports covers it instead. The load must not
+	// double-count across that handover.
+	v.cmsView.NumInflightDispatchRequests -= 2
+	v.cmsView.Status.NumWaitingRequests += 2
+	if got := vllmCacheLoad(v); got != 7 {
+		t.Fatalf("load after the poll absorbed both dispatches = %d, want 7", got)
+	}
+}
+
+func TestVllmCacheShortestQueueDoesNotPileOntoAStaleMinimum(t *testing.T) {
+	// Two instances, one idle and one holding five requests, with the imbalance
+	// test set to fire on any gap so that every decision below takes the
+	// shortest-queue branch until the fleet is actually level.
+	//
+	// Reading the poll alone, instance a stays at zero for the whole 500 ms
+	// between polls and every arrival in that window goes to it. Counting the
+	// dispatches, a fills up and the branch stops firing once the gap closes:
+	// four decisions, not five, and the fifth goes elsewhere.
+	p := vllmCacheTestPolicy(vllmCacheConfig{
+		cacheThreshold: 0.3, balanceAbs: 1, balanceRel: 1.0,
+		evictionSecs: 3600, maxTreeSize: 1 << 20,
+	})
+	s := &vllmCacheSelector{policy: p}
+	a := vllmCacheView("a", 0, 0)
+	b := vllmCacheView("b", 0, 5)
+	views := map[string]*instanceViewScheduling{"a": a, "b": b}
+
+	prompt := []uint32{10, 11, 12, 13}
+	for i := 0; i < 4; i++ {
+		got := vllmCacheDecide(s, views, prompt)
+		if got.GetInstanceId() != "a" {
+			t.Fatalf("decision %d went to %s, want a: it is still the shorter queue "+
+				"at %d against %d", i+1, got.GetInstanceId(),
+				vllmCacheLoad(a), vllmCacheLoad(b))
+		}
+		vllmCacheDispatch(got)
+	}
+	if got := vllmCacheLoad(a); got != 4 {
+		t.Fatalf("instance a load after four dispatches = %d, want 4", got)
+	}
+	// Gap is now 1, which does not clear balanceAbs, so the fleet reads balanced
+	// and the decision falls to the tree. A prompt sharing nothing with the four
+	// already sent to a takes the smallest-tree branch, and b's tree is empty.
+	got := vllmCacheDecide(s, views, []uint32{90, 91, 92, 93})
+	if got.GetInstanceId() != "b" {
+		t.Fatalf("fifth decision went to %s, want b: reading the poll alone is the "+
+			"only way a still looks like the emptiest instance", got.GetInstanceId())
 	}
 }

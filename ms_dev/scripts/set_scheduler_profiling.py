@@ -497,6 +497,8 @@ def verify_effective(policy, logs, applied_args):
     the spec, is the authority, so it is parsed and compared here and the caller
     fails rather than proceeding.
     """
+    if policy == "vllm-cache":
+        return _verify_vllm_cache(logs, applied_args)
     if policy != consts_fluidserve():
         return 0
     line = next((l for l in logs.splitlines()
@@ -594,6 +596,101 @@ def verify_effective(policy, logs, applied_args):
               " is read as true.")
         return 1
     print("  verified: every FluidServe flag matches what was applied")
+    return 0
+
+
+def _verify_vllm_cache(logs, applied_args):
+    """Check the vLLM router baseline against its own start-up line.
+
+    Two things are checked, and the second is the reason this function exists
+    rather than being folded into the FluidServe branch.
+
+    The five constants, because `cache_threshold` alone gives two different
+    routers -- 0.3 in vllm-router and 0.7 in the SGLang gateway it forked -- so a
+    value that failed to apply produces a policy that runs, routes plausibly, and
+    is not the one being compared against.
+
+    And `localaccount`, which is not a flag this script sets. The policy's load
+    signal is the engine's queue depth from the last poll plus the dispatches
+    made since, and the second term is only maintained when
+    --enable-instance-status-local-account is true. With it false the term is
+    always zero, every decision inside one 500 ms poll interval reads the same
+    depth, and they pile onto whichever instance looked emptiest at the last
+    poll. That is a defect of our port rather than a property of their
+    algorithm, so a run made in that state would attribute our artifact to them.
+    See ms_dev/notes/vllm-router-baseline.md section 3.1.
+    """
+    line = next((l for l in logs.splitlines()
+                 if "vLLM router cache_aware policy created" in l), None)
+    if not line:
+        print("\n  ERROR: the scheduler never reported its vllm-cache configuration.")
+        print("  Without that line there is no way to tell what it is running.")
+        return 1
+
+    want = {}
+    for i, tok in enumerate(applied_args):
+        name, _, inline = tok.partition("=")
+        if not name.startswith("--vllm-cache-"):
+            continue
+        want[name] = inline if inline else (
+            applied_args[i + 1] if i + 1 < len(applied_args) else "")
+
+    effective = dict(re.findall(r"(\w+)=([\w.]+)", line))
+    # The start-up line writes the constants as "name value," prose rather than
+    # name=value, so they are read by name here.
+    reported = {}
+    for key, pat in (("--vllm-cache-threshold", r"cacheThreshold ([\d.]+)"),
+                     ("--vllm-cache-balance-abs", r"balanceAbs (\d+)"),
+                     ("--vllm-cache-balance-rel", r"balanceRel ([\d.]+)"),
+                     ("--vllm-cache-eviction-secs", r"evictionSecs (\d+)"),
+                     ("--vllm-cache-max-tree-size", r"maxTreeSize (\d+)")):
+        m = re.search(pat, line)
+        if m:
+            reported[key] = m.group(1)
+
+    # What vllm-router 0.1.15 ships. The driver arm passes no --vllm-cache- flag
+    # at all, so without this the constants would go unchecked in the one path
+    # that is actually used, and a rebuilt binary with a different compile
+    # default would run as this arm under the same name. A deliberate ablation
+    # passes the flag and is compared against what it asked for instead.
+    VLLM_CACHE_DEFAULTS = {
+        "--vllm-cache-threshold": "0.3",
+        "--vllm-cache-balance-abs": "64",
+        "--vllm-cache-balance-rel": "1.5",
+        "--vllm-cache-eviction-secs": "120",
+        "--vllm-cache-max-tree-size": str(1 << 26),
+    }
+
+    bad = []
+    for flag, dflt in VLLM_CACHE_DEFAULTS.items():
+        want.setdefault(flag, dflt)
+    for flag, asked in want.items():
+        got = reported.get(flag)
+        if got is None:
+            bad.append(f"{flag}: asked {asked}, the start-up line does not report it")
+            continue
+        try:
+            same = abs(float(asked) - float(got)) < 1e-6
+        except ValueError:
+            same = asked.lower() == got.lower()
+        if not same:
+            bad.append(f"{flag}: asked {asked}, scheduler reports {got}")
+
+    if effective.get("localaccount", "").lower() != "true":
+        bad.append(
+            "localaccount is not true, so the dispatches made since the last "
+            "poll are not counted and every decision inside one poll interval "
+            "reads the same queue depth (vllm-router-baseline.md section 3.1)")
+
+    print("\n--- effective vllm-cache configuration (read from the scheduler) ---")
+    print("  " + line.split("] ", 1)[-1].strip())
+    if bad:
+        print("\n  ERROR: the scheduler is not running what it was asked to run:")
+        for b in bad:
+            print("    " + b)
+        return 1
+    print("  verified: every vllm-cache flag matches, and the load signal counts "
+          "dispatches since the last poll")
     return 0
 
 
