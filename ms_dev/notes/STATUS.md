@@ -52,9 +52,9 @@ EXP-70이 무릎을 v0.2 28.1 / llm-d **18.7**로 쟀는데 예전 대역은 93%
 
 ### 도는 것 / 대기 중
 
-| | 무엇 | 상태 (2026-08-11 01:40 KST 기준) |
+| | 무엇 | 상태 (2026-08-11 02:56 KST 기준) |
 |---|---|---|
-| **도는 것 없음** | 클러스터가 비어 있다 | — |
+| **도는 중** | **EXP-78** — admission 축 ablation. `fsnoshed`(거절 끔)·`fsroute`(거절+보유 끔) 25/35/45 × 2반복 + `fluidserve`·`vllmcache` @25 × 2반복 = **16조건 약 3.5시간** | 02:56 시작, **06:30 KST 무렵 종료 예정**. 로그 `/home/nxclab/tools/exp78.log`, 감시 붙어 있음(PID 형태) |
 | 끝남 | **EXP-77** — vLLM router `cache_aware` 기준선, 18조건 | **2026-08-11 00:50 KST** |
 | 끝남 | **EXP-76** — 믹스 비율 확인 pass, 8조건 | 08-10 13:07 |
 | 끝남 | **EXP-75 / EXP-74 / EXP-73** — 믹스 정찰 / swe 예산 대칭 / 보유·선호 사다리 | 08-10 |
@@ -136,6 +136,27 @@ Llumnix SLO 3.85/3.76에 가깝다. ⚠ **다만 swe만 1.78/1.74다** — prefi
 
 **결정 사유**: prefix_match 64.7% / smallest_tree 29.4% / **shortest_queue 5.9%** — 불균형
 판정이 실제로 걸리므로 **알고리즘 전체를 쟀다**(prefix 절반이 아니다).
+
+### EXP-78 (도는 중) — admission 축, 이것이 지금 ablation 표의 빈칸이다
+
+**정본은 `experiments/EXP-78_admission-axis.md`, 판정 규칙은 그 §4.** Go 코드 없이 기존 플래그
+둘로 연다.
+
+| arm | 끄는 것 | 답하는 질문 |
+|---|---|---|
+| `fsnoshed` | 거절만 | 우리 이득 중 **admission**의 몫 |
+| `fsroute` | 거절+보유 = **pure routing** | 우리 이득 중 **라우팅**의 몫. vLLM router·PolyServe와 **같은 조건(거절 0%)** 비교 |
+
+**⚠ 채점 규칙을 실행 전에 못 박았다**: 거절을 끄면 거절이 **미완료**로 바뀌고 `attain()`이
+그것을 양쪽 분모에서 빼므로, **거절을 끈 arm에 유리하게 작동한다.** 그래서 주 지표는
+**모든 도착을 분모에 넣고 거절과 미완료를 둘 다 위반으로 세는 집계**다.
+
+**사전 반증 조건 둘**: ① `fspfx`−`fsnoshed`가 **3점 이내**면 "admission이 이득의 원천"이 틀린
+것이다. ② `fsroute`가 **vLLM router 이하**면 "용량을 인스턴스마다 값매긴다"가 그 자체로는 값이
+없다는 뜻이다.
+
+**두 arm의 기동 줄을 걸기 전에 확인했다** — `fsnoshed`는 `pend=true, shed=false`, `fsroute`는
+`pend=false, shed=false`, 나머지는 `fspfx`와 동일.
 
 ### 다음에 걸 것 — 급한 순서
 
