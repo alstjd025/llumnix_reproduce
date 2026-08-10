@@ -35,6 +35,10 @@ type instanceViewScheduling struct {
 
 type schedulingCtx struct {
 	metrics map[string]instanceSchedulingMetric
+	// Set by the vLLM router cache_aware baseline in calculateMetrics, for the
+	// same reason as fluidserveRequest below: a selector receives instance views
+	// and no request.
+	vllmCacheRequest *vllmCacheRequest
 	// needsFailover indicates whether the instance needs failover by failover filter.
 	needsFailover                     bool
 	prefixHitTokens                   int

@@ -38,7 +38,10 @@ func verifySchedulingPolicy(c *options.SchedulerConfig) {
 		consts.SchedulingPolicyPolyserve,
 		// FluidServe reads the same CMS instance status, plus the engine's step
 		// counter and last iteration duration, none of which lite mode pulls.
-		consts.SchedulingPolicyFluidserve)
+		consts.SchedulingPolicyFluidserve,
+		// The vLLM router cache_aware baseline reads the same CMS instance status
+		// for its queue depth.
+		consts.SchedulingPolicyVllmCache)
 
 	policy := c.SchedulingPolicy
 	if !c.EnableFullModeScheduling {

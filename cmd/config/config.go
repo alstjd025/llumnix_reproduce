@@ -285,6 +285,14 @@ type FullModeSchedulingConfig struct {
 	FluidserveKvSlopeProjection bool
 	FluidserveGateSlack         float64
 
+	// The vLLM router cache_aware baseline. Defaults are that package's, not the
+	// SGLang original's -- see the note on VllmCacheThreshold below.
+	VllmCacheThreshold    float64
+	VllmCacheBalanceAbs   int
+	VllmCacheBalanceRel   float64
+	VllmCacheEvictionSecs int
+	VllmCacheMaxTreeSize  int
+
 	// Adaptive PD
 	EnableAdaptivePD             bool
 	TpotMigrateOutFloorThreshold float32
@@ -532,6 +540,26 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"of arrivals. Requests already on the instance are protected on the "+
 			"next condition regardless, by what each has left rather than by what "+
 			"its class was promised.")
+	// vLLM router cache_aware baseline. Every default here is the one PyPI
+	// `vllm-router` 0.1.15 ships, because that package is what the arm is meant
+	// to represent.
+	flags.Float64Var(&c.VllmCacheThreshold, "vllm-cache-threshold", 0.3,
+		"Prefix match rate above which the vLLM router cache_aware baseline routes "+
+			"to the best-matching instance; at or below it routes to the instance "+
+			"with the smallest tree. NOTE 0.3 is vllm-router's default and 0.7 is "+
+			"the SGLang model gateway's, which it forked -- the two give different "+
+			"routers, so the value is stated rather than inherited.")
+	flags.IntVar(&c.VllmCacheBalanceAbs, "vllm-cache-balance-abs", 64,
+		"Absolute queue-depth difference above which the cache_aware baseline "+
+			"treats the fleet as imbalanced and routes to the shortest queue.")
+	flags.Float64Var(&c.VllmCacheBalanceRel, "vllm-cache-balance-rel", 1.5,
+		"Relative queue-depth ratio above which the cache_aware baseline treats "+
+			"the fleet as imbalanced. Both this and the absolute test must hold.")
+	flags.IntVar(&c.VllmCacheEvictionSecs, "vllm-cache-eviction-secs", 120,
+		"Interval between LRU eviction passes over the per-instance prefix trees.")
+	flags.IntVar(&c.VllmCacheMaxTreeSize, "vllm-cache-max-tree-size", 1<<26,
+		"Maximum nodes per per-instance prefix tree before LRU eviction runs.")
+
 	flags.BoolVar(&c.FluidserveClassHarm, "fluidserve-class-harm", true,
 		"When no instance can take a request at its promised pace, charge each "+
 			"candidate for the share of it that belongs to OTHER classes. Disabling "+

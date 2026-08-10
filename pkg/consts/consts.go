@@ -54,6 +54,15 @@ const (
 	// being committed to an engine, which keeps the placement decision open at
 	// no cost. See ms_dev/notes/fluidserve-implementation.md.
 	SchedulingPolicyFluidserve = "fluidserve"
+
+	// SchedulingPolicyVllmCache is the vLLM router's default policy, cache_aware,
+	// ported as a baseline. It is the PyPI `vllm-router` package's default and
+	// NOT vllm-project/production-stack's, whose Helm chart deploys roundrobin.
+	// It routes by longest prefix match among per-instance approximate trees,
+	// falls back to the emptiest tree when the match is weak, and switches to
+	// shortest queue when the instances are far enough out of balance. It has no
+	// admission test: it always returns an instance.
+	SchedulingPolicyVllmCache = "vllm-cache"
 )
 
 const (

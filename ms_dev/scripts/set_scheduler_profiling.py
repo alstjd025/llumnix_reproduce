@@ -347,7 +347,13 @@ def install_configmap():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--policy",
-                    choices=["fluidserve", "polyserve", "slo", "load-balance"])
+                    choices=["fluidserve", "polyserve", "slo", "load-balance",
+                             # The vLLM router's default cache_aware policy,
+                             # ported as a baseline. Named vllm-cache rather than
+                             # vllm-router because "vLLM router" is ambiguous:
+                             # production-stack's default is roundrobin and this
+                             # is the PyPI vllm-router package's.
+                             "vllm-cache"])
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--timeout", type=int, default=180)
     a = ap.parse_args()
