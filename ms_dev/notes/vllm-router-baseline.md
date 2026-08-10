@@ -1,4 +1,4 @@
-# vLLM production stack router를 기준선으로 세우는 계획 (2026-08-10)
+# vLLM router의 기본 정책 `cache_aware`를 기준선으로 세우는 계획 (2026-08-10)
 
 **상태**: 계획만 있고 아무것도 안 돌렸다. `llmd-baseline.md`와 같은 형식이다 — 답하려는 질문,
 무엇을 이식하는가, 실행 전에 적어 두는 판정 규칙, 그리고 **이 기준선이 답하지 않는 것**.
@@ -14,10 +14,10 @@
 1. **수정 후 워크로드에서 A0×B2 칸이 지금 비어 있다.** Llumnix 부하 균등화의 마지막 측정은
    2026-08-06의 EXP-61이고 **2026-08-08의 부하 생성기 수정 이후로는 한 번도 안 돌았다.** 즉
    "거절도 결합도 없는" 극단이 지금 논문의 표에 없다.
-2. **그 칸 안에서 두 시스템이 같지 않다.** Llumnix는 **인스턴스별 대기 prefill 토큰 수가 가장
-   적은 곳**으로 보내므로 부하를 본다. 아래에서 확인했듯 production stack의 round-robin은
-   **부하를 아예 안 본다** — 엔진 통계를 인자로 받아 놓고 쓰지 않는다. **우리 두 축이 그 차이를
-   담지 못하는 것이지 차이가 없는 것이 아니다.**
+2. **그 칸 안에서 시스템들이 같지 않다.** Llumnix는 대기 prefill 토큰이 가장 적은 곳으로
+   보내고, production stack의 round-robin은 엔진 통계를 인자로 받아 놓고 **아예 안 쓰며**,
+   우리가 고른 `cache_aware`는 **접두사 일치와 대기 요청 수를 둘 다 본다.** **우리 두 축이 그
+   차이를 담지 못하는 것이지 차이가 없는 것이 아니다.**
 
 **그리고 심사 관점에서 이쪽이 더 값이 크다.** "분류 표의 같은 칸"은 우리가 만든 좌표계이고,
 심사위원이 실제로 묻는 것은 **"사람들이 실제로 배포하는 라우터보다 나은가"**다. Llumnix는 논문
@@ -30,60 +30,84 @@
 
 | | **vllm-project/production-stack** | **PyPI `vllm-router` 0.1.15** |
 |---|---|---|
-| 무엇 | vLLM 프로젝트가 배포하는 스택의 라우터. **Python** | **Rust** 기반 별도 패키지. 저자가 SGLang 라우터 저자다 |
-| 라우팅 선택지 | `roundrobin`, `session`, `kvaware`, `prefixaware`, `disaggregated_prefill`, `disaggregated_prefill_orchestrated` | `random`, `round_robin`, `cache_aware`, `power_of_two`, `consistent_hash` |
-| 기본값 | **코드에는 기본값이 없다** — `--routing-logic`을 안 주면 파서가 오류를 낸다. 그런데 **Helm 차트가 `roundrobin`을 기본값으로 배포한다**(`helm/values.yaml`의 `routingLogic: "roundrobin"`) | **`cache_aware`** (`RouterArgs.policy`의 기본값) |
-| 우리가 쓸 것 | **이쪽. `roundrobin`.** | 아니다 |
+| 무엇 | vLLM 프로젝트가 배포하는 스택의 라우터. **Python** | **Rust**. **SGLang Model Gateway의 fork**이고 자기 README가 "minimal changes"라고 적는다 |
+| 라우팅 선택지 | `roundrobin`, `session`, `kvaware`, `prefixaware`, `disaggregated_prefill` 둘 | `random`, `round_robin`, **`cache_aware`**, `power_of_two`, `consistent_hash` |
+| 기본값 | 코드에는 없다(안 주면 파서가 오류). **Helm 차트가 `roundrobin`** | **`cache_aware`** |
+| 우리가 쓸 것 | 아니다 | **이쪽. `cache_aware`.** |
 
-> **이식 대상은 vllm-project/production-stack의 `roundrobin`이고, 논문에는 "vLLM production
-> stack router (round-robin, the routing logic its Helm chart ships)"라고 적는다.** 그냥
-> "vLLM router"라고 쓰면 위 둘 중 어느 것인지 알 수 없다.
+**`cache_aware`를 고른 이유 둘.** ① **그 패키지가 배포하는 기본값**이라 "다들 쓰는 것과
+비교했나"를 닫는다. ② **접두사를 목적지 선택에 쓰는 라우터**여서, 우리가 접두사를 **비용
+회계에만** 쓰는 것과 정면으로 대비된다 — `motivation_v3.md` §3.4.2가 **"prefix-aware
+routing이라고 쓰면 안 된다"**고 적어 둔 바로 그 구분이고, 지금까지 그 대비를 세울 상대가
+없었다.
 
-## 2. 그 라우터가 실제로 무엇을 하는가 — 소스에서 확인한 것
+> **논문에 적는 이름**: "the vLLM router's default cache-aware policy (a fork of the SGLang
+> model gateway's)". 그냥 "vLLM router"라고 쓰면 위 둘 중 어느 것인지 알 수 없다.
 
-`src/vllm_router/routers/routing_logic.py`의 `RoundRobinRouter.route_request`:
+## 2. `cache_aware`가 실제로 무엇을 하는가 — README가 아니라 소스에서
 
-```python
-def route_request(self, endpoints, engine_stats, request_stats, request) -> str:
-    endpoint_urls = self._endpoint_key(endpoints)      # 정렬된 엔드포인트 튜플
-    idx = self._next_index.get(endpoint_urls, 0)
-    self._next_index[endpoint_urls] = idx + 1
-    return endpoint_urls[idx % len(endpoint_urls)]
+⚠ **README의 한 줄("Optimizes for prefix cache hits")로 이식하면 안 된다.** 다행히 **그 fork의
+원본인 SGLang model gateway가 이 저장소에 이미 들어 있다** —
+`lib/sglang/sgl-model-gateway/src/policies/cache_aware.rs`. 파일 머리의 주석이 알고리즘 전체를
+적어 두었고, 아래는 그것을 옮긴 것이다.
+
+**두 전략을 부하 상태에 따라 오간다.**
+
+**불균형 판정** — 둘 다 만족하면 불균형이다.
 ```
+(max_load − min_load) > balance_abs_threshold      그리고
+ max_load > balance_rel_threshold × min_load
+```
+여기서 load는 **worker별 대기 중인 요청 수**다.
 
-**세 가지가 여기서 곧바로 나온다.**
+**불균형이면 → shortest queue.** 대기 요청이 가장 적은 worker로 보낸다.
 
-1. **`engine_stats`와 `request_stats`를 인자로 받아 놓고 한 번도 쓰지 않는다.** 부하를 볼 수
-   있는데 안 본다. **Llumnix와의 차이가 이것이다** — Llumnix는 대기 prefill 토큰 수가 가장
-   적은 곳을 고른다.
-2. **거절이 없다.** 라우팅 함수의 반환형이 엔드포인트 문자열이고 "없음"을 표현할 수 없다.
-   과부하는 전부 큐잉과 SLO 위반으로 나타난다. → 분류 표에서 **A0**.
-3. **클래스와 인스턴스의 결합이 없다.** 도착 순서대로 돌아가며 배정하므로 모든 클래스가 모든
-   인스턴스에 고르게 퍼진다. → 분류 표에서 **B2**. 그리고 이것이 `related-works-review.md`
-   §9.2의 **S1 행**("엔진 SLO 스케줄러 + round-robin")이 진단한 구성 그 자체다.
+**균형이면 → 근사 radix tree.** worker마다 지금까지 그 worker로 보낸 요청의 텍스트로 트리를
+유지한다(**토큰 ID가 아니라 raw text 문자**를 저장한다 — 토큰화 비용을 피하려고).
 
-⚠ **`prefixaware`와 `kvaware`도 있다.** 이번에는 안 돌린다 — `kvaware`는 LMCache 컨트롤러를
-요구하고 `prefixaware`는 우리 prefix 회계와 축이 겹쳐서 **한 실험에서 두 가지를 바꾸는 것이
-된다.** 나중에 따로 세운다(§7).
+1. 가장 긴 접두사 일치를 가진 worker를 찾는다.
+2. **일치율 > `cache_threshold`**이면 그 worker로 보낸다.
+3. **일치율 ≤ `cache_threshold`**이면 **트리 크기가 가장 작은 worker**로 보낸다(캐시 여유가
+   가장 많은 곳).
+4. 배경에서 `eviction_interval_secs`마다 LRU로 잎 노드를 축출해 `max_tree_size`를 지킨다.
 
-## 3. 이식이 왜 가벼운가
+### 2.1 ⚠ 같은 이름의 상수가 두 값을 갖는다 — 어느 것을 쓸지 정해야 한다
 
-**우리가 이식하는 것은 알고리즘이지 그 스택이 아니다.** round-robin은 위 여섯 줄이 전부이고,
-llm-d 때처럼 별도 배포(Envoy + 예측기 세 파드)를 세울 필요가 없다. 스케줄러에 정책 하나를
-추가하고 화이트리스트에 넣으면 된다.
+| 상수 | **PyPI `vllm-router` 기본값** | 이 저장소에 든 SGLang 원본 |
+|---|---|---|
+| `cache_threshold` | **0.3** | **0.7** (`policies/factory.rs:110`), 다른 자리에는 0.8 |
+| `balance_abs_threshold` | 64 | — |
+| `balance_rel_threshold` | 1.5 | 1.5 |
+| `eviction_interval_secs` | 120 | — |
+| `max_tree_size` | 2^26 | — |
 
-**해야 하는 것 넷.**
+**fork가 `cache_threshold`를 0.7에서 0.3으로 내렸다.** 값이 두 배 이상 다르고, 그 상수가
+"접두사로 고를 것인가 캐시 여유로 고를 것인가"를 가르는 문턱이므로 **결과를 바꾼다.**
 
-1. `pkg/scheduler/policy/`에 `roundrobin` 정책을 추가한다. 인스턴스 목록을 정렬해서 순서대로
-   돌린다. **부하도 예산도 보지 않는다** — 그것이 이 기준선의 정의다.
+→ **우리는 `vllm-router`의 기본값(0.3)을 쓴다.** 비교 대상이 그 패키지이기 때문이다.
+**논문과 실험 기록에 그 값을 적고, SGLang 원본이 0.7이라는 것도 같이 적는다.**
+
+## 3. 이식이 무엇을 요구하는가
+
+**알고리즘만 우리 스케줄러에 이식한다. 그 스택을 배포하지 않는다.**
+
+1. `pkg/scheduler/policy/`에 `vllmcache` 정책을 추가한다. 필요한 상태는 셋 —
+   **인스턴스별 대기 요청 수**, **인스턴스별 근사 radix tree**, 그리고 위 상수 다섯.
 2. `verifySchedulingPolicy` 화이트리스트에 넣는다. **빠지면 기동 시 panic이고 유닛 테스트로는
    안 잡힌다**(CLAUDE.md 함정 A).
-3. `set_scheduler_profiling.py`가 그 정책 이름을 받게 한다.
-4. 드라이버(`run_exp07.sh` 계열)에 arm을 하나 추가한다.
+3. `set_scheduler_profiling.py`가 그 이름을 받게 하고, 상수 다섯을 플래그로 노출한다.
+4. 드라이버에 arm을 추가하고 **그림 스크립트의 arm 표 셋에 먼저 등록한다**(CLAUDE.md 함정 E).
 
-⚠ **게이트웨이 보유 창은 upstream 기본값 5,000 ms / 재시도 1,000 ms를 준다** — Llumnix SLO,
-PolyServe와 같은 처지다. FluidServe 계열의 35,000 ms를 주면 그 라우터에 없는 능력을 주는 것이
-된다. ⚠ **그런데 그 5,000 ms가 무해하다는 것은 검증되지 않았다**(`motivation_v3.md` §5.3).
+**⚠ 이식에서 가장 틀리기 쉬운 곳 셋.**
+
+- **트리는 raw text 문자 단위다.** 우리 prefix 회계는 **토큰의 블록 해시**를 쓴다. 우리 것을
+  재사용하면 다른 알고리즘을 이식하는 것이 된다. **문자 단위 트리를 따로 만든다.**
+- **load는 대기 요청 수이지 KV도 예산도 아니다.** 우리 스케줄러가 이미 갖고 있는 양들을
+  대신 넣고 싶어지는데, 그러면 이 기준선이 우리 정책을 조금 닮은 무엇이 된다.
+- **거절이 없다.** 반환은 항상 인스턴스 하나다. **게이트웨이 보유 창은 upstream 기본값
+  5,000 ms / 재시도 1,000 ms를 준다** — FluidServe 계열의 35,000 ms를 주면 그 라우터에 없는
+  능력을 주는 것이 된다. ⚠ 그 5,000 ms가 무해하다는 것은 검증되지 않았다
+  (`motivation_v3.md` §5.3).
 
 ## 4. 실행 전에 반드시 고쳐야 하는 것 — 포트 고갈 (**한쪽은 고쳤다**)
 
@@ -122,18 +146,30 @@ EXP-54에서 Llumnix 부하 균등화가 40분에 네 엔진을 포화시키자 
 **× 2반복**, 그리고 한 시간 trace **× 2반복**. 정적 16조건 약 3.5시간 + 한 시간 2조건 약
 2.3시간 = **약 5.8시간.**
 
-**예상**: 이 라우터는 부하도 예산도 안 보고 거절도 안 하므로 **네 arm 중 가장 낮을 것으로
-본다.** 수정 전 워크로드에서 Llumnix 부하 균등화의 90% 유지 도착률이 PolyServe보다 낮았다.
+**예상과 그 근거.** 이 라우터는 **예산을 전혀 안 보고 거절도 안 한다.** 그러나 **부하는
+본다**(불균형이면 shortest queue) **그리고 접두사도 본다.** 그래서 Llumnix(대기 prefill 최소)
+보다는 위, 예산을 보는 셋(Llumnix SLO, llm-d, 우리)보다는 아래로 본다. ⚠ **그런데 접두사
+친화가 클래스 분리를 부수적으로 만들 수 있다** — 같은 클래스의 요청이 접두사를 공유하므로,
+`cache_aware`가 **의도하지 않은 클래스 분리**를 만들 가능성이 있고 그러면 예상보다 높게 나온다.
+**그 경우가 이 실험에서 가장 흥미롭다**(아래 셋째 줄).
 
 | 결과 | 무엇을 뜻하나 | 문서에 무엇을 하나 |
 |---|---|---|
-| 90% 유지 도착률이 PolyServe(15.8)보다 **낮다** | 예상대로다. **거절도 결합도 없는 극단이 가장 낮다** | `motivation_v3.md` §3.1.1의 표에 다섯 번째 arm으로 넣고, §3.3.1의 A0×B2 칸을 숫자로 채운다 |
-| Llumnix SLO(20.4)와 **PolyServe(15.8) 사이** | 거절 없는 것이 정적 파티션보다 나은 구간이 있다 | **§3.2.1의 "격리 대 혼합" 서술에 조건이 붙는다** — 정적 파티션이 가장 단순한 라우터보다 나쁠 수 있다는 뜻이므로, PolyServe를 "격리의 대표"로 세우는 자리에 그 사실을 같이 적는다 |
-| **llm-d(18.7)보다 높다** | **예측 기반 라우팅이 round-robin보다 나쁘다는 뜻이다** | 그대로 적는다. `related-works-review.md` §8.3(LMetric)이 정확히 그 방향을 주장하므로 **우리 결과가 그 논문을 지지하는 것이 되고**, 그것은 우리 논문의 §3.2.2(요청 단위 예측기의 한계)를 강화한다 |
+| 90% 유지 도착률이 **PolyServe(15.8) 이하** | 예산도 거절도 없으면 접두사와 부하를 봐도 부족하다 | `motivation_v3.md` §3.1.1의 표에 다섯 번째 arm으로 넣고 §3.3.1의 A0×B2 칸을 채운다 |
+| **Llumnix SLO(20.4)와 llm-d(18.7) 사이** | **접두사 친화만으로 예산 인식 라우터에 근접한다** | §3.2.2에 새 줄이 생긴다 — 요청 단위 예측기 말고 **접두사 친화**라는 다른 계열의 신호가 어디까지 가는지 |
+| **llm-d(18.7)보다 높다** | **예측 기반 라우팅이 접두사 친화보다 나쁘다** | 그대로 적는다. `related-works-review.md` §8.3(LMetric)이 정확히 그 방향을 주장하므로 **우리 결과가 그 논문을 지지하는 것이 되고** §3.2.2가 강해진다 |
+| **우리(28.1)에 근접(3점 이내)** | **우리 우위의 상당 부분이 접두사 재사용에서 온 것일 수 있다** | ⚠ **가장 불리한 결과다.** §3.4.2의 "prefill 회계가 가장 큰 단일 기여(+10.2~13.5점)"를 다시 읽어야 한다 — 그 이득이 회계 때문인지 접두사 재사용 때문인지 이 arm이 처음으로 가른다 |
 | 반복 간 폭이 5점을 넘는다 | 이 arm이 불안정하다 | 반복을 넷으로 늘리기 전에는 무릎을 인용하지 않는다 |
 
-**반증 조건**: 이 arm이 **네 arm 중 가장 낮지 않으면**, "거절도 결합도 없는 것이 최악"이라는
-서술을 못 쓴다. 그때는 §3.3.1의 A0 행 진단을 다시 써야 한다.
+**반증 조건을 명시한다**: 이 arm의 **클래스당 유효 인스턴스 수가 우리와 비슷하게(2.0~2.5)
+나오면**, "클래스 분리는 예산을 보는 판정에서만 나온다"는 우리 서술이 틀린 것이다.
+**접두사 친화만으로도 같은 분리가 나온다는 뜻이므로 §3.4.1의 요구 조건 4를 다시 써야 한다.**
+→ **그래서 이 arm에서는 요청 단위 점수만이 아니라 `separation_measures.py`의 클래스당 유효
+인스턴스 수를 반드시 같이 낸다.**
+
+⚠ **한 arm이 두 가지를 동시에 바꾼다**(접두사 친화 + 부하 불균형 시 shortest queue). 결과가
+어느 쪽에서 오는지 이 실험만으로는 못 가른다. 가르려면 `cache_threshold`를 1.0으로 두어
+접두사 경로를 사실상 끄는 조건을 하나 더 돌려야 하고, **그것은 이 실험이 끝난 뒤에 정한다.**
 
 ## 6. 이 기준선이 답하지 않는 것
 
