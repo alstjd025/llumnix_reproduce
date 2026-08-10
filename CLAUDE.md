@@ -199,8 +199,23 @@ go build -buildvcs=false \
   -o bin/gateway-exp10 ./cmd/gateway
 ```
 
-`bin/`이 스케줄러 파드의 `/exp07bin`으로 hostPath 마운트되어 있다. 바이너리를 덮어쓰고
-파드를 재시작하면 반영된다. 기존 바이너리 백업 위치는 `/home/nxclab/tools/bin-backup/`.
+`bin/`이 스케줄러 파드의 `/exp07bin`으로 hostPath 마운트되어 있다. 기존 바이너리 백업 위치는
+`/home/nxclab/tools/bin-backup/`.
+
+**⚠ `cp`로 덮어쓰면 실패한다 — 파드가 그 파일을 실행 중이면 커널이 `Text file busy`로 막는다
+(2026-08-10).** 새 이름으로 쓰고 **`mv`로 이름을 바꿔 넣는다.** rename은 돌고 있는 프로세스의
+inode를 건드리지 않고 다음 기동이 새 파일을 읽는다.
+
+```bash
+cp -p <새 바이너리> bin/.scheduler-exp07.incoming && mv -f bin/.scheduler-exp07.incoming bin/scheduler-exp07
+kubectl -n llumnix rollout restart deploy/scheduler
+```
+
+**⚠ `cp` 실패는 조용하지 않지만 그 다음 단계가 조용하다.** 같은 명령줄에서 정책을 바꾸면
+**옛 바이너리에 없는 정책 이름**이 들어가고 `verifySchedulingPolicy`가 기동 중 panic해서
+CrashLoopBackOff가 된다. 그런데 **옛 파드는 계속 Running이라 클러스터는 정상으로 보이고**,
+드라이버는 이것을 "reported no policy"로 보고해 느린 롤아웃과 구분되지 않는다(함정 B).
+→ **배포 뒤에는 파드 안에서 `md5sum /proc/1/exe`로 확인한다.** 그것이 유일한 authority다.
 
 정책 전환/프로파일 주입은 `ms_dev/scripts/set_scheduler_profiling.py`.
 
