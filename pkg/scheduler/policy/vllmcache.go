@@ -42,11 +42,19 @@ ms_dev/notes/vllm-router-baseline.md rather than left in code comments alone.
      already seen" instead of "fraction of its characters". The shapes agree and
      token-level matching is the more precise of the two, so if anything this
      favours the baseline.
-  2. LOAD IS THE ENGINE'S QUEUE, NOT THE ROUTER'S DISPATCH COUNT. The original
-     counts requests it has sent and not yet seen finish. This scheduler has the
-     engine's own `NumWaitingRequests + NumRunningRequests` from CMS, which is
-     the same quantity measured one hop closer to the truth, and it needs no
-     completion bookkeeping that could drift.
+  2. !! THE LOAD SIGNAL IS WRONG AND THIS POLICY MUST NOT BE MEASURED UNTIL IT IS
+     FIXED. The original keeps its own per-worker counter, incremented when it
+     dispatches and decremented when the response completes, so CONSECUTIVE
+     DECISIONS SEE EACH OTHER. What is read below is the engine's
+     `NumWaitingRequests + NumRunningRequests`, which arrives on the CMS polling
+     interval, so every decision taken between two polls sees the same stale
+     depth and they all herd onto whichever instance looked emptiest at the last
+     poll. Both the imbalance test and the shortest-queue branch read it, so the
+     policy notices the herd only after it has formed and then drains it toward a
+     stale minimum. Measuring this and reporting that the vLLM router scores
+     lower than us would be reporting our own defect as a property of their
+     algorithm. The fix and the two ways to get the completion signal are in
+     ms_dev/notes/vllm-router-baseline.md section 3.1.
 
 THE CONSTANT THAT WOULD HAVE BEEN GOT WRONG. `cacheThreshold` is 0.3 in
 vllm-router and 0.7 in the SGLang original the fork came from. It is the switch
@@ -255,6 +263,9 @@ func (s *vllmCacheSelector) selectInstance(
 	var maxLoad, minLoad int32
 	first := true
 	for _, v := range instanceViews {
+		// !! Stale between polls -- see deviation 2 in the file header. Do not
+		// run this arm for a measurement until this reads a count that updates
+		// on dispatch.
 		var load int32
 		if v.cmsView != nil {
 			load = v.cmsView.Status.NumWaitingRequests + v.cmsView.Status.NumRunningRequests
