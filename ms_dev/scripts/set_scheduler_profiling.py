@@ -136,6 +136,9 @@ FLUIDSERVE_ABLATIONS = {
     # the scheduler refuses to start on an unparseable value and the check below
     # compares what it reported back.
     "FS_SHED_SIGNAL": "--fluidserve-shed-signal",
+    # EXP-64. Read the client's per-request output-length hint instead of the
+    # class distribution. Default false, so the control arm is unchanged.
+    "FS_ORACLE_LEN": "--fluidserve-oracle-length",
     "FS_SHED": "--fluidserve-enable-shed",
     "FS_AFFINITY": "--fluidserve-enable-affinity",
     # EXP-58. Not a boolean either: a float between 0 and 1.
@@ -539,6 +542,7 @@ def verify_effective(policy, logs, applied_args):
         # EXP-67. The whole point of this arm is that the treatment differs from
         # the control, so a flag that did not take effect makes them the same
         # run under two names -- the failure this function exists to catch.
+        ("--fluidserve-oracle-length", "oraclelen"),
         ("--fluidserve-prefix-aware", "prefix"),
         ("--fluidserve-prefix-calibration", "prefixcalib"),
         ("--fluidserve-prefix-block-tokens", "prefixblock"),
