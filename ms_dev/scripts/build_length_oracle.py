@@ -75,7 +75,24 @@ def main():
     # healthy run as full of duplicate keys.
     if "agent" in df.columns:
         df = df[df["agent"] == "request"]
-    rows = df[df["output_tokens"].fillna(0) > 0].copy()
+    # A request that was cut off mid-stream DID produce tokens, and the count
+    # recorded for it is a lower bound rather than its length. Those entries are
+    # worse than missing ones: a missing entry sends no hint and the scheduler
+    # falls back to the class distribution, while a truncated one is a wrong
+    # number the policy acts on. Measured at 35 req/s they are 4.9% of the
+    # candidates and their median is 343 tokens against 449 for the completed
+    # ones, so they are systematically short and would tell the policy that
+    # requests finish sooner than they do.
+    #
+    # Excluded, therefore, along with errors and timeouts, which truncate for the
+    # same reason. Rejected requests need no filter: they produced nothing and
+    # the positive-output test already drops them.
+    truncated = pd.Series(False, index=df.index)
+    for col in ("is_server_terminated", "is_error", "is_timeout", "is_job_timeout"):
+        if col in df.columns:
+            truncated |= df[col].fillna(False).astype(bool)
+    n_trunc = int((truncated & (df["output_tokens"].fillna(0) > 0)).sum())
+    rows = df[(df["output_tokens"].fillna(0) > 0) & ~truncated].copy()
     rows["call_index"] = rows["call_index"].astype(int)
 
     dup = rows.duplicated(subset=["task_id", "call_index"]).sum()
@@ -100,6 +117,8 @@ def main():
     total = len(df)
     print(f"source        {a.run_dir}")
     print(f"rows          {total:,} in metrics.csv")
+    print(f"truncated     {n_trunc:,} excluded: cut off, errored or timed out "
+          f"mid-stream, so their token count is a lower bound and not a length")
     print(f"entries       {len(table):,} with a positive output length "
           f"({100.0*len(table)/max(1,total):.1f}% of rows)")
     print(f"lengths       p50 {rows['output_tokens'].quantile(.5):.0f}  "
