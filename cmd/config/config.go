@@ -272,6 +272,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveEnablePend        bool
 	FluidserveEnableShed        bool
 	FluidserveShedSignal string
+	FluidserveOracleLength bool
 	FluidserveEnableAffinity    bool
 	FluidserveAffinityWeight    float64
 	FluidserveClassPin          string
@@ -440,6 +441,20 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 		"Which quantity the shed test reads: `coupled` (the placement about to be "+
 			"made, shipped) or `fleet[:scale]` (the mean over candidates, which is the "+
 			"independent-combination ablation). Ignored when --fluidserve-enable-shed=false.")
+
+	// EXP-64. Read the client's per-request output-length hint instead of the
+	// class's length distribution, for the arriving request AND for the requests
+	// already resident on each instance -- the feasibility test is about what the
+	// incumbents still have to produce, so using the hint for only the arrival
+	// would measure a third thing.
+	//
+	// Default false, so the control arm is the same policy every experiment since
+	// EXP-27 measured, and a request with no parseable hint falls back to the
+	// class distribution rather than to zero.
+	flags.BoolVar(&c.FluidserveOracleLength, "fluidserve-oracle-length", false,
+		"Use the per-request output-length hint from the OpenAI user field "+
+			"(len:<tokens>) in place of the class length distribution. EXP-64: this "+
+			"bounds what a finer-grained length predictor could be worth.")
 
 	flags.BoolVar(&c.FluidserveEnableAffinity, "fluidserve-enable-affinity", true,
 		"Among the instances that can take a request, prefer the one already "+

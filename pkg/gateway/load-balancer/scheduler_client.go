@@ -81,6 +81,21 @@ func (cb *SchedulerClient) createSchedulingRequest(req *types.RequestContext) *t
 				req.Id, *cr.Priority)
 		}
 	}
+	// EXP-64. The client may declare how long the answer will be, encoded as
+	// "len:<tokens>" in the OpenAI `user` field. vLLM accepts and ignores that
+	// field, so a request carrying it is byte-identical downstream to one that
+	// does not and no arm of the experiment changes the workload. A value that
+	// does not parse is dropped with a log line rather than guessed at, because a
+	// hint that silently became zero would make the treatment arm identical to
+	// its control.
+	if cr := req.LLMRequest.CompletionRequest; cr != nil && cr.User != "" {
+		if n, ok := types.ParseLengthHint(cr.User); ok {
+			schRequest.PredictedOutputTokens = n
+		} else {
+			klog.V(4).Infof("request %s: user field %q is not a len:<n> hint, ignoring",
+				req.Id, cr.User)
+		}
+	}
 	// record the borrow gateway
 	req.SchedulingCtx.GatewayId = localEndpoint.String()
 	return schRequest

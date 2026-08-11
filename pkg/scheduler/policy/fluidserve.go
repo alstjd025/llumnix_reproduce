@@ -111,6 +111,9 @@ type fluidserveConfig struct {
 	// fleet test compares against, so the arm's rejection rate can be matched to
 	// the control's rather than being whatever falls out.
 	shedFleetScale float64
+	// oracleLength makes the policy read the client's per-request output-length
+	// hint in place of the class distribution. EXP-64.
+	oracleLength bool
 	enableAffinity bool
 	// affinityWeight is the one exception to the line above: it is a quantity,
 	// between 0 and 1, and it exists so that the class preference can be varied
@@ -160,6 +163,12 @@ type fluidserveRequest struct {
 	// at which the request can act on its own deadline. Zero on first sighting.
 	recheckMs    float64
 	expectedToks float64
+	// oracleTokens is the client's per-request output-length hint, 0 when absent
+	// or when --fluidserve-oracle-length is off. Carried on the request so that
+	// commit() can hand it to the registry: a hint that shaped the arrival's own
+	// feasibility test but not the incumbents' remaining work would answer a
+	// different question from the one EXP-64 asks.
+	oracleTokens int
 	// nominalMs is the per-token pace this class is promised: the tier key for a
 	// per-token budget, and the whole budget divided by the expected output for
 	// an end-to-end one.
@@ -384,6 +393,27 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 	tier := request.TpotSloMs
 	nominal, expected, isE2E, budgetMs := p.registry.requestBudget(tier)
 
+	// EXP-64. With the flag on, a request that declares its own output length is
+	// judged by that instead of by its class's distribution. `expected` is the
+	// only quantity that changes here: `nominal` is the per-token pace the tier
+	// was promised, which is a property of the class and not of this request, and
+	// for the end-to-end form it is derived from the class mean so that an
+	// instance's admissible occupancy does not move request by request.
+	//
+	// The fallback when no hint arrives is the class distribution, not zero, so a
+	// gap in the client's table degrades to today's behaviour rather than to a
+	// request that looks free.
+	oracle := 0
+	if p.cfg.oracleLength && request.PredictedOutputTokens > 0 {
+		oracle = request.PredictedOutputTokens
+		expected = float64(oracle)
+		metrics.Counter("scheduler_fluidserve_oracle_total",
+			metrics.Labels{{Name: "hint", Value: "used"}}).Inc()
+	} else if p.cfg.oracleLength {
+		metrics.Counter("scheduler_fluidserve_oracle_total",
+			metrics.Labels{{Name: "hint", Value: "absent"}}).Inc()
+	}
+
 	// Hashed here rather than inside evaluate() because evaluate runs once per
 	// CANDIDATE and this is a property of the request. The registry returns a
 	// cached slice from the second call on, so a request held at the gateway and
@@ -404,6 +434,7 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 		recheckMs:    recheckMs,
 		nowMs:        now,
 		expectedToks: expected,
+		oracleTokens: oracle,
 		nominalMs:    nominal,
 		isE2E:        isE2E,
 		budgetMs:     budgetMs,
@@ -2148,7 +2179,8 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 		metrics.Labels{}).Observe(float64(ord))
 
 	p.registry.onDispatch(c.flux.id, req.id, req.tier, req.promptTokens,
-		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs, c.prefillRaw)
+		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs, c.prefillRaw,
+		req.oracleTokens)
 	// Recorded only for a placement that was actually made. A pended or shed
 	// request never reached an engine and therefore put nothing in a cache.
 	if p.cfg.prefixAware {
@@ -2222,6 +2254,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		enablePend:     p.FluidserveEnablePend,
 		enableShed:     p.FluidserveEnableShed,
 		shedFleetScale: parseShedSignal(p.FluidserveShedSignal),
+		oracleLength:   p.FluidserveOracleLength,
 		enableAffinity: p.FluidserveEnableAffinity,
 		affinityWeight: p.FluidserveAffinityWeight,
 		classPin:       pin,
@@ -2287,7 +2320,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
-			"shedsignal=%s, "+
+			"shedsignal=%s, oraclelen=%v, "+
 		// The prefix fields sit BEFORE classpin because the deployment script
 		// reads the pin with `classpin=(.+?), budgets `, which needs those two
 		// to stay adjacent. A field inserted between them is swallowed by that
@@ -2297,7 +2330,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.enableFlux, cfg.classHarm,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
-		p.FluidserveShedSignal,
+		p.FluidserveShedSignal, cfg.oracleLength,
 		cfg.prefixAware, cfg.prefixCalibrate, cfg.prefixBlockToks, cfg.prefixCapacity,
 		formatClassPin(cfg.classPin),
 		p.FluidserveClassBudgets)

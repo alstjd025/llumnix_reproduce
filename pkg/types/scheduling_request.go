@@ -2,6 +2,8 @@ package types
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"llumnix/pkg/consts"
 )
@@ -55,6 +57,20 @@ type SchedulingRequest struct {
 	// so populating them is inert for the existing arms.
 	TtftSloMs int `json:"ttft_slo_ms,omitempty"`
 	TpotSloMs int `json:"tpot_slo_ms,omitempty"`
+
+	// PredictedOutputTokens is how many output tokens this request is expected to
+	// produce, when the client supplies it. EXP-64 carries a near-exact value
+	// here to bound what a finer-grained length predictor could be worth; a real
+	// deployment would carry a prediction. Zero means unsupplied, and every
+	// policy that does not read it is unaffected.
+	//
+	// It rides in the OpenAI `user` field rather than `max_tokens`, and that
+	// choice is the point: max_tokens would truncate generation and change the
+	// workload, making the hint an upper bound instead of information, whereas
+	// `user` is accepted and ignored by vLLM. The two arms of the experiment
+	// therefore emit byte-identical requests and differ only in whether the
+	// scheduler reads the field.
+	PredictedOutputTokens int `json:"predicted_output_tokens,omitempty"`
 
 	// scheduling result
 	SchedulingResult SchedulingResult `json:"scheduling_result,omitempty"`
@@ -151,4 +167,24 @@ func (req *SchedulingRequest) String() string {
 	}
 
 	return str
+}
+
+// ParseLengthHint reads the `len:<n>` encoding out of the OpenAI `user` field.
+//
+// Anything else returns false rather than a guess. A malformed hint that
+// silently became zero would make the treatment arm identical to its control
+// with nothing in any log to say so, which is the failure mode this repository
+// has hit with a boolean flag, a preserved deployment setting and a verifier
+// regex. The caller logs the rejection.
+func ParseLengthHint(user string) (int, bool) {
+	const prefix = "len:"
+	user = strings.TrimSpace(user)
+	if !strings.HasPrefix(user, prefix) {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(user, prefix)))
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n, true
 }

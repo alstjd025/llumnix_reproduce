@@ -131,6 +131,13 @@ type dispatchRecord struct {
 	// own queue and the tail of whatever iteration was running, which is what
 	// the modelled prefill never included and what has to be measured.
 	prefillEstMs float64
+	// oracleTokens is the client's per-request output-length hint, or 0 when
+	// none was supplied. EXP-64 uses it in place of the class distribution for
+	// this request's remaining length while it is resident -- the feasibility
+	// test asks what the incumbents still have to produce, so a hint applied only
+	// to the arriving request would leave the larger half of the question on the
+	// class average and measure something else.
+	oracleTokens int
 	lastJ        int
 }
 
@@ -420,7 +427,7 @@ func (r *requestRegistry) gcLocked(nowMs int64) {
 func (r *requestRegistry) onDispatch(
 	instanceID, requestID string, tier, promptTokens int,
 	chunk float64, stepID int64, nowMs int64, prefillEstMs float64,
-	chargedPrefill float64) {
+	chargedPrefill float64, oracleTokens int) {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -452,6 +459,7 @@ func (r *requestRegistry) onDispatch(
 		firstSeenMs:    arrived,
 		dispatchedMs:   nowMs,
 		prefillEstMs:   prefillEstMs,
+		oracleTokens:   oracleTokens,
 	}
 }
 
@@ -603,9 +611,14 @@ func (r *requestRegistry) PlacementDelayMean() float64 {
 // liveViewLocked turns a record into the decision path's view of it, including
 // the allowance: the time per remaining token that still satisfies the budget.
 func (r *requestRegistry) liveViewLocked(rec *dispatchRecord, j int, nowMs int64) liveRequest {
-	prof := r.lengths.forTier(rec.tier)
 	remaining := 1.0
-	if prof != nil {
+	if rec.oracleTokens > 0 {
+		// The hint is a length, not a distribution, so what is left is simply
+		// what has not been produced. It floors at 1 rather than 0 for the same
+		// reason expectedRemaining does: the allowance divides by it, and a
+		// request on its last token still occupies the instance for that token.
+		remaining = math.Max(1, float64(rec.oracleTokens-j))
+	} else if prof := r.lengths.forTier(rec.tier); prof != nil {
 		remaining = prof.expectedRemaining(j)
 	}
 	spec := r.budgets.forTier(rec.tier)

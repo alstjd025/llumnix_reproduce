@@ -94,7 +94,7 @@ func fill(p *fluidserveDispatchPolicy, inst string, tier, prompt, n int,
 	for i := 0; i < n; i++ {
 		id := fmt.Sprintf("%s-%d-%d", inst, tier, i)
 		p.registry.noteArrival(id, 0, atMs)
-		p.registry.onDispatch(inst, id, tier, prompt, 8192, atStep, atMs, 0, 0)
+		p.registry.onDispatch(inst, id, tier, prompt, 8192, atStep, atMs, 0, 0, 0)
 	}
 }
 
@@ -125,7 +125,7 @@ func TestAmongFeasibleInstancesTheClassGoesWhereItAlreadyIs(t *testing.T) {
 		if i%2 == 1 {
 			tier = 100
 		}
-		p.registry.onDispatch("mixed", id, tier, 1000, 8192, 4990, now, 0, 0)
+		p.registry.onDispatch("mixed", id, tier, 1000, 8192, 4990, now, 0, 0, 0)
 	}
 	got := decide(p, fsRequest("chat-new", 50, 5000, 1000), views)
 	require.NotNil(t, got)
@@ -367,7 +367,7 @@ func TestUnachievableRequestsDoNotPinInstanceCapacity(t *testing.T) {
 	}
 	// An end-to-end request that has already spent nearly its whole budget.
 	p.registry.noteArrival("doomed", 0, now-15900)
-	p.registry.onDispatch("a", "doomed", 25, 20000, 8192, 4900, now-15900, 0, 0)
+	p.registry.onDispatch("a", "doomed", 25, 20000, 8192, 4900, now-15900, 0, 0, 0)
 
 	p.calculateMetrics(consts.InferTypeNeutral, fsRequest("probe", 50, 5000, 1000), views)
 	f := views["a"].schedulingCtx.fluidserveFlux
@@ -1213,4 +1213,60 @@ func TestMissesOnFleetIncludesInfeasibleCandidates(t *testing.T) {
 	// coupled test, which also answers "miss".
 	inf := []candidate{{meanAfter: math.Inf(1), prefillMs: math.Inf(1)}}
 	assert.True(t, p.missesOnFleet(req, inf, 1.0))
+}
+
+// EXP-64. The length hint has to reach BOTH halves of the feasibility question:
+// how much the arriving request will still produce, and how much the requests
+// already resident will still produce. A hint wired into only the first would
+// measure something other than what the experiment asks, and would do it
+// silently.
+func TestParseLengthHintRefusesAnythingElse(t *testing.T) {
+	n, ok := types.ParseLengthHint("len:512")
+	assert.True(t, ok)
+	assert.Equal(t, 512, n)
+	n, ok = types.ParseLengthHint("  len: 512  ")
+	assert.True(t, ok, "surrounding and inner space is trimmed")
+	assert.Equal(t, 512, n)
+
+	for _, bad := range []string{"", "512", "len:", "len:0", "len:-3", "len:abc",
+		"tokens:512", "len:512:extra", "user-123"} {
+		_, ok := types.ParseLengthHint(bad)
+		assert.False(t, ok, "%q must be refused rather than guessed at", bad)
+	}
+}
+
+func TestOracleReplacesTheClassDistributionForResidentRequests(t *testing.T) {
+	// The registry is what the feasibility test reads for the incumbents, so this
+	// is the half that would go unnoticed if it were missed.
+	r := testRegistry(t)
+	now := int64(1_000_000)
+
+	// Two requests of the same class, one with a hint far below the class mean
+	// and one with no hint at all. Both have produced 100 tokens.
+	r.onDispatch("a", "hinted", 50, 500, 8192, 1000, now, 0, 0, 300)
+	r.onDispatch("a", "plain", 50, 500, 8192, 1000, now, 0, 0, 0)
+
+	live := r.reconcile("a", 2, 1100, now+1000)
+	require.Len(t, live, 2)
+	by := map[string]liveRequest{}
+	for _, lr := range live {
+		by[lr.id] = lr
+	}
+	// The relation, not a magic number: what is left is the hint minus what the
+	// step counter says has been produced. Writing 200 here would have pinned the
+	// test to this fixture's prefill-step arithmetic rather than to the property.
+	assert.InDelta(t, float64(300-by["hinted"].j), by["hinted"].remaining, 1e-6,
+		"the hinted request's remaining length is the hint minus what it has produced")
+	assert.Greater(t, by["hinted"].j, 0, "the fixture must have made progress")
+	assert.Greater(t, math.Abs(by["hinted"].remaining-by["plain"].remaining), 1e-6,
+		"the request without a hint still uses the class distribution, so the two differ")
+
+	// A request past its declared length still occupies the instance for the
+	// token it is producing, so the remaining length floors at 1 rather than 0 --
+	// the allowance divides by it.
+	r2 := testRegistry(t)
+	r2.onDispatch("b", "over", 50, 500, 8192, 1000, now, 0, 0, 50)
+	live2 := r2.reconcile("b", 1, 1200, now+1000)
+	require.Len(t, live2, 1)
+	assert.GreaterOrEqual(t, live2[0].remaining, 1.0)
 }
