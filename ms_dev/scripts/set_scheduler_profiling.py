@@ -130,6 +130,12 @@ FLUIDSERVE_FLAGS = {
 # which is directly comparable with PolyServe.
 FLUIDSERVE_ABLATIONS = {
     "FS_PEND": "--fluidserve-enable-pend",
+    # EXP-79. `coupled` (shipped) or `fleet[:scale]`, the independent-combination
+    # ablation. A string rather than a boolean, so it is not subject to the Go
+    # bool-flag trap, but it IS subject to a typo silently becoming the control --
+    # the scheduler refuses to start on an unparseable value and the check below
+    # compares what it reported back.
+    "FS_SHED_SIGNAL": "--fluidserve-shed-signal",
     "FS_SHED": "--fluidserve-enable-shed",
     "FS_AFFINITY": "--fluidserve-enable-affinity",
     # EXP-58. Not a boolean either: a float between 0 and 1.
@@ -549,6 +555,42 @@ def verify_effective(policy, logs, applied_args):
             same = asked == got
         if not same:
             bad.append(f"{flag}: asked {asked}, scheduler reports {key}={got}")
+    # The shed signal is checked separately for the same reason as the class pin
+    # below: its value contains a ':' and the general token regex above stops
+    # there, so `shedsignal=fleet:1.0` was read as `fleet` and compared unequal to
+    # the `fleet:1.0` that was asked for. The pre-flight caught this before any
+    # condition ran, which is the whole reason the pre-flight exists.
+    #
+    # The comparison is semantic rather than textual, because the two sides spell
+    # the same setting differently by design: the Go side treats a bare `fleet` as
+    # scale 1.0, so `fleet` and `fleet:1.0` are one configuration written two ways.
+    # Comparing the strings would fail a run that was correct -- the mistake made
+    # once already with the class pin.
+    def _shed_canon(text):
+        text = (text or "coupled").strip()
+        if text in ("", "coupled"):
+            return ("coupled", 0.0)
+        if text == "fleet":
+            return ("fleet", 1.0)
+        if text.startswith("fleet:"):
+            try:
+                return ("fleet", float(text.split(":", 1)[1]))
+            except ValueError:
+                return ("unparseable", text)
+        return ("unparseable", text)
+
+    m = re.search(r"shedsignal=([^,]+)", line)
+    got_shed = m.group(1).strip() if m else None
+    if got_shed is None:
+        bad.append("the start-up line does not report shedsignal; the binary "
+                   "predates --fluidserve-shed-signal and this arm cannot be run "
+                   "on it")
+    else:
+        asked_shed = want.get("--fluidserve-shed-signal", "coupled")
+        if _shed_canon(asked_shed) != _shed_canon(got_shed):
+            bad.append(f"--fluidserve-shed-signal: asked {asked_shed}, "
+                       f"scheduler reports shedsignal={got_shed}")
+
     # The class pin is checked separately for two reasons. Its value contains
     # ':' ',' and ';', which the general token regex above does not capture, so
     # it would be skipped in silence -- and a pin that was asked for and not

@@ -104,6 +104,13 @@ type fluidserveConfig struct {
 	// quantities to tune.
 	enablePend     bool
 	enableShed     bool
+	// shedFleetScale is set when the shed test reads the fleet mean instead of
+	// the placement about to be made -- the independent-combination ablation of
+	// fluidserve-design.md section 6.3. Zero means coupled, the shipped
+	// behaviour; a positive value is the multiplier applied to the budget the
+	// fleet test compares against, so the arm's rejection rate can be matched to
+	// the control's rather than being whatever falls out.
+	shedFleetScale float64
 	enableAffinity bool
 	// affinityWeight is the one exception to the line above: it is a quantity,
 	// between 0 and 1, and it exists so that the class preference can be varied
@@ -1295,7 +1302,16 @@ func (s *fluidserveSelector) selectInstance(
 	// incumbents that are on track for one arrival is a losing trade under a
 	// per-request rule, so if the placement we are willing to make would miss,
 	// the placement is not worth making at all.
-	if p.cfg.enableShed && best.missesOwnBudget {
+	// Which candidate the shed test reads is the axis of the independent
+	// combination ablation. Coupled -- the default and every experiment so far --
+	// asks about `best`, the placement that would actually be made. The fleet
+	// form asks about the average of what the candidates would give, so the
+	// refusal is made without knowing where the request would have gone.
+	shedTest := best.missesOwnBudget
+	if p.cfg.shedFleetScale > 0 {
+		shedTest = p.missesOnFleet(req, cands, p.cfg.shedFleetScale)
+	}
+	if p.cfg.enableShed && shedTest {
 		p.registry.forget(req.id)
 		metrics.Counter("scheduler_fluidserve_decisions_total",
 			metrics.Labels{{Name: "decision", Value: "shed"}}).Inc()
@@ -1664,6 +1680,81 @@ func (p *fluidserveDispatchPolicy) missesOwnBudget(
 		budget *= fsAllowanceUtilisation
 	}
 	return req.nominalMs > 0 && c.meanAfter > budget
+}
+
+// missesOnFleet is missesOwnBudget asked of the fleet rather than of a chosen
+// instance: the request is priced against the MEAN of what the candidates would
+// give it, so the refusal carries no information about which one the router
+// picked.
+//
+// This is the shed side of the "independent combination" row of the ablation
+// matrix in fluidserve-design.md section 6.3, which that document names as the
+// paper's core experiment. Both halves still use the flux model -- the pace and
+// the prefill come from the same per-instance evaluation the router sorted on --
+// and what is removed is only that the two halves share an answer.
+//
+// The mean is over ALL candidates including the infeasible ones, deliberately.
+// Restricting it to the feasible set would be a second way of letting the
+// placement decision leak into the refusal, since feasibility is exactly what
+// the router sorts on.
+//
+// scale multiplies the budget the test compares against. It exists so the arm's
+// rejection rate can be brought alongside the control's: without it the two arms
+// would differ in how much they refuse as well as in how they decide, and the
+// comparison could be answered with "you simply refused a better amount".
+func (p *fluidserveDispatchPolicy) missesOnFleet(
+	req *fluidserveRequest, cands []candidate, scale float64) bool {
+
+	n, sumMean, sumPrefill := 0, 0.0, 0.0
+	for _, c := range cands {
+		if math.IsInf(c.meanAfter, 0) || math.IsInf(c.prefillMs, 0) {
+			continue
+		}
+		sumMean += c.meanAfter
+		sumPrefill += c.prefillMs
+		n++
+	}
+	if n == 0 {
+		// Every candidate is out of range, which is the case the coupled test
+		// answers with "miss" as well.
+		return true
+	}
+	fleet := candidate{
+		meanAfter: sumMean / float64(n),
+		prefillMs: sumPrefill / float64(n),
+	}
+	if scale != 1.0 {
+		// Scaling the budget and scaling the predicted pace are the same
+		// comparison; the pace is scaled because the budget lives in two forms
+		// (per token and end to end) and this way one line covers both.
+		fleet.meanAfter /= scale
+		fleet.prefillMs /= scale
+	}
+	return p.missesOwnBudget(req, fleet)
+}
+
+// parseShedSignal turns the flag into the scale the fleet test uses, or 0 for
+// the coupled default. An unparseable value is a configuration error and is
+// refused loudly rather than silently treated as the default, because a typo
+// that fell back to `coupled` would make the ablation arm identical to its
+// control -- the failure this repository has hit twice with boolean flags.
+func parseShedSignal(v string) float64 {
+	v = strings.TrimSpace(v)
+	switch {
+	case v == "" || v == "coupled":
+		return 0
+	case v == "fleet":
+		return 1.0
+	case strings.HasPrefix(v, "fleet:"):
+		f, err := strconv.ParseFloat(strings.TrimPrefix(v, "fleet:"), 64)
+		if err != nil || f <= 0 {
+			klog.Fatalf("--fluidserve-shed-signal=%q: scale must be a positive number", v)
+		}
+		return f
+	default:
+		klog.Fatalf("--fluidserve-shed-signal=%q: want `coupled`, `fleet` or `fleet:<scale>`", v)
+		return 0
+	}
 }
 
 // harmToIncumbents prices what placing this request does to the requests
@@ -2130,6 +2221,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		ttftSafetyMs:   float64(p.FluidserveTtftSafetyMs),
 		enablePend:     p.FluidserveEnablePend,
 		enableShed:     p.FluidserveEnableShed,
+		shedFleetScale: parseShedSignal(p.FluidserveShedSignal),
 		enableAffinity: p.FluidserveEnableAffinity,
 		affinityWeight: p.FluidserveAffinityWeight,
 		classPin:       pin,
@@ -2195,6 +2287,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
+			"shedsignal=%s, "+
 		// The prefix fields sit BEFORE classpin because the deployment script
 		// reads the pin with `classpin=(.+?), budgets `, which needs those two
 		// to stay adjacent. A field inserted between them is swallowed by that
@@ -2204,6 +2297,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.enableFlux, cfg.classHarm,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
+		p.FluidserveShedSignal,
 		cfg.prefixAware, cfg.prefixCalibrate, cfg.prefixBlockToks, cfg.prefixCapacity,
 		formatClassPin(cfg.classPin),
 		p.FluidserveClassBudgets)

@@ -280,6 +280,17 @@ CrashLoopBackOff가 된다. 그런데 **옛 파드는 계속 Running이라 클�
   대조군과 동일한 설정으로 4시간 돌았다(shed 껐다는 arm에서 shed 15,723건).
   `set_scheduler_profiling.py`의 `set_flag`가 이제 bool을 등호형으로 쓰고, 적용 후
   스케줄러 로그의 `FluidServe dispatch policy created` 줄을 되읽어 대조한다.
+- **검증이 실패해도 드라이버가 안 멈추고 있었다 (2026-08-11 발견, 고침).** `set_scheduler_profiling.py`가
+  기동 줄을 되읽어 설정이 다르면 1을 돌려주는데, 드라이버의 `set_arm`이 그 값을 **버리고 있었다** —
+  호출이 파이프(`| sed`)라서 `pipefail`로 상태가 1이 되어도 **아무도 검사하지 않았다.** 그 뒤에
+  오는 유일한 검사는 **정책 이름**을 보는데, ablation 플래그가 안 먹은 경우 이름은 멀쩡하다.
+  **즉 검사기가 있는 바로 그 상황에서 조건이 그대로 돌았고**, 실패는 나중에 로그를 읽은 사람에게만
+  보였다. `run_exp67_prefix.sh`와 EXP-79 스냅샷을 `if ! python3 ... | sed ...; then ABORT` 형태로
+  고쳤다. **새 드라이버 스냅샷을 뜰 때 이 형태인지 확인한다.**
+  → 이것을 드러낸 것은 **EXP-79의 첫 pre-flight**다. 검사기 자신의 정규식 `(\w+)=([\w.]+)`이
+  콜론에서 멈춰 `shedsignal=fleet:1.0`을 `fleet`로 읽어 실패했고(`classpin`이 이미 같은 이유로
+  따로 처리되던 그 함정), 그 실패를 보다가 **드라이버가 실패를 무시한다는 것**을 알았다.
+  **조건을 걸기 전에 설정을 한 번 먹여 보는 규칙이 두 개의 결함을 잡았다.**
 - **ablation 플래그가 배포에 눌러앉는다 (2026-08-01 발견, 고침).** `set_scheduler_profiling.py`가
   spec을 다시 쓸 때 ablation 플래그 이름들을 **보존 대상**에 넣어 두어서, 한 arm이 쓴 값이
   그 뒤 모든 조건에 남았다. `FS_CLASS_HARM=false`를 쓴 arm 하나(2026-07-28 10:28

@@ -2,6 +2,7 @@ package policy
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1150,4 +1151,66 @@ func TestClassPinDoesNotSilentlyEmptyTheCandidateSet(t *testing.T) {
 	}
 	cands := []candidate{{flux: &instanceFlux{id: "a"}, feasible: true}}
 	assert.Len(t, p.applyClassPin(cands, views, &fluidserveRequest{tier: 50}), 1)
+}
+
+// EXP-79. The independent-combination arm exists to be DIFFERENT from its
+// control, and the way an ablation fails silently in this repository is by being
+// identical to the arm it is compared against -- twice with boolean flags, once
+// with a preserved deployment setting. These tests pin the difference.
+func TestShedSignalParsing(t *testing.T) {
+	assert.Equal(t, 0.0, parseShedSignal(""), "empty is the shipped coupled test")
+	assert.Equal(t, 0.0, parseShedSignal("coupled"))
+	assert.Equal(t, 1.0, parseShedSignal("fleet"), "bare fleet means scale 1")
+	assert.Equal(t, 1.25, parseShedSignal("fleet:1.25"))
+	assert.Equal(t, 0.8, parseShedSignal(" fleet:0.8 "), "surrounding space is trimmed")
+}
+
+func TestMissesOnFleetReadsTheMeanNotTheChosenInstance(t *testing.T) {
+	p := &fluidserveDispatchPolicy{cfg: fluidserveConfig{}}
+	// A chat request judged per token at 50 ms, with no time on the clock yet.
+	req := &fluidserveRequest{tier: 50, nominalMs: 50, ttftSloMs: 5000, nowMs: 0, arrivedMs: 0}
+
+	// One instance would serve it comfortably, three would not. The coupled test
+	// asks about the one that was chosen and admits; the fleet test asks about
+	// the average of the four and refuses. That divergence IS the ablation.
+	chosen := candidate{meanAfter: 30, prefillMs: 100}
+	cands := []candidate{
+		chosen,
+		{meanAfter: 70, prefillMs: 100},
+		{meanAfter: 80, prefillMs: 100},
+		{meanAfter: 90, prefillMs: 100},
+	}
+	assert.False(t, p.missesOwnBudget(req, chosen),
+		"the chosen instance is inside the budget, so the coupled test admits")
+	assert.True(t, p.missesOnFleet(req, cands, 1.0),
+		"the mean of 30/70/80/90 is 67.5 ms against a 50 ms budget, so the fleet test refuses")
+
+	// The scale is the knob that brings the arm's rejection rate alongside the
+	// control's. Above 1 it refuses less; it must be able to reverse the verdict,
+	// or the calibration condition has nothing to turn.
+	assert.False(t, p.missesOnFleet(req, cands, 1.4),
+		"67.5 / 1.4 = 48.2 ms is inside the budget")
+	assert.True(t, p.missesOnFleet(req, cands, 1.0))
+
+	// And the reverse direction: a fleet that is comfortable everywhere must not
+	// be refused, or the arm would simply reject more and the comparison would be
+	// about the amount refused rather than about how the decision is made.
+	easy := []candidate{{meanAfter: 20, prefillMs: 50}, {meanAfter: 25, prefillMs: 50}}
+	assert.False(t, p.missesOnFleet(req, easy, 1.0))
+}
+
+func TestMissesOnFleetIncludesInfeasibleCandidates(t *testing.T) {
+	// The mean is over every candidate, not over the feasible ones. Restricting
+	// it to the feasible set would let the routing decision back into the shed
+	// test through the side door, since feasibility is what the router sorts on.
+	p := &fluidserveDispatchPolicy{cfg: fluidserveConfig{}}
+	req := &fluidserveRequest{tier: 50, nominalMs: 50, ttftSloMs: 5000}
+	cands := []candidate{{meanAfter: 20, prefillMs: 10}, {meanAfter: 200, prefillMs: 10}}
+	assert.True(t, p.missesOnFleet(req, cands, 1.0),
+		"mean of 20 and 200 is 110 ms; dropping the second would give 20 and admit")
+
+	// Every candidate out of range is the one case that must agree with the
+	// coupled test, which also answers "miss".
+	inf := []candidate{{meanAfter: math.Inf(1), prefillMs: math.Inf(1)}}
+	assert.True(t, p.missesOnFleet(req, inf, 1.0))
 }

@@ -271,6 +271,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveTtftSafetyMs      int
 	FluidserveEnablePend        bool
 	FluidserveEnableShed        bool
+	FluidserveShedSignal string
 	FluidserveEnableAffinity    bool
 	FluidserveAffinityWeight    float64
 	FluidserveClassPin          string
@@ -416,6 +417,30 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"worth: the same requests are lost either way, and the question is "+
 			"whether the capacity they would have consumed saves the ones around "+
 			"them.")
+	// EXP-79. The pre-registered "independent combination" row of the ablation
+	// matrix in fluidserve-design.md section 6.3, which that document calls the
+	// paper's core experiment: routing by the flux model AND shedding by the flux
+	// model, but with the two not sharing anything.
+	//
+	// Today they share the placement. The shed test asks whether the instance the
+	// request is ABOUT TO BE PLACED ON would still miss its budget, so the refusal
+	// is a statement about a specific destination. `fleet` asks the same question
+	// of the fleet as a whole -- the request is priced against the average of what
+	// the instances would give it, with no reference to which one was chosen -- so
+	// both halves still use the flux model and neither knows the other's answer.
+	//
+	//   coupled        the shipped behaviour: shed when the chosen placement misses
+	//   fleet[:scale]  shed when the request would miss against the mean of the
+	//                  candidates. scale multiplies the budget the test compares
+	//                  against, above 1 refusing less and below 1 refusing more, so
+	//                  the arm's rejection rate can be matched to the control's.
+	//                  Matching it is what closes the objection that the score came
+	//                  from choosing a convenient amount to refuse.
+	flags.StringVar(&c.FluidserveShedSignal, "fluidserve-shed-signal", "coupled",
+		"Which quantity the shed test reads: `coupled` (the placement about to be "+
+			"made, shipped) or `fleet[:scale]` (the mean over candidates, which is the "+
+			"independent-combination ablation). Ignored when --fluidserve-enable-shed=false.")
+
 	flags.BoolVar(&c.FluidserveEnableAffinity, "fluidserve-enable-affinity", true,
 		"Among the instances that can take a request, prefer the one already "+
 			"holding the most of its class. Disabling it routes purely by free "+
