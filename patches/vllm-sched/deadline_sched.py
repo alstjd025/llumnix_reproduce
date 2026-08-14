@@ -10,8 +10,20 @@ into a later phase. Implemented here (Niyama-unit -> where):
   unit 3  slack-based reordering of running     -> schedule() pre-sort
   unit 5  eager relegation of doomed requests   -> schedule() priority bump
 
-  unit 4  dynamic chunk sizing                  -> NOT YET (phase 2)
-  unit 6  linear batch-time predictor           -> NOT YET (only unit 4 needs it)
+  unit 4  dynamic chunk sizing                  -> _budget_by_slack (PHASE 2, LANDED)
+
+  unit 6  linear batch-time predictor           -> NOT PORTED. Niyama needs it to
+          predict a batch's time so unit 4 can size the chunk; _budget_by_slack
+          reaches the same decision from the tightest running decode's remaining
+          slack instead, so nothing here calls for it.
+
+NOTE, 2026-08-14: the two lines above used to say unit 4 was "NOT YET (phase 2)"
+long after phase 2 had landed, and EXP-81 was planned on that stale claim -- its
+section 5 said the experiment measured a port with unit 4 missing when in fact
+all four implemented units were running. The start-up line has printed
+`dynamic_chunk=True` the whole time and ms_dev/notes/qoserve-niyama-fidelity.md
+has a section on unit 4; the header was the only thing that disagreed. A comment
+that describes what the file does not do is the kind that goes stale silently.
 
 No vLLM source is modified; loaded via ``--scheduler-cls deadline_sched.DeadlineScheduler``
 with ``--scheduling-policy priority`` (so the waiting queue is a PriorityRequestQueue).

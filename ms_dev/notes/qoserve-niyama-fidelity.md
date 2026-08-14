@@ -187,6 +187,42 @@ by refitting on EXP-38. Two models fitted independently, on different runs, by
 different means, both say the deployed KV coefficient is low. That is worth
 recording whatever happens to this experiment.
 
+### unit 5 — eager relegation. **원본에 거절이 없다는 것을 소스로 확인했다 (2026-08-14).**
+
+읽는 사람이 이름 때문에 오해하는 지점이라 원문을 그대로 옮긴다
+(`deadline_scheduler.py` L304~308):
+
+```python
+# Eager Relegation: If we cannot finish the request within its deadline, we drop it and re-add to the prefill queue
+if (seq.drop == 0) and (seq.mem_allocated == False) and ((now + service_time_required) > (seq.arrival_time + seq.ttft_deadline)):
+    seq.drop += 1
+    heapq.heappush(self._prefill_queue, seq)
+    continue
+```
+
+**요청을 버리지 않는다.** 같은 prefill 큐에 되돌려 넣고 그 회차만 건너뛴다. 클라이언트에
+아무것도 돌려주지 않고, 그 요청은 여전히 KV를 차지하며 결국 처리된다. `drop`이라는 이름과 달리
+**실제 동작은 강등**이다. `seq.drop == 0` 가드 때문에 **요청당 한 번만** 일어난다.
+
+강등의 실체는 정렬 키다 (`sequence.py` L99~100):
+
+```python
+if self.drop != other.drop:
+    return self.drop < other.drop      # drop=0 이 항상 앞
+```
+
+`drop=1`이 되면 아직 강등되지 않은 요청 전부의 뒤로 가고, 그 안에서는 hybrid 마감 순 정렬이
+유지된다.
+
+**우리 포트와의 대응**: `_relegate_waiting`이 `req.priority = _RELEGATED_PRIORITY + req.priority`
+(=`10**15 + priority`)로 힙 맨 뒤에 보낸다. 원본은 "강등 안 된 것들 뒤"이고 우리는 "절대적으로
+맨 뒤"인데, priority가 마감(ms)이라 `10**15`보다 훨씬 작으므로 **강등된 것들 사이의 마감 순서가
+유지되고 두 결과가 실질적으로 같다.** 한 번만 일어나는 것도 같다(`m["drop"]` 가드).
+
+⚠ **그러므로 relegation은 admission control이 아니다.** EXP-81이 이 구분에 기대어 가설을 세웠고,
+그 실험에서 나온 이득이 relegation이 아니라 unit 4에서 온 것으로 밝혀졌다(EXP-81 §6.2:
+preemption이 세 도착률 전부에서 3,400~4,000건 → 0).
+
 ### unit 5 — eager relegation. **Departs in the throughput estimate.**
 
 Original: inside the prefill loop, a request whose remaining prefill cannot
