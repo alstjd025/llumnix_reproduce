@@ -636,6 +636,20 @@ CrashLoopBackOff가 된다. 그런데 **옛 파드는 계속 Running이라 클�
   → 그리고 이것 때문에 EXP-64 문서의 "한 시간 trace 에서는 `(task_id, call_index)`가 유일하지
   않다"가 틀렸다. 그 수치는 `request_engine.csv`(스케줄러 로그 조인)의 것이고, `metrics.csv`의
   request 행에서는 **정적·한 시간 둘 다 유일하다**(`task_id`가 replay 번호를 담는다).
+  → ⚠ **`agent` 컬럼의 값은 둘이 아니라 셋이다 (2026-08-16).** `grace_cut`이 있고, 80 run 중
+  14개에 88,122행 들어 있다. 전부 `is_server_terminated`이고 출력 0이며 request 행과
+  `(task_id, call_index, iteration)`이 겹치지 않는다 — **중복이 아니라 별개의 도착이다.**
+  그래서 **`agent=="request"`로 거르는 것은 유일성을 검사할 때만 맞고, 분모를 셀 때는 틀린다**:
+  PolyServe·vLLM router 조건에서 도착의 최대 33%가 사라져 **그 기준선들의 "모든 도착" 달성률이
+  최대 33점 올라간다**(우리 arm은 하나도 안 사라진다 — 즉 오차가 arm마다 다르다).
+  **분모를 셀 때는 `load_run`이 하는 대로 `agent != "job_summary"`를 쓴다.**
+- **거절된 요청은 `is_error`가 켜져 있다 — 잘림 필터를 그대로 적용하면 거절이 통째로 사라진다
+  (2026-08-16).** 길이·지연 통계에서 잘린 요청을 빼려고
+  `is_server_terminated|is_error|is_timeout|is_job_timeout`을 거르는 규칙이 이 파일에 있는데,
+  **그것을 admitted 대 offered 비교에 그대로 쓰면 거절 행이 전부 빠져서 다섯 arm 전부
+  "admitted 입력 길이 / offered 입력 길이 = 1.000"이 나온다.** 즉 **"아무도 선별하지 않는다"는
+  깨끗한 음성 결과가 필터 때문에 만들어진다.** 잘림 필터는 **완주한 요청의 길이·지연을 잴 때만**
+  쓰고, **무엇이 받아들여지고 무엇이 거절됐는지를 물을 때는 `is_rejected`로 갈라서 양쪽을 다 센다.**
 
 - **앞선 run으로 만든 표의 "커버리지"는 어느 run에 대고 재느냐로 정해진다 — 홀드아웃은 판정할
   조건과 같은 길이여야 한다 (2026-08-12).** EXP-64가 앞선 run들로 요청별 출력 길이 표를 만들고
