@@ -744,17 +744,40 @@ def consts_fluidserve():
     return "fluidserve"
 
 
-def set_gateway(policy, timeout):
-    """Point the gateway's hold-and-retry loop at the right cadence.
+# The two flags the gateway's hold-and-retry loop is made of, and the environment
+# variable that overrides each ONE ON ITS OWN.
+#
+# WHY EACH FLAG NEEDS ITS OWN SWITCH.  FS_GATEWAY_STOCK below moves both values
+# at once, from FluidServe's 35,000 ms / 500 ms to the shipped 5,000 ms /
+# 1,000 ms, and EXP-83 ran that way.  It moved every aggregate by 10 to 19
+# points, and the investigation that followed found that what actually differs
+# between the two settings is which class each of the four instances ends up
+# holding: under 35,000/500 one instance of the four becomes deep-research-only
+# in four runs out of four, and under 5,000/1,000 in none of four.  Since both
+# values moved together, that effect cannot be attributed to either of them.
+# These two variables fill the other two cells of the two-by-two, each changing
+# exactly one value and leaving the other at whatever the policy would take.
+#
+# The value is given in milliseconds, with or without the "ms" suffix.  Unset,
+# nothing changes.
+GATEWAY_WINDOW_ENV = {
+    "FS_GATEWAY_RETRY_MS": "--wait-scheduling-retry-interval",
+    "FS_GATEWAY_TIMEOUT_MS": "--wait-scheduling-timeout",
+}
 
-    Only FluidServe depends on the retry cadence: for every other policy the
-    scheduler either returns an instance or the request fails, so the retry loop
-    is a failure path rather than a control mechanism.  Those values are reset
-    for other policies so that switching back leaves no trace of the FluidServe
-    run.  The queue capacity in GATEWAY_CAPACITY is applied to every policy, for
-    the reason recorded there.
+
+def gateway_want(policy, env=None):
+    """The gateway flags this policy should run with, before the cluster is touched.
+
+    Kept separate from set_gateway so that the environment overrides can be
+    exercised without applying anything: the whole point of these switches is
+    that one condition differs from another in exactly one value, and a switch
+    that is only ever tested by running an experiment is tested after it is too
+    late to find out it was wrong.
     """
+    env = os.environ if env is None else env
     want = dict(GATEWAY_FLAGS_BY_POLICY.get(policy, GATEWAY_DEFAULTS))
+    notes = []
     # FS_GATEWAY_STOCK=1 forces the shipped window on whatever policy is running.
     # It exists to answer the question the comment above GATEWAY_DEFAULTS already
     # said was worth answering and that nobody had run: how much of FluidServe's
@@ -766,9 +789,38 @@ def set_gateway(policy, timeout):
     # them is being cut off by the configuration and the other is not.
     # Unset, nothing changes: every existing run and every future run that does
     # not set it takes the same values it took before.
-    if os.environ.get("FS_GATEWAY_STOCK") == "1":
+    if env.get("FS_GATEWAY_STOCK") == "1":
         want = dict(GATEWAY_DEFAULTS)
-        print("  gateway: FS_GATEWAY_STOCK=1, using the shipped window for every policy")
+        notes.append("FS_GATEWAY_STOCK=1, using the shipped window for every policy")
+    # Applied after FS_GATEWAY_STOCK so the two compose predictably: the stock
+    # switch sets the pair, a per-flag switch then moves one member of it.
+    for name, flag in GATEWAY_WINDOW_ENV.items():
+        raw = env.get(name)
+        if not raw:
+            continue
+        raw = raw.strip()
+        digits = raw[:-2] if raw.endswith("ms") else raw
+        if not digits.isdigit():
+            sys.exit(f"{name}={raw!r} is not a whole number of milliseconds")
+        was = want.get(flag)
+        want[flag] = f"{digits}ms"
+        notes.append(f"{name}={want[flag]} overrides {flag} (policy default {was})")
+    return want, notes
+
+
+def set_gateway(policy, timeout):
+    """Point the gateway's hold-and-retry loop at the right cadence.
+
+    Only FluidServe depends on the retry cadence: for every other policy the
+    scheduler either returns an instance or the request fails, so the retry loop
+    is a failure path rather than a control mechanism.  Those values are reset
+    for other policies so that switching back leaves no trace of the FluidServe
+    run.  The queue capacity in GATEWAY_CAPACITY is applied to every policy, for
+    the reason recorded there.
+    """
+    want, notes = gateway_want(policy)
+    for n in notes:
+        print(f"  gateway: {n}")
     want.update(GATEWAY_CAPACITY)
     d = json.loads(kubectl("get", "deploy", "gateway", "-o", "json"))
     c = d["spec"]["template"]["spec"]["containers"][0]
