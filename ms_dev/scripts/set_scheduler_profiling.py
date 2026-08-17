@@ -755,6 +755,20 @@ def set_gateway(policy, timeout):
     the reason recorded there.
     """
     want = dict(GATEWAY_FLAGS_BY_POLICY.get(policy, GATEWAY_DEFAULTS))
+    # FS_GATEWAY_STOCK=1 forces the shipped window on whatever policy is running.
+    # It exists to answer the question the comment above GATEWAY_DEFAULTS already
+    # said was worth answering and that nobody had run: how much of FluidServe's
+    # advantage is the hold-and-retry window rather than the decisions it makes.
+    # A 2026-08-17 audit measured that the 5 s ceiling BINDS on the baselines --
+    # Llumnix SLO's median rejection latency is 5,065 ms, which is its wall --
+    # while FluidServe's longest hold over 316,269 rejections is 9.07 s against a
+    # 35 s wall, so the two arms are not merely differently configured, one of
+    # them is being cut off by the configuration and the other is not.
+    # Unset, nothing changes: every existing run and every future run that does
+    # not set it takes the same values it took before.
+    if os.environ.get("FS_GATEWAY_STOCK") == "1":
+        want = dict(GATEWAY_DEFAULTS)
+        print("  gateway: FS_GATEWAY_STOCK=1, using the shipped window for every policy")
     want.update(GATEWAY_CAPACITY)
     d = json.loads(kubectl("get", "deploy", "gateway", "-o", "json"))
     c = d["spec"]["template"]["spec"]["containers"][0]
