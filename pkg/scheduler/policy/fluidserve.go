@@ -128,6 +128,9 @@ type fluidserveConfig struct {
 	classHarm      bool
 	forceMargin    bool
 	ownBudgetGate  bool
+	// deadlineFeasible makes the first-token deadline part of feasibility rather
+	// than only of the shed test. Off reproduces every measurement before EXP-87.
+	deadlineFeasible bool
 	// kvSlopeProjection replaces the modelled inflow/outflow balance with the
 	// instance's own observed rate of change of KV occupancy. Candidate H2.
 	kvSlopeProjection bool
@@ -1196,6 +1199,11 @@ type candidate struct {
 	meanAfter     float64
 	gateAfter     float64
 	headroomAfter float64
+	// missesTtftDeadline is true when a placement here could not deliver this
+	// request's FIRST TOKEN inside its budget, counting the wait it has already
+	// spent and the prefill queued ahead of it on this instance. Computed for
+	// every candidate; whether `feasible` reads it is --fluidserve-deadline-feasible.
+	missesTtftDeadline bool
 	// missesOwnBudget is true when placing the request here, right now, would
 	// still miss the budget the request itself is judged by.
 	missesOwnBudget bool
@@ -1600,7 +1608,20 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	overGate := c.meanAfter > c.gateAfter
 	overIncumbents := c.meanAfter > f.tightestAllowance
 	overMemory := newKv > f.capMem
-	c.feasible = !unpredictable && !overGate && !overIncumbents && !overMemory
+	// The four conditions above are all about per-token pace and KV. None of them
+	// asks when THIS request would see its own first token, and a pace inside the
+	// gate is compatible with a long prefill queue ahead of it -- measured, an
+	// instance delivering 66-70 ms per token while carrying 76,813-87,845 tokens of
+	// queued prefill, onto which held deepresearch requests were routed and then
+	// took 12.6-13.2 s to a first token against a 10 s budget. The test that asks
+	// the question is missesTtftDeadline, on quantities already computed, and it
+	// was only ever reached on the paths taken when the candidate is NOT feasible.
+	//
+	// Default false, which reproduces the previous behaviour exactly.
+	c.missesTtftDeadline = p.missesTtftDeadline(req, c)
+	overDeadline := p.cfg.deadlineFeasible && c.missesTtftDeadline
+	c.feasible = !unpredictable && !overGate && !overIncumbents && !overMemory &&
+		!overDeadline
 
 	// Which of the four conditions refused this placement. Instrumentation only;
 	// no decision reads it.
@@ -1628,6 +1649,9 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		}
 		if overMemory {
 			reason("memory")
+		}
+		if overDeadline {
+			reason("deadline")
 		}
 	}
 
@@ -1675,6 +1699,39 @@ func (p *fluidserveDispatchPolicy) evaluate(
 // between tokens has two independent ways to fail, and the wait so far counts
 // only against the first. A request judged end to end has one account, and the
 // wait, the prefill and the whole decode all come out of it.
+// missesTtftDeadline is the FIRST-TOKEN half of missesOwnBudget, on its own: can
+// this request still see its first token inside the budget it is judged on, if it
+// is placed on this candidate now.
+//
+// It is separated because the feasibility test needs exactly this question and
+// nothing else.  `feasible` is four conditions about per-token pace and KV, and a
+// pace inside the gate is compatible with a long prefill queue ahead of the
+// request: an instance can deliver 66-70 ms per token while carrying 76,813-87,845
+// tokens of queued prefill, which is what
+// `28_backlog_at_placement.md` measured at the instant such placements were made.
+// The result was that a held deepresearch request was routed the moment
+// feasibility turned true and then took 12.6-13.2 s to its first token against a
+// 10 s budget, while THIS test -- already computed, on `c.prefillMs`, which
+// already prices that queue -- would have refused it at 3,300 + 11,000 > 10,000.
+// It was simply never reached, because the decision returns at `best.feasible`.
+//
+// ONLY the time-to-first-token branch is here.  The end-to-end branch that swe is
+// judged on also carries the whole decode, `expectedToks * meanAfter`, and folding
+// it in would change two classes at once; swe is deliberately left as the
+// unchanged control in EXP-87 and gets the same treatment separately.
+func (p *fluidserveDispatchPolicy) missesTtftDeadline(
+	req *fluidserveRequest, c candidate) bool {
+
+	if req.isE2E || req.ttftSloMs <= 0 {
+		return false
+	}
+	if math.IsInf(c.prefillMs, 0) {
+		return true
+	}
+	waited := float64(req.nowMs - req.arrivedMs)
+	return waited+c.prefillMs > req.ttftSloMs
+}
+
 func (p *fluidserveDispatchPolicy) missesOwnBudget(
 	req *fluidserveRequest, c candidate) bool {
 
@@ -1685,7 +1742,7 @@ func (p *fluidserveDispatchPolicy) missesOwnBudget(
 	if req.isE2E {
 		return waited+c.prefillMs+req.expectedToks*c.meanAfter > req.budgetMs
 	}
-	if req.ttftSloMs > 0 && waited+c.prefillMs > req.ttftSloMs {
+	if p.missesTtftDeadline(req, c) {
 		return true
 	}
 	// The pace this is compared against is the same quantity `feasible` compares,
@@ -2262,6 +2319,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		classHarm:      p.FluidserveClassHarm,
 		forceMargin:    p.FluidserveForceMargin,
 		ownBudgetGate:  p.FluidserveOwnBudgetGate,
+		deadlineFeasible: p.FluidserveDeadlineFeasible,
 
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 		gateSlack:         p.FluidserveGateSlack,
@@ -2318,7 +2376,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	}
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
-		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, "+
+		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, deadlinefeasible=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
 			"shedsignal=%s, oraclelen=%v, "+
 		// The prefix fields sit BEFORE classpin because the deployment script
@@ -2329,6 +2387,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.enableFlux, cfg.classHarm,
+		cfg.deadlineFeasible,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
 		p.FluidserveShedSignal, cfg.oracleLength,
 		cfg.prefixAware, cfg.prefixCalibrate, cfg.prefixBlockToks, cfg.prefixCapacity,

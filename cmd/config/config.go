@@ -280,6 +280,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveClassHarm         bool
 	FluidserveForceMargin       bool
 	FluidserveOwnBudgetGate     bool
+	FluidserveDeadlineFeasible  bool
 	FluidservePrefixAware       bool
 	FluidservePrefixCalibration bool
 	FluidservePrefixBlockTokens int
@@ -552,6 +553,21 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"becomes chat's 50 ms on every instance within seconds, so a deep "+
 			"research request with a 100 ms budget cannot route onto a fleet "+
 			"running at 55.6 ms. Off by default until EXP-46 judges it.")
+	flags.BoolVar(&c.FluidserveDeadlineFeasible, "fluidserve-deadline-feasible", false,
+		"Make the first-token deadline part of the feasibility test, not only of "+
+			"the refusal test. Feasibility is otherwise four conditions about "+
+			"per-token pace and KV, none of which asks when this request would see "+
+			"its own first token; a pace inside the gate is compatible with a long "+
+			"prefill queue ahead of it. Measured, held deepresearch requests were "+
+			"routed onto an instance delivering 66-70 ms per token that was carrying "+
+			"76,813-87,845 tokens of queued prefill, and took 12.6-13.2 s to a first "+
+			"token against a 10 s budget; the test that would have refused them, "+
+			"waited + prefillMs > ttftSlo, is already computed and sits on a path the "+
+			"decision does not take once the candidate is feasible. Only the "+
+			"time-to-first-token form is applied: the end-to-end form that swe is "+
+			"judged on also carries the whole decode, and folding it in would change "+
+			"two classes at once. Off by default, which reproduces every measurement "+
+			"taken before EXP-87.")
 	flags.BoolVar(&c.FluidserveKvSlopeProjection, "fluidserve-kv-slope-projection",
 		false,
 		"Project an instance's KV occupancy from the rate that occupancy is "+

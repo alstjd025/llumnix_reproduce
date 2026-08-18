@@ -155,6 +155,7 @@ FLUIDSERVE_ABLATIONS = {
     "FS_FORCE_MARGIN": "--fluidserve-force-margin",
     # EXP-46 candidate C.
     "FS_OWN_BUDGET_GATE": "--fluidserve-own-budget-gate",
+    "FS_DEADLINE_FEASIBLE": "--fluidserve-deadline-feasible",
     # EXP-49 candidate H2.
     "FS_KV_SLOPE": "--fluidserve-kv-slope-projection",
     # EXP-52. Not a boolean: the value is passed through as a float, so the
@@ -194,12 +195,24 @@ GATEWAY_FLAGS_BY_POLICY = {
 }
 # These two ARE the gateway's upstream defaults (cmd/gateway/app/options/config.go:
 # 1000 ms and 5000 ms), so every arm except FluidServe runs the gateway as
-# shipped. FluidServe overrides them above because its hold is a computed
-# deadline rather than a fixed patience: canWait derives waits of up to twenty
-# seconds from the agent class's 30 s end-to-end budget, and a 5 s ceiling
-# truncates them before the scheduler's own logic can end them, which removes
-# the mechanism rather than testing it. That override is part of FluidServe's
-# design and has to be stated as one, not hidden.
+# shipped. FluidServe overrides them above so that the WALL NEVER BINDS and the
+# hold is ended by the policy's own per-request deadline instead.
+#
+# The value is not tuned, and it is not 35,000 for any property of 35,000: the
+# wall only has to exceed the longest hold canWait can derive, which is bounded
+# by the largest class time-to-first-token budget (deepresearch, 10 s), so every
+# value above about twelve seconds is the same policy. That it does not bind is
+# MEASURED rather than assumed -- gateway_scheduling_gave_up_total is 0 in all
+# six EXP-82 control runs and the longest hold anywhere is 9,071 ms.
+#
+# The justification written here until 2026-08-18 was that "canWait derives waits
+# of up to twenty seconds from the agent class's 30 s end-to-end budget". EXP-84
+# measured that to be arithmetically impossible: canWait already subtracts the
+# decode the request still needs, so twenty seconds would require the fleet to
+# deliver 20.8 ms per token against a decode floor of 25-30 ms; the derivable
+# hold is 4.4-8.0 s, and swe's refusals in the control came after a median hold
+# of 19 ms. That claim is retracted. The override stays, for the reason above.
+# See experiments/EXP-84_gateway-two-by-two.md section 7.5b.
 #
 # 2026-07-29: briefly changed so that every arm got FluidServe's window, on the
 # reasoning that the gateway is infrastructure and an asymmetry here is unfair.
@@ -536,6 +549,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-class-harm", "classharm"),
         ("--fluidserve-force-margin", "forcemargin"),
         ("--fluidserve-own-budget-gate", "ownbudgetgate"),
+        ("--fluidserve-deadline-feasible", "deadlinefeasible"),
         ("--fluidserve-kv-slope-projection", "kvslope"),
         ("--fluidserve-gate-slack", "gateslack"),
         ("--fluidserve-z-safety", "z"),
