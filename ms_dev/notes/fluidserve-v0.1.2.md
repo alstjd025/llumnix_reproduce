@@ -244,8 +244,11 @@ v0.1.1 문서 §4.2의 한 시간 값은 수정 전 워크로드다.
 
 ### 6.1 게이트가 병목이고, 그것이 지금 가장 큰 설계 축이다
 
-EXP-67b가 `infeasible_total{reason}`을 세어 **gate 92~96%, memory 0%**를 냈다. **prefill을
-정확히 만들고 나니 남은 것이 게이트다.** EXP-68의 엔진 계층이 같은 곳을 가리킨다 — 엔진
+⚠ 여기 있던 낡은 값 gate 92~96%, memory 0%(EXP-67b)는 인용하면 안 된다 — 2026-08-08 워크로드
+수정 이전의 것이다. 수정 후 여덟 도착률에서 다시 잰 값은 게이트 71~98%, 메모리는
+35 req/s 위에서 17~20%다(v0.2 문서 §6.1과
+[`paper_evaluation_2026-08/01_B1_binding_predicate.md`](../../Agent_applications/agent_motivation_experiment/paper_evaluation_2026-08/01_B1_binding_predicate.md)).
+**게이트가 지배적이라는 이 절의 주장은 그대로 유지된다.** EXP-68의 엔진 계층이 같은 곳을 가리킨다 — 엔진
 하나가 KV 99.5%에 큐 20.3건, 나머지 셋은 44~51%에 큐 없음(§4.3).
 
 `gate = min(요청 자신의 명목 예산, 인스턴스 최솟값 × gateSlack)`이고 `gateSlack`의 배포값이
