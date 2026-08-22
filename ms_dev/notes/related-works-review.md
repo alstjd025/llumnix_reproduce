@@ -1588,7 +1588,80 @@ EPP가 예측과 실측을 히스토그램으로 내므로(`inference_objective_
 
 ---
 
-## 13. 관련 문서
+## 13. fairness — 비교 대상들이 "특정 클래스가 계통적으로 불이익을 받는 구조"를 어떻게 다루나
+
+**2026-08-22 추가.** 우리 측정이 "우리는 agent를 70~82%, llm-d는 chat을 86~93% 거절한다 —
+어느 쪽도 클래스 이름을 부르는 규칙 없이, 예산 구조에서 따라 나온 결과로"(A6)를 냈으므로,
+비교 대상들이 같은 문제를 인지하는지 원문(PDF 9편)을 `pdftotext`로 떠서 fairness/starvation
+문맥을 전부 읽었다.
+
+### 13.1 언급 빈도부터 갈린다
+
+| 논문 | fairness 언급 | starvation 언급 | 실질 내용 |
+|---|---|---|---|
+| **QoServe (Niyama, ASPLOS'26)** | 15 | 0 | **가장 정면으로 다룬다** (§13.2) |
+| **JITServe (NSDI'26)** | 13 | 5 | 기아 방지 + 교체 가능한 fairness 항 (§13.3) |
+| Aequitas (SIGCOMM'22) | 20 | 2 | admission 쪽의 고전 — QoS 클래스별 수용 확률의 AIMD, 채널이 많이 보낸다고 더 받지 못하게 |
+| SLOs-Serve / Scorpio / Simple is Better | 1~3 | 0 | **전부 인용뿐** (OSDI'24 VTC "Fairness in serving LLMs"를 관련 연구에서 참조) |
+| **PolyServe / AdaGen** | **0** | 0 | **없음** |
+
+### 13.2 QoServe — 문제를 우리와 같은 형태로 명명하고, 답을 둘 갖고 있다
+
+문제 명명이 정확히 우리 관찰과 같은 종류다: 기존 과부하 처리(짧은 요청 우선, 사용자 rate
+limit)가 *"can unfairly disadvantage longer but potentially more important queries"*,
+*"complete rejection of a class of requests without any fairness guarantees"* — **"한 클래스의
+전면 거절"을 기존 방식의 실패로 지목한다.**
+
+대응이 둘이다:
+
+1. **hybrid prioritization** — EDF(저부하 최적)와 SRPF(과부하에서 유리하나 긴 요청에 불공정)
+   사이를 부하에 따라 보간한다. 명시 목적이 *"maintain fairness across requests"*.
+2. **eager relegation을 응용이 준 중요도 힌트로 조준한다** — free tier 대 paid tier 같은
+   힌트를 받아 *"lower-priority requests are affected first"*. **즉 누가 값을 치를지를
+   창발에 맡기지 않고 운영자가 지정하는 명시적 결정으로 만든다.**
+
+그리고 **평가 축에 fairness가 있다**: *"deadline violations in each SLO bucket and violations
+categorized by request length to assess scheduling fairness"* — SLO 버킷별·길이별 위반
+분해를 그림으로 싣는다. **심사자가 우리에게 같은 분해를 요구할 것을 예고하는 대목이고,
+우리는 이미 있다**(A5 클래스별 그림, A6 거절 분해).
+
+### 13.3 JITServe — 기아 방지 장치와, 우리가 측정으로 확인한 "공격"의 명명
+
+1. **aging**: 우선순위에 프레임마다 상수 δ를 더해 **오래 기다린 요청이 결국 올라오게** 한다.
+   SLO 없는 best-effort 요청에도 기본 마감을 부여해 기아를 막는다.
+2. **⚠ 우리 B3와 정확히 겹치는 문장**: *"corrupted users may continuously submit requests
+   with extremely strict SLO demands to monopolize serving bandwidth"* — **가장 빡빡한 SLO를
+   가진 쪽이 서비스 전체를 독점할 수 있다**는 우려를 적대적 사용자의 형태로 명명한다.
+   **우리는 그것이 공격이 아니라 정상 트래픽에서 자연히 일어난다는 것을 측정했다** — chat
+   (76.9%, 50 ms)이 게이트 규칙을 통해 함대 인스턴스-시간의 4분의 3을 자기 속도로 고정한다
+   (B3). **그들이 가설로 적은 것을 우리가 기제로 잰 셈이다.**
+3. 대응은 **교체 가능한 fairness 항**: `priority′ = (1−f)·priority + f·Fair(r)`.
+
+### 13.4 PolyServe — 0회이고, 그것 자체가 말해 주는 것
+
+정적 파티션 논문에 fairness 논의가 없는 이유는 **파티션 자체가 클래스별 보호를 구성으로
+보장한다고 보기 때문**일 것이다. 그런데 우리 측정이 그 뒷면을 보여준다: 파티션이 지켜 주는
+클래스(agent가 25~45 req/s에서 다섯 arm 중 1위, tail도 가장 매끄러움)와 **파티션이 작게
+배정된 클래스가 치르는 값**(chat 달성률 3.6~4.2%)이 같은 시스템의 두 얼굴이다. **논문이
+말하지 않는 것을 우리 그림(A5)이 말한다.**
+
+### 13.5 우리 논문에 주는 함의 셋
+
+1. **클래스별 분해는 의무다.** QoServe가 fairness를 평가 축으로 싣는 이상, 총계만 보고하면
+   심사에서 반드시 걸린다. **이미 있다**: A5(클래스별 달성률), A6(누가 거절되나),
+   EXP-90(드리프트 비용이 어느 클래스에 청구되나).
+2. **우리의 차별점이자 약점: 누가 값을 치를지가 창발적이다.** QoServe는 힌트로, JITServe는
+   fairness 항으로 그 결정을 명시화한다. 우리는 예산 구조가 그것을 정하게 두고, 그 결과
+   (agent가 admission에서, deepresearch가 placement에서)를 측정으로 보였다. **논문에는
+   "명시된 우선순위 없이 예산만으로 갈리는 구조이고, QoServe식 중요도 힌트나 JITServe식
+   fairness 항은 우리 정렬(`sortCandidates`)과 거절 순서에 직교적으로 더할 수 있다"로 적는
+   것이 정직하고 방어 가능하다.**
+3. **기아 방지 장치가 우리에게 없다는 것을 알고 있어야 한다.** JITServe의 δ-aging에 해당하는
+   것이 우리 결정 경로에 없다 — pend는 게이트웨이 천장이 자르고, shed된 요청은 끝이다.
+   agent 70~82% 거절이 그 부재의 측정값이다. 더하는 것은 어렵지 않으나(대기 시간을 정렬
+   점수에 넣는 것) **지금은 측정된 사실로 보고하고 한계에 적는 쪽이 맞다.**
+
+## 14. 관련 문서
 
 | | |
 |---|---|
