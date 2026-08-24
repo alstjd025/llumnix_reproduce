@@ -116,6 +116,10 @@ FLUIDSERVE_FLAGS = {
 #   FS_AFFINITY=false  among the instances that can take a request, ignore which
 #                      class each is already holding and route on free space
 #   FS_AFFINITY_WEIGHT=w  how strongly that preference counts against free
+#   FS_AFFINITY_METRIC=share|count  what "most of this class" means. share is
+#                         the shipped ratio and saturates at 1.0; count divides
+#                         by the largest count among the candidates instead, so
+#                         the fullest instance keeps winning. EXP-96.
 #                      space, between 0 and 1.  1 is the shipped behaviour and
 #                      every measurement before EXP-58; 0 is the same ordering
 #                      FS_AFFINITY=false produces.  It exists so the degree of
@@ -143,6 +147,7 @@ FLUIDSERVE_ABLATIONS = {
     "FS_AFFINITY": "--fluidserve-enable-affinity",
     # EXP-58. Not a boolean either: a float between 0 and 1.
     "FS_AFFINITY_WEIGHT": "--fluidserve-affinity-weight",
+    "FS_AFFINITY_METRIC": "--fluidserve-affinity-metric",
     # EXP-59. A string, "50:0;100:1,2;25:3": tier -> the positions, in the
     # sorted list of instance ids, that the class may be placed on.
     "FS_CLASS_PIN": "--fluidserve-class-pin",
@@ -545,6 +550,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-enable-shed", "shed"),
         ("--fluidserve-enable-affinity", "affinity"),
         ("--fluidserve-affinity-weight", "affweight"),
+        ("--fluidserve-affinity-metric", "affmetric"),
         ("--fluidserve-enable-flux", "flux"),
         ("--fluidserve-class-harm", "classharm"),
         ("--fluidserve-force-margin", "forcemargin"),

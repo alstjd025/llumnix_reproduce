@@ -1024,7 +1024,7 @@ func TestAffinityWeightSpansTheTwoArmsAlreadyMeasured(t *testing.T) {
 		{0.50, "mine", "above it the class preference wins"},
 	} {
 		c := []candidate{other, mine}
-		sortCandidates(c, tc.w)
+		sortCandidates(c, tc.w, affinityMetricShare)
 		assert.Equal(t, tc.want, c[0].flux.id, "w=%.2f: %s", tc.w, tc.why)
 	}
 }

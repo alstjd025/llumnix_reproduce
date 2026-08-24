@@ -120,6 +120,8 @@ type fluidserveConfig struct {
 	// in degree instead of only switched. Read it through affinityWeight(),
 	// which returns 0 when enableAffinity is false.
 	affinityWeight float64
+	// affinityMetric is share|count; see sortCandidates.
+	affinityMetric string
 	// classPin maps a class's per-token budget tier to the positions, in the
 	// sorted list of instance ids, that the class may be placed on. Empty means
 	// no pinning, which is the default and every experiment before EXP-59.
@@ -1189,6 +1191,10 @@ type candidate struct {
 	// share is the fraction of the requests on this instance that belong to the
 	// arriving request's class. It orders the FEASIBLE set only.
 	share float64
+	// sameCount is the same quantity UNNORMALISED: how many requests of the
+	// arriving class this instance holds. Used when the affinity metric is
+	// `count`; see sortCandidates for why the choice matters.
+	sameCount int
 	// harm is the slack that the still-achievable requests on this instance
 	// would lose. It orders the INFEASIBLE set only.
 	harm float64
@@ -1299,15 +1305,17 @@ func (s *fluidserveSelector) selectInstance(
 			snap[i].feasible = snap[i].snapFeasible
 			snap[i].room = snap[i].snapRoom
 		}
-		sortCandidates(snap, p.affinityWeight())
-		sortCandidates(cands, p.affinityWeight())
+		sortCandidates(snap, p.affinityWeight(), p.cfg.affinityMetric)
+		sortCandidates(cands, p.affinityWeight(), p.cfg.affinityMetric)
 		if snap[0].flux.id != cands[0].flux.id {
 			metrics.Counter("scheduler_fluidserve_flux_flips_total",
 				metrics.Labels{{Name: "level", Value: "target"}}).Inc()
 		}
 	}
 
-	sortCandidates(cands, p.affinityWeight())
+	sortCandidates(cands, p.affinityWeight(), p.cfg.affinityMetric)
+
+	p.countSortPath(cands)
 
 	best := cands[0]
 	if best.feasible {
@@ -1395,8 +1403,156 @@ func (s *fluidserveSelector) selectInstance(
 // which is the ordering --fluidserve-enable-affinity=false produces. So the
 // endpoints are the two arms EXP-56 measured and the values between them are the
 // axis that experiment could not sweep.
-func sortCandidates(c []candidate, w float64) {
-	score := func(i int) float64 { return w*c[i].share + (1-w)*c[i].room }
+// countSortPath records WHICH branch of sortCandidates decided this placement.
+// It changes no decision; every value it reads is already on the candidate.
+//
+// Why it exists. Two readings of the sort were made from the code and could not
+// be told apart from the data on disk, because the dispatch log records only the
+// instance chosen. The first is that classShare is a RATIO and saturates at 1.0,
+// so instances a class already dominates score identically and the comparator
+// falls through to free space, which prefers the emptier one -- spreading the
+// class instead of filling one instance, which is what the comment on
+// sortCandidates says should happen. Reconstructed from residency, the top share
+// was exactly tied on 45.7% of chat placements in the 93%-chat segment of the
+// mix-shift trace against 1.2% when the same instants are ranked by COUNT. The
+// second is that the top-share instance was simply not feasible, which is the
+// only other way the sort can pass it over. The reconstruction cannot separate
+// them because it rebuilds share from the client's residency while the policy
+// counts its own registry.
+//
+// Three series, all labelled so one scrape answers the question:
+//
+//	scheduler_fluidserve_sort_tie_total{width}   how many FEASIBLE candidates
+//	    shared the top score. width=1 means the score decided; width>1 means the
+//	    room tie-break decided, and width is how many instances it chose among.
+//	scheduler_fluidserve_topshare_total{outcome} whether the candidate with the
+//	    highest share was the one taken, and if not, whether it was feasible.
+//	    `blocked` is the case the second reading predicts; `tie` is the first.
+//	scheduler_fluidserve_topshare_blocked_total{reason} which predicate stopped
+//	    it, recomputed from the candidate's own stored fields by the same
+//	    expressions the feasibility test uses.
+func (p *fluidserveDispatchPolicy) countSortPath(c []candidate) {
+	if len(c) == 0 {
+		return
+	}
+	width := 0
+	if c[0].feasible {
+		w := p.affinityWeight()
+		affOf := func(x candidate) float64 { return x.share }
+		if p.cfg.affinityMetric == affinityMetricCount {
+			maxN := 0
+			for _, x := range c {
+				if x.sameCount > maxN {
+					maxN = x.sameCount
+				}
+			}
+			if maxN > 0 {
+				affOf = func(x candidate) float64 { return float64(x.sameCount) / float64(maxN) }
+			}
+		}
+		top := w*affOf(c[0]) + (1-w)*c[0].room
+		for _, x := range c {
+			if !x.feasible {
+				break
+			}
+			if s := w*affOf(x) + (1-w)*x.room; s == top {
+				width++
+			}
+		}
+	}
+	metrics.Counter("scheduler_fluidserve_sort_tie_total",
+		metrics.Labels{{Name: "width", Value: strconv.Itoa(width)}}).Inc()
+
+	// The highest share on the fleet, and one candidate holding it.
+	hi, at := -1.0, -1
+	for i, x := range c {
+		if x.share > hi {
+			hi, at = x.share, i
+		}
+	}
+	if at < 0 {
+		return
+	}
+	outcome := "taken"
+	switch {
+	case c[0].share == hi:
+		// The chosen one is at the top share. It may still be one of several.
+		if width > 1 {
+			outcome = "tie"
+		}
+	case c[at].feasible:
+		// Feasible, higher share, and not chosen. The sort should not allow
+		// this; count it separately rather than assume it cannot happen.
+		outcome = "passed_over"
+	default:
+		outcome = "blocked"
+		for _, r := range infeasibleReasons(&c[at]) {
+			metrics.Counter("scheduler_fluidserve_topshare_blocked_total",
+				metrics.Labels{{Name: "reason", Value: r}}).Inc()
+		}
+	}
+	metrics.Counter("scheduler_fluidserve_topshare_total",
+		metrics.Labels{{Name: "outcome", Value: outcome}}).Inc()
+}
+
+// infeasibleReasons recomputes why a candidate failed, from the fields the
+// evaluation already stored. The expressions are the ones in the feasibility
+// test; a candidate can fail several at once and all are counted.
+func infeasibleReasons(c *candidate) []string {
+	var out []string
+	if math.IsInf(c.meanAfter, 0) {
+		return []string{"unpredictable"}
+	}
+	if c.meanAfter > c.gateAfter {
+		out = append(out, "gate")
+	}
+	if c.flux != nil && c.meanAfter > c.flux.tightestAllowance {
+		out = append(out, "incumbents")
+	}
+	if c.headroomAfter < 0 {
+		out = append(out, "memory")
+	}
+	if len(out) == 0 {
+		out = append(out, "other")
+	}
+	return out
+}
+
+// affinityMetric selects what "most of this class" means. See the note above
+// sortCandidates.
+const (
+	affinityMetricShare = "share"
+	affinityMetricCount = "count"
+)
+
+func sortCandidates(c []candidate, w float64, metric string) {
+	// `share` is a RATIO and saturates at 1.0, so every instance the class
+	// already dominates scores the same and the comparator falls through to the
+	// room tie-break, which prefers the instance with MORE free space. That
+	// spreads the class across the instances it has taken instead of filling
+	// one, which is the opposite of what the note above this function describes.
+	// Reconstructed from residency on the mix-shift trace, the top share was
+	// exactly tied on 45.7% of chat placements in the 93%-chat segment while the
+	// same instants ranked by COUNT were tied on 1.2%.
+	//
+	// `count` normalises by the largest count among the candidates instead of by
+	// the instance's own occupancy. At w=1 that orders exactly by how many of the
+	// class the instance holds, so the fullest keeps winning until the
+	// feasibility test stops it; below w=1 it stays in 0..1 and therefore
+	// commensurable with room, which is the property the weighted sum needs.
+	aff := func(i int) float64 { return c[i].share }
+	if metric == affinityMetricCount {
+		maxN := 0
+		for i := range c {
+			if c[i].sameCount > maxN {
+				maxN = c[i].sameCount
+			}
+		}
+		if maxN > 0 {
+			aff = func(i int) float64 { return float64(c[i].sameCount) / float64(maxN) }
+		}
+	}
+	score := func(i int) float64 { return w*aff(i) + (1-w)*c[i].room }
 	sort.Slice(c, func(a, b int) bool {
 		if c[a].feasible != c[b].feasible {
 			return c[a].feasible
@@ -1659,6 +1815,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 
 	if p.cfg.enableAffinity {
 		c.share = classShare(f, req.tier)
+		c.sameCount = classCount(f, req.tier)
 	}
 	c.harm = p.harmToIncumbents(f, req.tier, c.meanBefore, c.meanAfter)
 
@@ -2039,6 +2196,16 @@ func (p *fluidserveDispatchPolicy) affinityWeight() float64 {
 // on is decided by traffic rather than by configuration, and it dissolves on its
 // own when that class stops arriving. Applying it only within the feasible set
 // is what keeps the feedback bounded.
+func classCount(f *instanceFlux, tier int) int {
+	n := 0
+	for _, r := range f.live {
+		if r.tier == tier {
+			n++
+		}
+	}
+	return n
+}
+
 func classShare(f *instanceFlux, tier int) float64 {
 	if len(f.live) == 0 {
 		return 0
@@ -2314,6 +2481,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		oracleLength:   p.FluidserveOracleLength,
 		enableAffinity: p.FluidserveEnableAffinity,
 		affinityWeight: p.FluidserveAffinityWeight,
+		affinityMetric: p.FluidserveAffinityMetric,
 		classPin:       pin,
 		enableFlux:     p.FluidserveEnableFlux,
 		classHarm:      p.FluidserveClassHarm,
@@ -2376,7 +2544,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	}
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
-		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, flux=%v, classharm=%v, deadlinefeasible=%v, "+
+		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, affmetric=%s, flux=%v, classharm=%v, deadlinefeasible=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
 			"shedsignal=%s, oraclelen=%v, "+
 		// The prefix fields sit BEFORE classpin because the deployment script
@@ -2386,7 +2554,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"prefix=%v, prefixcalib=%v, prefixblock=%d, prefixcap=%d, "+
 		"classpin=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
-		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.enableFlux, cfg.classHarm,
+		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric, cfg.enableFlux, cfg.classHarm,
 		cfg.deadlineFeasible,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
 		p.FluidserveShedSignal, cfg.oracleLength,

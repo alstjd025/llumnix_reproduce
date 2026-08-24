@@ -275,6 +275,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveOracleLength bool
 	FluidserveEnableAffinity    bool
 	FluidserveAffinityWeight    float64
+	FluidserveAffinityMetric    string
 	FluidserveClassPin          string
 	FluidserveEnableFlux        bool
 	FluidserveClassHarm         bool
@@ -472,6 +473,22 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"between trade the two off continuously, which is what makes the degree "+
 			"of class separation an axis that can be swept rather than a switch. "+
 			"Ignored when --fluidserve-enable-affinity=false.")
+	flags.StringVar(&c.FluidserveAffinityMetric, "fluidserve-affinity-metric", "share",
+		"What \"most of this class\" means when the class preference orders the "+
+			"feasible instances. `share` is the fraction of THAT INSTANCE's requests "+
+			"belonging to the class and is the shipped behaviour; because it is a "+
+			"ratio it saturates at 1.0, so every instance the class already "+
+			"dominates scores identically, the comparator falls through to the "+
+			"free-space tie-break, and that prefers the EMPTIER instance -- which "+
+			"spreads the class over the instances it has taken instead of filling "+
+			"one, the opposite of what sortCandidates documents. Reconstructed on "+
+			"the mix-shift trace, the top share was exactly tied on 45.7% of chat "+
+			"placements in the 93%-chat segment against 1.2% when the same instants "+
+			"are ranked by count. `count` divides by the LARGEST count among the "+
+			"candidates instead, so the score no longer saturates while staying in "+
+			"0..1 and therefore commensurable with free space; at weight 1 it orders "+
+			"by how many of the class an instance holds, so the fullest keeps "+
+			"winning until the feasibility test stops it.")
 	// On by default since v0.2. EXP-69 measured the control and the treatment
 	// with this as the only difference, two repeats at each of three rates, and
 	// every metric moved the same way: offered attainment 64.2 -> 77.6, 49.3 ->
