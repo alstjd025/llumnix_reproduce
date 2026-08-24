@@ -232,6 +232,7 @@ CrashLoopBackOff가 된다. 그런데 **옛 파드는 계속 Running이라 클�
 | [ms_dev/notes/motivation_v3.md](ms_dev/notes/motivation_v3.md) | **motivation 논증의 top-down 판 (2026-08-10). 논문 §2~§3을 쓸 때 여기부터 읽는다.** 절 번호가 논문의 것이고(§2 Background, §3 Motivation) 각 소절의 첫 문장이 영문이다. §3.1.2가 **우위 전부가 chat 항이라는 분해**, §5가 **심사에서 나올 반론 여섯과 그것을 닫는 실험 다섯**, §6이 **논문 초고와 측정이 어긋나는 곳**. 증거의 저장소는 `motivation_v2.md`이고 측정의 정본은 여전히 `motivation.md`다 |
 | [ms_dev/notes/motivation.md](ms_dev/notes/motivation.md) | **motivation 논증의 정본.** 사실을 순서대로 쌓고, 그것이 만드는 **요구 조건 넷을 우리 설계의 어느 부분이 만족시키는지** 표로 대응시킨다. §7.1에 **설계의 핵심 개념 둘**(격리를 구성하지 않고 결과로 얻는다 / 라우팅과 admission이 같은 결정이다), §8에 **추가로 만들 기준선 넷과 비용**, §9에 비어 있는 것 일곱 |
 | [.../results/aggregate_analysis/motivation/README.md](Agent_applications/agent_motivation_experiment/results/aggregate_analysis/motivation/README.md) | **motivation 그림 다섯 개의 정본.** 그림마다 주장 / 스크립트 / 실험과 반복 횟수 / **그림이 말하지 않는 것**. 다시 만드는 명령도 여기 |
+| [ms_dev/notes/fluidserve-system-design.md](ms_dev/notes/fluidserve-system-design.md) | **논문 design 섹션용 완전 참조 (2026-08-20, 코드 실독 기준).** 핵심 개념 넷 → 컴포넌트 지도 → 입력(요청 필드·엔진 status·프로파일·플래그 23개 전부) → 결정 워크플로(수식·파일:행) → 출력(메트릭 시리즈) → 상수 표 → 코드량(정책 4,148행)과 Llumnix 통합 지점 여섯 → 알려진 결함 넷 |
 | [ms_dev/notes/fluidserve-how-it-works.md](ms_dev/notes/fluidserve-how-it-works.md) | **시스템 전체를 위에서 아래로 설명한 문서.** 처음 이해할 때 여기부터 — 문제 정의, 유연한 격리, 시간·메모리 모델, 결정 단계, 클래스 분리, 무엇을 측정하고 무엇을 설정하는가, 실측 결과, 미해결. 각 설계 결정에 그것을 정하게 만든 측정이 붙어 있다 |
 | [ms_dev/notes/fluidserve-v0.2.md](ms_dev/notes/fluidserve-v0.2.md) | **현재 버전의 자족적 명세 (2026-08-08, 바이너리 `a96dac12`).** v0.1.2와 코드가 같고 **`--fluidserve-prefix-aware`의 기본값만 false → true**다 — 청구액이 처음으로 "어느 인스턴스를 보고 있는가"의 함수가 되므로 patch가 아니라 minor. **§2가 arm 이름 규약** — `fspfx`가 배포 기본 설정이고 `fluidserve`는 prefix를 끈 ablation이다(기존 결과 디렉토리와 같은 설정을 유지하려고 네 드라이버에 `FS_PREFIX=false`를 명시로 박았다). §1.2가 이름 주의(라우팅이 아니다), §4가 실측, §6.1이 지금 가장 큰 설계 축(게이트) |
 | [ms_dev/notes/fluidserve-v0.1.2.md](ms_dev/notes/fluidserve-v0.1.2.md) | 앞 버전 (2026-08-08, 바이너리 `5a572dc2`). 같은 코드에 prefix가 꺼져 있던 상태. 기본 설정에서는 v0.1.1과 같은 결정을 내린다 — 새 메커니즘 셋(선호 세기 `w`, 클래스 고정, prefix 인식)이 전부 플래그 뒤에 있고 기본값이 종전 동작이다. **§3이 미결 하나** — 논문에 쓰려는 arm(`FS_PREFIX=true`)이 기본 설정이 아니다. §0이 워크로드 경계, §4가 새 워크로드 실측, §6.1이 지금 가장 큰 설계 축(게이트) |
@@ -391,6 +392,16 @@ CrashLoopBackOff가 된다. 그런데 **옛 파드는 계속 Running이라 클�
   대조한다.**
 
 ### B. 실험을 걸기 전
+
+- **Go에 메트릭을 추가하는 것만으로는 수집되지 않는다 — 러너의 수집기에 화이트리스트가 따로 있다
+  (2026-08-24, EXP-96).** `llumnix_metrics.py`가 시리즈 **이름 목록**으로 거르므로, 스케줄러가
+  내보내도 그 목록에 없으면 **결과 디렉토리에 저장되지 않는다.** EXP-96이 정렬 경로를 직접 세려고
+  카운터 셋을 넣고 12조건을 걸었는데, **4조건이 돌 때까지 그 사실을 몰랐고 카운터는 전부 유실**됐다
+  (성능 지표는 정상이라 로그만 봐서는 멀쩡해 보인다).
+  → **새 메트릭을 추가하면 `llumnix_metrics.py`의 목록에도 넣고, 짧은 조건 하나를 돌려
+  `grep -c <시리즈이름> <run>/server_metrics/scheduler.jsonl`로 실제로 저장되는지 확인한 뒤**
+  본 실험을 건다. 함정 A의 "생성한 설정 파일은 걸기 전에 그 프로세스에 한 번 먹여 본다"와
+  같은 규칙을 **계측**에 적용한 것이다.
 
 - **노드가 디스크로 막히면 실험은 정책이 아니라 고장을 잰다 (2026-08-05, §61).**
   `kubectl describe node`의 **DiskPressure=True**면 kubelet이 파드를 축출한다. 게이트웨이가
