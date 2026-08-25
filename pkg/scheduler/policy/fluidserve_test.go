@@ -224,6 +224,7 @@ func testCapacity(t *testing.T) *capacityModel {
 		c0: 16.0, cKv: 1e-5, cN: 0.08,
 		predictor:       fixedPrefillPredictor(),
 		correction:      1.0,
+		corrections:     map[string]float64{},
 		prefillFraction: 1.0,
 	}
 }
@@ -241,11 +242,11 @@ func TestDecodeStepGrowsWithOccupancy(t *testing.T) {
 func TestMeanStepChargesPrefillCarryingIterations(t *testing.T) {
 	m := testCapacity(t)
 	kv, n := 200000.0, 20.0
-	decodeOnly := m.meanStepMs(kv, n, 0, 8192, 100)
+	decodeOnly := m.meanStepMs("", kv, n, 0, 8192, 100)
 
 	// One full chunk queued: one of the next 100 iterations carries it, and that
 	// iteration costs the prefill pass plus the decode work of the same step.
-	withChunk := m.meanStepMs(kv, n, 8192, 8192, 100)
+	withChunk := m.meanStepMs("", kv, n, 8192, 8192, 100)
 	assert.Greater(t, withChunk, decodeOnly)
 
 	dec := m.decodeStepMs(kv, n)
@@ -254,7 +255,7 @@ func TestMeanStepChargesPrefillCarryingIterations(t *testing.T) {
 
 	// Enough queued prefill to fill the whole horizon drives the mean to the
 	// cost of a prefill-carrying iteration.
-	saturated := m.meanStepMs(kv, n, 8192*200, 8192, 100)
+	saturated := m.meanStepMs("", kv, n, 8192*200, 8192, 100)
 	assert.InDelta(t, 520.0+dec-16.0, saturated, 1e-6)
 }
 
@@ -267,9 +268,9 @@ func TestMaxKvForAllowanceInvertsMeanStep(t *testing.T) {
 		{100, 5, 8192},
 		{40, 60, 4096},
 	} {
-		cap := m.maxKvForAllowance(tc.allowance, tc.n, tc.pending, 8192, 100)
+		cap := m.maxKvForAllowance("", tc.allowance, tc.n, tc.pending, 8192, 100)
 		require.False(t, math.IsInf(cap, 0))
-		got := m.meanStepMs(cap, tc.n, tc.pending, 8192, 100)
+		got := m.meanStepMs("", cap, tc.n, tc.pending, 8192, 100)
 		assert.InDelta(t, tc.allowance, got, 1e-6,
 			"mean step at the capacity bound must equal the allowance")
 	}
@@ -281,8 +282,8 @@ func TestQueuedPrefillCollapsesCapacity(t *testing.T) {
 	// a queued prompt raises the mean iteration time for every request already
 	// decoding on that instance, so the instance can hold far less while still
 	// meeting a 50 ms per-token budget.
-	idle := m.maxKvForAllowance(50, 20, 0, 8192, 100)
-	loaded := m.maxKvForAllowance(50, 20, 8192*4, 8192, 100)
+	idle := m.maxKvForAllowance("", 50, 20, 0, 8192, 100)
+	loaded := m.maxKvForAllowance("", 50, 20, 8192*4, 8192, 100)
 	assert.Greater(t, idle, loaded)
 	assert.Less(t, loaded, idle/2)
 }
@@ -293,8 +294,8 @@ func TestAllowanceBelowFloorIsUnreachable(t *testing.T) {
 	// satisfies it. The model reports a negative capacity rather than clamping,
 	// because "cannot be met at all" and "can be met only when empty" call for
 	// different decisions.
-	assert.Less(t, m.maxKvForAllowance(10, 1, 0, 8192, 100), 0.0)
-	assert.Equal(t, 16.0, m.floorStepMs())
+	assert.Less(t, m.maxKvForAllowance("", 10, 1, 0, 8192, 100), 0.0)
+	assert.Equal(t, 16.0, m.floorStepMs(""))
 }
 
 func TestTheMeanStepCorrectionFollowsTheMeasurement(t *testing.T) {
@@ -307,28 +308,28 @@ func TestTheMeanStepCorrectionFollowsTheMeasurement(t *testing.T) {
 	m := testCapacity(t)
 	assert.InDelta(t, 1.0, m.correctionFactor(), 1e-9)
 
-	base := m.meanStepMs(200000, 20, 0, 8192, 100)
+	base := m.meanStepMs("", 200000, 20, 0, 8192, 100)
 	// Sustained evidence that iterations take 30% longer than predicted. The
 	// filter is deliberately slow -- it follows drift between the offline law
 	// and the engine, not the offered rate -- so convergence takes thousands of
 	// samples, which at the rate they arrive is about a minute.
 	for i := 0; i < 20000; i++ {
-		m.noteResidual(m.meanStepMs(200000, 20, 0, 8192, 100), base*1.3)
+		m.noteResidual("", m.meanStepMs("", 200000, 20, 0, 8192, 100), base*1.3)
 	}
 	assert.InDelta(t, 1.3, m.correctionFactor(), 0.05)
-	assert.InDelta(t, base*1.3, m.meanStepMs(200000, 20, 0, 8192, 100), base*0.05)
+	assert.InDelta(t, base*1.3, m.meanStepMs("", 200000, 20, 0, 8192, 100), base*0.05)
 
 	// The capacity inversion has to move with it, or the two would disagree
 	// about the same instance: a corrected prediction that says an instance is
 	// slower, alongside an uncorrected inversion that says it can hold as much
 	// as before.
-	kv := m.maxKvForAllowance(60, 20, 0, 8192, 100)
-	assert.InDelta(t, 60.0, m.meanStepMs(kv, 20, 0, 8192, 100), 0.5)
+	kv := m.maxKvForAllowance("", 60, 20, 0, 8192, 100)
+	assert.InDelta(t, 60.0, m.meanStepMs("", kv, 20, 0, 8192, 100), 0.5)
 
 	// Implausible samples are rejected rather than absorbed.
 	before := m.correctionFactor()
 	for i := 0; i < 100; i++ {
-		m.noteResidual(base, 60000)
+		m.noteResidual("", base, 60000)
 	}
 	assert.InDelta(t, before, m.correctionFactor(), 1e-9)
 }

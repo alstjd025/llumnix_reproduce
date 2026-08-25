@@ -256,7 +256,7 @@ func TestHeavyWorkCannotJoinRequestsThatAreUsingTheirSlack(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		behind.live = append(behind.live, liveRequest{tier: 50, allowanceMs: 35, nominalMs: 50})
 	}
-	behind.meanStep = p.capacity.meanStepMs(behind.kvLogical, behind.nDecode, 0,
+	behind.meanStep = p.capacity.meanStepMs("", behind.kvLogical, behind.nDecode, 0,
 		behind.chunk, p.cfg.horizonSteps)
 
 	nominal, expected, isE2E, budget := p.registry.requestBudget(25)
@@ -694,8 +694,8 @@ func TestFractionalPrefillIsNotRoundedUpOverTheHorizon(t *testing.T) {
 	// What that is worth on the predicted mean, at the numbers the run produced.
 	p := fsPolicy(t, "25:e2e:30000,50:decode", nil)
 	const chunk, horizon = 8192.0, 100
-	rounded := p.capacity.meanStepMs(400_000, 20, 2*chunk, chunk, horizon)
-	actual := p.capacity.meanStepMs(400_000, 20, 11478, chunk, horizon)
+	rounded := p.capacity.meanStepMs("", 400_000, 20, 2*chunk, chunk, horizon)
+	actual := p.capacity.meanStepMs("", 400_000, 20, 11478, chunk, horizon)
 	assert.Greater(t, rounded-actual, 2.0,
 		"rounding 1.4 chunks up to 2 adds more than 2 ms to the predicted mean, "+
 			"which is the margin the gate was being missed by")

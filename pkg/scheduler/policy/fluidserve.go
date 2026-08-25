@@ -122,6 +122,13 @@ type fluidserveConfig struct {
 	affinityWeight float64
 	// affinityMetric is share|count; see sortCandidates.
 	affinityMetric string
+	// perInstanceCorrection keeps the measured-against-predicted correction per
+	// instance instead of one scalar for the fleet. See capacityModel.
+	perInstanceCorrection bool
+	// memoryUsesPaceCap makes the memory predicate test against
+	// min(capKv, capMem) rather than capMem alone. See where overMemory is
+	// computed.
+	memoryUsesPaceCap bool
 	// classPin maps a class's per-token budget tier to the positions, in the
 	// sorted list of instance ids, that the class may be placed on. Empty means
 	// no pinning, which is the default and every experiment before EXP-59.
@@ -209,8 +216,13 @@ type instanceFlux struct {
 	// prediction describe the interval the engine will run rather than the
 	// instant the status was sampled.
 	arrivingPrefill float64
-	// effectivePrefill is the sum of the two, which is what the capacity model
-	// is queried with everywhere.
+	// effectivePrefill is what the capacity model is queried with everywhere.
+	//
+	// It is the LARGER of the two, not their sum. They describe overlapping
+	// work -- what is queued now is part of what the engine will next be
+	// observed to prefill -- so adding them charges the same prompts twice. The
+	// reasoning is at the assignment. This comment said "the sum of the two"
+	// until 2026-08-25 and that wording produced one wrong diagnosis.
 	effectivePrefill float64
 	chunk            float64
 	stepID           int64
@@ -454,7 +466,7 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 			if observed >= 0 {
 				// The correction is fed here, where the prediction and the
 				// measurement of the same interval are both in hand.
-				p.capacity.noteResidual(f.meanStep, observed)
+				p.capacity.noteResidual(f.id, f.meanStep, observed)
 				// Published only when the engine actually advanced, which is at
 				// most once per status pull per instance. These are the series
 				// the run is analysed from: the per-decision log lines do not
@@ -463,6 +475,15 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 				lbl := metrics.Labels{{Name: "instance", Value: f.id}}
 				metrics.Gauge("scheduler_fluidserve_observed_step_ms", lbl).Set(observed)
 				metrics.Gauge("scheduler_fluidserve_predicted_step_ms", lbl).Set(f.meanStep)
+				// The factor actually applied to THIS instance. Published under
+				// its own name rather than as a label on the fleet series, so
+				// that the existing unlabelled series keeps the meaning every
+				// earlier run was analysed with and the two can be read side by
+				// side. With per-instance mode off this equals the fleet value
+				// on every instance, which is itself the check that the mode is
+				// off.
+				metrics.Gauge("scheduler_fluidserve_instance_correction", lbl).
+					Set(p.capacity.correctionFor(f.id))
 				metrics.Gauge("scheduler_fluidserve_headroom_tokens", lbl).Set(f.headroom)
 				// An instance with no live request has no latency constraint at
 				// all. Reporting -1 rather than leaving the previous value in
@@ -1015,10 +1036,10 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	// loop because a request the instance is ALREADY failing cannot be made to
 	// fail by admitting another one, and should therefore not be able to close
 	// the instance to everything else.
-	f.meanStep = p.capacity.meanStepMs(f.kvLogical, f.nDecode, f.effectivePrefill,
+	f.meanStep = p.capacity.meanStepMs(f.id, f.kvLogical, f.nDecode, f.effectivePrefill,
 		f.chunk, p.cfg.horizonSteps)
 
-	floor := p.capacity.floorStepMs()
+	floor := p.capacity.floorStepMs(f.id)
 	f.tightestAllowance = math.Inf(1)
 	f.gateAllowance = math.Inf(1)
 	for i := range f.live {
@@ -1105,7 +1126,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	}
 
 	f.capKv = p.capacity.maxKvForAllowance(
-		f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
+		f.id, f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
 		f.effectivePrefill, f.chunk, p.cfg.horizonSteps)
 
 	// Physical capacity, converted into the logical units everything else is in.
@@ -1670,7 +1691,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	newN := f.nDecode + 1
 	newKv := f.proj + cost
 	c.meanBefore = f.meanStep
-	c.meanAfter = p.capacity.meanStepMs(newKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
+	c.meanAfter = p.capacity.meanStepMs(f.id, newKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
 	c.headroomAfter = math.Min(f.capKv, f.capMem) - newKv
 	c.prefillMs = p.prefillEstimateMs(req, f)
 
@@ -1763,7 +1784,34 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	unpredictable := math.IsInf(c.meanAfter, 0)
 	overGate := c.meanAfter > c.gateAfter
 	overIncumbents := c.meanAfter > f.tightestAllowance
-	overMemory := newKv > f.capMem
+	// The memory predicate, and which ceiling it reads.
+	//
+	// capMem is the physical pool: kvCapacity x 0.95 over the sharing ratio.
+	// Because kvCapacity cancels it reduces to 0.95 x logical over physical
+	// utilisation, so it equals the current occupancy at exactly 95% utilisation
+	// and is larger than it below. It therefore refuses nothing until the pool
+	// is nearly full, at which point preemption is already imminent -- EXP-97
+	// section 17.3 measured proj past capMem on 50-76% of samples on the
+	// dedicated deep-research engines, with 350-494 preemptions, while the
+	// engines holding chat sat at 0.0-2.0%.
+	//
+	// capKv is the other ceiling and is already computed: the largest occupancy
+	// at which this instance still meets the pace promised to it, prefill queue
+	// included, since the queue's share of the horizon enters its overhead. It
+	// currently reaches only c.room, whose weight is zero at the deployed
+	// affinity weight of 1.0, so nothing in the feasibility conjunction reads
+	// it. On the chat-holding engines proj sits at 0.92-1.01 of capKv while
+	// being at half of capMem, so the policy computes that the instance is at
+	// its pace ceiling and admits anyway.
+	//
+	// Off by default, which reproduces the previous behaviour exactly. An
+	// instance with no live request has an infinite gate allowance and therefore
+	// an infinite capKv, so min() falls back to capMem there either way.
+	memLimit := f.capMem
+	if p.cfg.memoryUsesPaceCap {
+		memLimit = math.Min(f.capKv, f.capMem)
+	}
+	overMemory := newKv > memLimit
 	// The four conditions above are all about per-token pace and KV. None of them
 	// asks when THIS request would see its own first token, and a pace inside the
 	// gate is compatible with a long prefill queue ahead of it -- measured, an
@@ -1804,7 +1852,16 @@ func (p *fluidserveDispatchPolicy) evaluate(
 			reason("incumbents")
 		}
 		if overMemory {
-			reason("memory")
+			// Which ceiling refused it. Without this the pace-cap variant is
+			// indistinguishable from the shipped one in the counters, and the
+			// experiment cannot show that the condition fired at all. Both are
+			// counted when both bind, for the reason the block above gives.
+			if newKv > f.capMem {
+				reason("memory")
+			}
+			if p.cfg.memoryUsesPaceCap && newKv > f.capKv {
+				reason("pace_kv")
+			}
 		}
 		if overDeadline {
 			reason("deadline")
@@ -1831,7 +1888,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	// allowance and the memory capacity are properties of the instance and the
 	// request, not of the projection.
 	snapKv := f.kvLogical + cost
-	snapMean := p.capacity.meanStepMs(snapKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
+	snapMean := p.capacity.meanStepMs(f.id, snapKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
 	c.snapFeasible = !math.IsInf(snapMean, 0) &&
 		snapMean <= c.gateAfter &&
 		snapMean <= f.tightestAllowance &&
@@ -2482,6 +2539,9 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		enableAffinity: p.FluidserveEnableAffinity,
 		affinityWeight: p.FluidserveAffinityWeight,
 		affinityMetric: p.FluidserveAffinityMetric,
+
+		perInstanceCorrection: p.FluidservePerInstanceCorrection,
+		memoryUsesPaceCap:     p.FluidserveMemoryUsesPaceCap,
 		classPin:       pin,
 		enableFlux:     p.FluidserveEnableFlux,
 		classHarm:      p.FluidserveClassHarm,
@@ -2510,7 +2570,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	policy := &fluidserveDispatchPolicy{
 		cfg:       cfg,
-		capacity:  newCapacityModel(profile, predictor),
+		capacity:  newCapacityModel(profile, predictor, cfg.perInstanceCorrection),
 		lengths:   lengths,
 		registry:  newRequestRegistry(lengths, budgets),
 		lastObs:   map[string]stepObservation{},
@@ -2544,7 +2604,11 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	}
 
 	klog.Infof("FluidServe dispatch policy created: horizon %d steps, z=%.2f, "+
-		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, affmetric=%s, flux=%v, classharm=%v, deadlinefeasible=%v, "+
+		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, affmetric=%s, "+
+		// Both new fields go here, before the prefix block, for the reason the
+		// comment below gives about classpin.
+		"percorr=%v, pacecap=%v, "+
+		"flux=%v, classharm=%v, deadlinefeasible=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
 			"shedsignal=%s, oraclelen=%v, "+
 		// The prefix fields sit BEFORE classpin because the deployment script
@@ -2554,7 +2618,9 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"prefix=%v, prefixcalib=%v, prefixblock=%d, prefixcap=%d, "+
 		"classpin=%v, budgets %q",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
-		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric, cfg.enableFlux, cfg.classHarm,
+		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
+		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
+		cfg.enableFlux, cfg.classHarm,
 		cfg.deadlineFeasible,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
 		p.FluidserveShedSignal, cfg.oracleLength,

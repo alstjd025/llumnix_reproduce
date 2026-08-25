@@ -42,7 +42,27 @@ type capacityModel struct {
 	predictor *LatencyPredictor
 
 	// correction scales the predicted MEAN iteration time. See noteResidual.
+	//
+	// When perInstance is false this is the only correction there is, shared by
+	// the whole fleet. That is how it shipped, and EXP-97 section 10 is the
+	// measurement that puts it in question: the engines holding chat run at
+	// 1.07-1.15 times their prediction while the engines dedicated to deep
+	// research run at 0.76-0.96, so one coefficient averages two errors of
+	// opposite sign to a fleet mean of 0.975-0.997 while every individual
+	// instance is wrong by -24% to +15%. A value correct on average is a value
+	// correct for no instance.
+	//
+	// When perInstance is true this stays live and keeps its fleet meaning: it
+	// is what a newly seen instance starts from, and it is still published so
+	// the two can be compared in the same run.
 	correction float64
+
+	// corrections holds the per-instance factor when perInstance is set. An
+	// instance absent from the map has not been measured yet and falls back to
+	// the fleet value above rather than to 1.0, so a new instance starts from
+	// what the fleet already knows instead of from the uncorrected law.
+	corrections map[string]float64
+	perInstance bool
 
 	// prefillFraction is the share of an arriving prompt's tokens the engine
 	// actually computes. See notePrefill.
@@ -94,7 +114,7 @@ const (
 // 35 ms, on every instance. An instance is admitted work up to a budget, so a
 // prediction 23% low is admission 23% past what the budget allows, and the
 // requests that were admitted on that basis miss.
-func (m *capacityModel) noteResidual(predictedMs, measuredMs float64) {
+func (m *capacityModel) noteResidual(instance string, predictedMs, measuredMs float64) {
 	if predictedMs <= 0 || measuredMs <= 0 || math.IsInf(predictedMs, 0) {
 		return
 	}
@@ -104,16 +124,39 @@ func (m *capacityModel) noteResidual(predictedMs, measuredMs float64) {
 	if ratio < 0.2 || ratio > 5 {
 		return
 	}
+	clamp := func(v float64) float64 {
+		v *= 1 + fsCorrectionAlpha*(ratio-1)
+		if v < fsCorrectionMin {
+			v = fsCorrectionMin
+		}
+		if v > fsCorrectionMax {
+			v = fsCorrectionMax
+		}
+		return v
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// The ratio is against the ALREADY CORRECTED prediction, so the update
 	// multiplies rather than replaces.
-	m.correction *= 1 + fsCorrectionAlpha*(ratio-1)
-	if m.correction < fsCorrectionMin {
-		m.correction = fsCorrectionMin
-	}
-	if m.correction > fsCorrectionMax {
-		m.correction = fsCorrectionMax
+	//
+	// The fleet value is updated on every sample whether or not per-instance
+	// mode is on, for two reasons: it is what an instance seen for the first
+	// time starts from, and keeping it live means a run can be read against the
+	// fleet number the previous runs were produced with.
+	m.correction = clamp(m.correction)
+	if m.perInstance && instance != "" {
+		if m.corrections == nil {
+			m.corrections = map[string]float64{}
+		}
+		cur, ok := m.corrections[instance]
+		if !ok {
+			// Start from what the fleet knows, not from 1.0. A fresh instance
+			// otherwise spends its first samples re-deriving a correction the
+			// rest of the fleet has already measured, and during that time its
+			// predictions are the uncorrected law.
+			cur = m.correction
+		}
+		m.corrections[instance] = clamp(cur)
 	}
 }
 
@@ -121,6 +164,16 @@ func (m *capacityModel) correctionFactor() float64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.correction
+}
+
+// correctionFor is the factor actually applied to instance `id`, which is what
+// has to be published for the per-instance mode to be checkable at all: with
+// only the fleet series in the metrics there is no way to tell from a run
+// whether the split happened.
+func (m *capacityModel) correctionFor(id string) float64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.corrLocked(id)
 }
 
 const (
@@ -233,15 +286,32 @@ func (m *capacityModel) prefillFractionOf() float64 {
 // are gone. Reinstating it requires a per-step prefill-token signal from the
 // engine, not another filter on the same data.
 
-func newCapacityModel(p *fluidserveProfile, predictor *LatencyPredictor) *capacityModel {
+func newCapacityModel(
+	p *fluidserveProfile, predictor *LatencyPredictor, perInstance bool) *capacityModel {
+
 	return &capacityModel{
 		c0:              p.DecodeStepLaw.C0Ms,
 		cKv:             p.DecodeStepLaw.CKvMsPerToken,
 		cN:              p.DecodeStepLaw.CNMsPerRequest,
 		predictor:       predictor,
 		correction:      1.0,
+		corrections:     map[string]float64{},
+		perInstance:     perInstance,
 		prefillFraction: 1.0,
 	}
+}
+
+// corrLocked is the factor to apply for instance `id`. The caller holds the
+// lock. An empty id, which is what the tests and any call that does not know
+// the instance pass, always gets the fleet value.
+func (m *capacityModel) corrLocked(id string) float64 {
+	if !m.perInstance || id == "" {
+		return m.correction
+	}
+	if v, ok := m.corrections[id]; ok {
+		return v
+	}
+	return m.correction
 }
 
 // decodeStepMs is the cost of one iteration with no prefill in the batch.
@@ -319,13 +389,15 @@ func prefillSteps(pendingTokens, chunk float64) float64 {
 // Note that this is what a decoding request already on the instance will
 // experience as its mean time between tokens, because a chunked-prefill step
 // still produces one token for every request in the decode batch.
-func (m *capacityModel) meanStepMs(kvTokens, nDecode, pendingPrefill, chunk float64, horizon int) float64 {
+func (m *capacityModel) meanStepMs(
+	instance string, kvTokens, nDecode, pendingPrefill, chunk float64, horizon int) float64 {
+
 	if horizon <= 0 {
 		horizon = 1
 	}
 	m.mu.RLock()
 	dec := m.decodeStepLocked(kvTokens, nDecode)
-	c0, corr := m.c0, m.correction
+	c0, corr := m.c0, m.corrLocked(instance)
 	m.mu.RUnlock()
 
 	sp := prefillSteps(pendingPrefill, chunk)
@@ -357,13 +429,13 @@ func (m *capacityModel) meanStepMs(kvTokens, nDecode, pendingPrefill, chunk floa
 // empty cache, which the caller reports rather than clamping to zero, because
 // the two situations call for different decisions.
 func (m *capacityModel) maxKvForAllowance(
-	allowanceMs, nDecode, pendingPrefill, chunk float64, horizon int) float64 {
+	instance string, allowanceMs, nDecode, pendingPrefill, chunk float64, horizon int) float64 {
 
 	if horizon <= 0 {
 		horizon = 1
 	}
 	m.mu.RLock()
-	c0, cKv, cN, corr := m.c0, m.cKv, m.cN, m.correction
+	c0, cKv, cN, corr := m.c0, m.cKv, m.cN, m.corrLocked(instance)
 	m.mu.RUnlock()
 
 	if cKv <= 0 || corr <= 0 {
@@ -390,8 +462,8 @@ func (m *capacityModel) maxKvForAllowance(
 // floorStepMs is the cost of an iteration on an otherwise empty instance. An
 // allowance below this cannot be met by any placement decision, which is the
 // test used to identify a request whose SLO is not physically achievable.
-func (m *capacityModel) floorStepMs() float64 {
+func (m *capacityModel) floorStepMs(instance string) float64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.c0 * m.correction
+	return m.c0 * m.corrLocked(instance)
 }

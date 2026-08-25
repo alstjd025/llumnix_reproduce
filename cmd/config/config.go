@@ -276,6 +276,8 @@ type FullModeSchedulingConfig struct {
 	FluidserveEnableAffinity    bool
 	FluidserveAffinityWeight    float64
 	FluidserveAffinityMetric    string
+	FluidservePerInstanceCorrection bool
+	FluidserveMemoryUsesPaceCap     bool
 	FluidserveClassPin          string
 	FluidserveEnableFlux        bool
 	FluidserveClassHarm         bool
@@ -473,6 +475,32 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"between trade the two off continuously, which is what makes the degree "+
 			"of class separation an axis that can be swept rather than a switch. "+
 			"Ignored when --fluidserve-enable-affinity=false.")
+	flags.BoolVar(&c.FluidservePerInstanceCorrection,
+		"fluidserve-per-instance-correction", false,
+		"Keep the measured-against-predicted correction of the iteration-time "+
+			"model per instance instead of as one scalar for the fleet. The "+
+			"correction multiplies every term of the predicted mean, and the "+
+			"prediction is what three of the four feasibility conditions read. "+
+			"Measured on the mix-shift hour trace, the engines holding chat run at "+
+			"1.07-1.15 times their prediction while the engines dedicated to deep "+
+			"research run at 0.76-0.96, so a single coefficient averages two errors "+
+			"of opposite sign to a fleet mean of 0.975-0.997 and is wrong by -24% to "+
+			"+15% on every individual instance. Off by default. The cost of splitting "+
+			"it is fourfold fewer samples per coefficient and a tighter feedback loop, "+
+			"since a per-instance factor feeds back into that instance's own placement "+
+			"rather than being diluted across four.")
+	flags.BoolVar(&c.FluidserveMemoryUsesPaceCap,
+		"fluidserve-memory-uses-pace-cap", false,
+		"Test the memory condition against min(capKv, capMem) instead of capMem "+
+			"alone. capMem is the physical pool and reduces to 0.95 x logical "+
+			"occupancy over physical utilisation, so it equals the current occupancy "+
+			"at 95% utilisation and refuses nothing below that -- by which point "+
+			"preemption is imminent. capKv, the occupancy at which the instance still "+
+			"meets the pace promised to it, is already computed and already includes "+
+			"the queued prefill, but reaches only the sort's free-space term, whose "+
+			"weight is zero at an affinity weight of 1.0. Off by default. An instance "+
+			"with no live request has an infinite allowance and therefore an infinite "+
+			"capKv, so the minimum falls back to capMem there in either mode.")
 	flags.StringVar(&c.FluidserveAffinityMetric, "fluidserve-affinity-metric", "share",
 		"What \"most of this class\" means when the class preference orders the "+
 			"feasible instances. `share` is the fraction of THAT INSTANCE's requests "+

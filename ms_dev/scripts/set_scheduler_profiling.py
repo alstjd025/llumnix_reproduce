@@ -148,6 +148,8 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-58. Not a boolean either: a float between 0 and 1.
     "FS_AFFINITY_WEIGHT": "--fluidserve-affinity-weight",
     "FS_AFFINITY_METRIC": "--fluidserve-affinity-metric",
+    "FS_PER_INSTANCE_CORR": "--fluidserve-per-instance-correction",
+    "FS_MEMORY_PACE_CAP": "--fluidserve-memory-uses-pace-cap",
     # EXP-59. A string, "50:0;100:1,2;25:3": tier -> the positions, in the
     # sorted list of instance ids, that the class may be placed on.
     "FS_CLASS_PIN": "--fluidserve-class-pin",
@@ -551,6 +553,8 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-enable-affinity", "affinity"),
         ("--fluidserve-affinity-weight", "affweight"),
         ("--fluidserve-affinity-metric", "affmetric"),
+    ("--fluidserve-per-instance-correction", "percorr"),
+    ("--fluidserve-memory-uses-pace-cap", "pacecap"),
         ("--fluidserve-enable-flux", "flux"),
         ("--fluidserve-class-harm", "classharm"),
         ("--fluidserve-force-margin", "forcemargin"),
