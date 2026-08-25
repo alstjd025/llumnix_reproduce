@@ -403,6 +403,20 @@ CrashLoopBackOff가 된다. 그런데 **옛 파드는 계속 Running이라 클�
   본 실험을 건다. 함정 A의 "생성한 설정 파일은 걸기 전에 그 프로세스에 한 번 먹여 본다"와
   같은 규칙을 **계측**에 적용한 것이다.
 
+- **⚠ 디스크는 걸기 전에 "지금 여유"가 아니라 "이 실험이 쓸 양"으로 본다 (2026-08-26).**
+  2026-08-25에 EXP-98을 걸기 전에 `DiskPressure=False`, 여유 122 GB를 확인했고 **그 확인이
+  통과했는데도** 일곱 번째 run에서 `DiskPressure=True`가 됐다. **한 시간 trace run 하나가
+  약 5.6 GB이고 그중 4.8 GB가 `tbt_events.jsonl`이다.** 6 run + 1 = 39 GB 였고 여유가
+  82 GB 로 떨어지자 kubelet 이 임계에 닿았다.
+  → **걸기 전에 `run 수 × 5.6 GB`가 여유의 절반 안에 드는지 본다.** 안 들면 먼저 비운다.
+  → **`tbt_events.jsonl`이 `results/`의 89%다**(2026-08-26 기준 1,320 GB / 1.5 TB).
+  읽는 것은 ITL CDF 그림 둘과 요청 안 p99뿐이고, 토큰당 시간은 `metrics.csv`에서 유도한다.
+  **`paper_experiment/*/manifest.tsv`가 참조하는 run(198개, 114 GB)만 남기면 1.2 TB가 난다.**
+  → **그때 무엇이 깨지나**: 러너 Job 이 `Failed`로 끝나고 결과 디렉토리는 생기는데
+  `metrics.csv`가 헤더만 남고 `shards/`가 남는다(병합 전에 죽는다). 그 다음 조건은 스케줄러
+  롤아웃이 `Pending`에서 멈춰 `ABORT: settings mismatch`로 죽는다. **두 증상이 서로 달라서
+  같은 원인으로 안 보인다 — 노드를 먼저 본다.**
+
 - **노드가 디스크로 막히면 실험은 정책이 아니라 고장을 잰다 (2026-08-05, §61).**
   `kubectl describe node`의 **DiskPressure=True**면 kubelet이 파드를 축출한다. 게이트웨이가
   축출되는 동안 시작한 러너는 요청을 하나도 못 만들고 죽는다(EXP-56 `fsnoaff/full`이
