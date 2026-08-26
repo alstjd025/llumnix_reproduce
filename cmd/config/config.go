@@ -480,7 +480,7 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"of class separation an axis that can be swept rather than a switch. "+
 			"Ignored when --fluidserve-enable-affinity=false.")
 	flags.BoolVar(&c.FluidservePerInstanceCorrection,
-		"fluidserve-per-instance-correction", false,
+		"fluidserve-per-instance-correction", true,
 		"Keep the measured-against-predicted correction of the iteration-time "+
 			"model per instance instead of as one scalar for the fleet. The "+
 			"correction multiplies every term of the predicted mean, and the "+
@@ -492,9 +492,11 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"+15% on every individual instance. Off by default. The cost of splitting "+
 			"it is fourfold fewer samples per coefficient and a tighter feedback loop, "+
 			"since a per-instance factor feeds back into that instance's own placement "+
-			"rather than being diluted across four.")
+			"rather than being diluted across four. ON by default since v0.3, on "+
+			"EXP-98: two repeats of the mix-shift hour moved the per-request "+
+			"admitted score from 68.9 to 75.8 with this alone.")
 	flags.BoolVar(&c.FluidserveMemoryUsesPaceCap,
-		"fluidserve-memory-uses-pace-cap", false,
+		"fluidserve-memory-uses-pace-cap", true,
 		"Test the memory condition against min(capKv, capMem) instead of capMem "+
 			"alone. capMem is the physical pool and reduces to 0.95 x logical "+
 			"occupancy over physical utilisation, so it equals the current occupancy "+
@@ -504,7 +506,11 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"the queued prefill, but reaches only the sort's free-space term, whose "+
 			"weight is zero at an affinity weight of 1.0. Off by default. An instance "+
 			"with no live request has an infinite allowance and therefore an infinite "+
-			"capKv, so the minimum falls back to capMem there in either mode.")
+			"capKv, so the minimum falls back to capMem there in either mode. ON by "+
+			"default since v0.3, as the other half of EXP-98's pair: alone it is "+
+			"worse than nothing, 67.8 against 68.9, because a wrong correction "+
+			"makes a wrong ceiling, and together with the per-instance correction "+
+			"it reads 76.2.")
 	flags.BoolVar(&c.FluidservePerInstanceDelay,
 		"fluidserve-per-instance-delay", false,
 		"Keep the queueing delay between a dispatch and its first token per "+
@@ -555,7 +561,7 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"that fires for them, which is what separates this from the shed-off "+
 			"ablation. Off by default.")
 	flags.BoolVar(&c.FluidservePrefillInterleaveAware,
-		"fluidserve-prefill-interleave-aware", false,
+		"fluidserve-prefill-interleave-aware", true,
 		"Stretch the queue term of the first-token estimate by the engine's "+
 			"measured prefill duty cycle, the share of its time it actually "+
 			"spends on prefill. The estimate prices prefill STEP time and nothing "+
@@ -572,9 +578,12 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"where the misses are. Only the observed queue is stretched -- the "+
 			"duty-derived arriving term already carries the duty as a factor, so "+
 			"dividing it would return the horizon -- and the request's own prefill "+
-			"is not stretched, because chat already over-predicts twofold. Off by "+
-			"default.")
-	flags.StringVar(&c.FluidserveAffinityMetric, "fluidserve-affinity-metric", "share",
+			"is not stretched, because chat already over-predicts twofold. ON by default "+
+			"since v0.3, on EXP-103: two repeats of the mix-shift hour take deep "+
+			"research's admitted attainment from 83.7 to 96.5 and 94.7 and its "+
+			"offered attainment from 60.7 to 68.1 and 66.0, at a rejection rate "+
+			"and a token goodput inside the four control repeats' own range.")
+	flags.StringVar(&c.FluidserveAffinityMetric, "fluidserve-affinity-metric", "count",
 		"What \"most of this class\" means when the class preference orders the "+
 			"feasible instances. `share` is the fraction of THAT INSTANCE's requests "+
 			"belonging to the class and is the shipped behaviour; because it is a "+
