@@ -527,8 +527,9 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"steps on prefill and interleaves decode with the rest. Measured on "+
 			"deepresearch, that estimate reads 9,005 ms against a realised mean of "+
 			"13,028 ms and a 10,000 ms budget, which is why making the test a "+
-			"feasibility condition on its own refused 46,186 candidates and changed "+
-			"the admitted attainment by 0.1 points: the candidates it refused were "+
+			"feasibility condition on its own refused 60,440 and 61,402 candidates "+
+			"over two repeats -- 4.4% and 4.6% of all refusals -- and changed the "+
+			"admitted attainment by 0.1 points: the candidates it refused were "+
 			"already refused by another condition. The test is read by both the "+
 			"shed path and, when --fluidserve-deadline-feasible is set, the "+
 			"feasibility conjunction. Off by default.")
