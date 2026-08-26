@@ -168,6 +168,25 @@ type fluidserveConfig struct {
 	// on the branch that fires for them, which is what distinguishes this from
 	// the shed-off ablation.
 	shedIgnoresFirstToken bool
+	// prefillInterleaveAware stretches the QUEUE term of the first-token
+	// estimate by the engine's measured prefill duty cycle, which is the share
+	// of its time it actually spends on prefill.
+	//
+	// The estimate prices prefill STEP time and nothing else, so it answers
+	// "how much engine prefill time does this work cost" rather than "when will
+	// this request's first token appear". Between those two sits the decode the
+	// engine interleaves, and the gap is exactly one over the duty cycle. The
+	// per-token model already accounts for the two kinds of step mixing --
+	// meanStepMs is (k - s_p)*t_dec + s_p*(t_pre + t_dec - c0) over k -- so the
+	// two halves of this policy were modelling the same engine differently.
+	//
+	// Measured on EXP-101b, for the 15,219 deep research placements of the
+	// mix-shift hour: realised over predicted is 0.59 at the median and 1.99 at
+	// p90, and the ratio of the two p90s is 2.06. The measured duty on an
+	// instance whose prefill queue exceeds 10,000 tokens is 0.43 to 0.46, whose
+	// reciprocal is 2.2 to 2.3. The shortfall appears only in the tail, which is
+	// where the misses are.
+	prefillInterleaveAware bool
 	// classPin maps a class's per-token budget tier to the positions, in the
 	// sorted list of instance ids, that the class may be placed on. Empty means
 	// no pinning, which is the default and every experiment before EXP-59.
@@ -690,6 +709,16 @@ type stepObservation struct {
 	// mean absolute error of 29,106 against the modelled balance's 106,416.
 	kvSlope float64
 }
+
+const (
+	// The prefill duty cycle below which the first-token estimate stops being
+	// stretched by its reciprocal. Above twenty times, a multiplier is no longer
+	// a correction. Measured on the mix-shift hour, an instance whose prefill
+	// queue exceeds 10,000 tokens runs at 0.43 to 0.46 and an idle one at 0.16
+	// to 0.29, so this floor is reached only where there is no queue to stretch
+	// and the term it multiplies is near zero regardless.
+	fsMinPrefillDuty = 0.05
+)
 
 const (
 	// Weight of one status interval in the per-instance prefill duty cycle.
@@ -1431,6 +1460,19 @@ func (s *fluidserveSelector) selectInstance(
 		p.registry.forget(req.id)
 		metrics.Counter("scheduler_fluidserve_decisions_total",
 			metrics.Labels{{Name: "decision", Value: "shed"}}).Inc()
+		// The same line commit() writes, for a request that is refused instead
+		// of placed. Without it the offline join sees only the placements, and
+		// "the estimate never reaches the budget" cannot be told apart from
+		// "everything that reached the budget was already refused and so is not
+		// in the file" -- which were the two readings of the same table that
+		// could not be separated after the control condition.
+		//
+		// There is no dispatch line for a refused request, so the analysis takes
+		// the waited figure from this line rather than from a placement instant.
+		klog.Infof("[Schedule] dispatch request %s fsplacement tier=%d waited=%d "+
+			"prefillest=%.1f prefillraw=%.1f prompt=%d decision=%s inst=%s",
+			req.id, req.tier, req.nowMs-req.arrivedMs, best.prefillMs,
+			best.prefillRaw, req.promptTokens, "shed", best.flux.id)
 		p.noteShed(req.id)
 		klog.V(5).Infof("FluidServe sheds request %s (tier %dms, waited %dms): "+
 			"placing it on %s would give %.1fms per token and %.0fms to first "+
@@ -2500,6 +2542,56 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 			queued = prefillSteps(f.effectivePrefill, chunk) * perQueued
 		}
 	}
+
+	// The queue drains at the rate the engine gives prefill, not at the rate a
+	// prefill step costs.
+	//
+	// Everything above is prefill STEP time: a count of chunks multiplied by
+	// what a chunk costs. It is therefore the answer to "how much engine prefill
+	// time does this work take", and the first-token deadline needs "when does
+	// this request's first token appear", which is longer by the decode the
+	// engine interleaves. The measured duty cycle is that share, and it is
+	// already observed per instance and already published.
+	//
+	// Only the OBSERVED queue is stretched, and the two halves of effectivePrefill
+	// are separated to do it. pendingPrefill is work sitting in front of this
+	// request, so its wall-clock drain is its cost over the duty. arrivingPrefill
+	// is not work in front of anything: it is `duty * horizon` converted into
+	// tokens, a throughput proxy for the case where the engine absorbs a steady
+	// stream between status pulls and the queue reads zero. Dividing THAT by the
+	// duty returns the horizon itself, which is not an estimate of anything. So
+	// the two are priced separately and the larger is taken, which is the same
+	// max the queue and the duty cycle were already combined by, one step later.
+	//
+	// This request's own prefill is deliberately NOT stretched. Measured on
+	// EXP-101b, chat -- whose estimate is almost entirely its own prefill,
+	// because it rarely lands on a queued instance -- already reads 754 ms at the
+	// median against a realised 370 ms, so it over-predicts twofold before any
+	// correction and stretching it would double an error that already has the
+	// wrong sign.
+	if p.cfg.prefillInterleaveAware && f != nil {
+		duty := p.prefillDutyOf(f.id)
+		// Below this the multiplier exceeds twenty and the estimate stops being
+		// a prediction. Measured, an instance carrying a prefill queue over
+		// 10,000 tokens runs at 0.43 to 0.46 and an idle one at 0.16 to 0.29, so
+		// this floor is reached only where there is no queue to stretch and the
+		// term it multiplies is near zero anyway.
+		if duty > fsMinPrefillDuty && f.pendingPrefill > 0 {
+			perPend := p.capacity.prefillStepMs(math.Min(f.pendingPrefill, chunk))
+			if !math.IsInf(perPend, 0) {
+				pend := prefillSteps(f.pendingPrefill, chunk) * perPend / duty
+				arriving := 0.0
+				if f.arrivingPrefill > 0 {
+					perArr := p.capacity.prefillStepMs(
+						math.Min(f.arrivingPrefill, chunk))
+					if !math.IsInf(perArr, 0) {
+						arriving = prefillSteps(f.arrivingPrefill, chunk) * perArr
+					}
+				}
+				queued = math.Max(pend, arriving)
+			}
+		}
+	}
 	return steps*per + queued
 }
 
@@ -2668,7 +2760,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		gateSlack:         p.FluidserveGateSlack,
 
 		perInstanceDelay:      p.FluidservePerInstanceDelay,
-		shedIgnoresFirstToken: p.FluidserveShedIgnoresFirstToken,
+		shedIgnoresFirstToken:  p.FluidserveShedIgnoresFirstToken,
+		prefillInterleaveAware: p.FluidservePrefillInterleaveAware,
 		deadlineUsesDelay: p.FluidserveDeadlineUsesDelay,
 
 		prefixAware:     p.FluidservePrefixAware,
@@ -2727,7 +2820,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, affmetric=%s, "+
 		// Both new fields go here, before the prefix block, for the reason the
 		// comment below gives about classpin.
-		"percorr=%v, pacecap=%v, perdelay=%v, deadlinedelay=%v, shednoft=%v, "+
+		"percorr=%v, pacecap=%v, perdelay=%v, deadlinedelay=%v, shednoft=%v, interleave=%v, "+
 		"flux=%v, classharm=%v, deadlinefeasible=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
 			"shedsignal=%s, oraclelen=%v, "+
@@ -2741,6 +2834,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
 		cfg.perInstanceDelay, cfg.deadlineUsesDelay, cfg.shedIgnoresFirstToken,
+		cfg.prefillInterleaveAware,
 		cfg.enableFlux, cfg.classHarm,
 		cfg.deadlineFeasible,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,

@@ -152,6 +152,8 @@ FLUIDSERVE_ABLATIONS = {
     "FS_MEMORY_PACE_CAP": "--fluidserve-memory-uses-pace-cap",
     "FS_PER_INSTANCE_DELAY": "--fluidserve-per-instance-delay",
     "FS_DEADLINE_USES_DELAY": "--fluidserve-deadline-uses-delay",
+    "FS_SHED_NO_FIRST_TOKEN": "--fluidserve-shed-ignores-first-token",
+    "FS_PREFILL_INTERLEAVE": "--fluidserve-prefill-interleave-aware",
     # EXP-59. A string, "50:0;100:1,2;25:3": tier -> the positions, in the
     # sorted list of instance ids, that the class may be placed on.
     "FS_CLASS_PIN": "--fluidserve-class-pin",
@@ -559,6 +561,8 @@ def verify_effective(policy, logs, applied_args):
     ("--fluidserve-memory-uses-pace-cap", "pacecap"),
     ("--fluidserve-per-instance-delay", "perdelay"),
     ("--fluidserve-deadline-uses-delay", "deadlinedelay"),
+    ("--fluidserve-shed-ignores-first-token", "shednoft"),
+    ("--fluidserve-prefill-interleave-aware", "interleave"),
         ("--fluidserve-enable-flux", "flux"),
         ("--fluidserve-class-harm", "classharm"),
         ("--fluidserve-force-margin", "forcemargin"),

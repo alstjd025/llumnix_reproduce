@@ -281,6 +281,7 @@ type FullModeSchedulingConfig struct {
 	FluidservePerInstanceDelay      bool
 	FluidserveDeadlineUsesDelay     bool
 	FluidserveShedIgnoresFirstToken bool
+	FluidservePrefillInterleaveAware bool
 	FluidserveClassPin          string
 	FluidserveEnableFlux        bool
 	FluidserveClassHarm         bool
@@ -553,6 +554,26 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"shedding off: chat and the agent class keep being judged on the branch "+
 			"that fires for them, which is what separates this from the shed-off "+
 			"ablation. Off by default.")
+	flags.BoolVar(&c.FluidservePrefillInterleaveAware,
+		"fluidserve-prefill-interleave-aware", false,
+		"Stretch the queue term of the first-token estimate by the engine's "+
+			"measured prefill duty cycle, the share of its time it actually "+
+			"spends on prefill. The estimate prices prefill STEP time and nothing "+
+			"else, so it answers how much engine prefill time the work costs "+
+			"rather than when the request's first token appears, and between "+
+			"those sits the decode the engine interleaves. The per-token half of "+
+			"this policy already models that mixing, so the two halves were "+
+			"describing the same engine differently. Measured over the 15,219 "+
+			"deep research placements of one mix-shift hour, realised over "+
+			"predicted is 0.59 at the median and 1.99 at p90 and the ratio of the "+
+			"two p90s is 2.06, against a measured duty of 0.43 to 0.46 on an "+
+			"instance carrying a prefill queue over 10,000 tokens, whose "+
+			"reciprocal is 2.2 to 2.3: the shortfall is in the tail, which is "+
+			"where the misses are. Only the observed queue is stretched -- the "+
+			"duty-derived arriving term already carries the duty as a factor, so "+
+			"dividing it would return the horizon -- and the request's own prefill "+
+			"is not stretched, because chat already over-predicts twofold. Off by "+
+			"default.")
 	flags.StringVar(&c.FluidserveAffinityMetric, "fluidserve-affinity-metric", "share",
 		"What \"most of this class\" means when the class preference orders the "+
 			"feasible instances. `share` is the fraction of THAT INSTANCE's requests "+
