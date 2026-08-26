@@ -580,9 +580,16 @@ func (r *requestRegistry) reconcile(
 			case !predSlow && realSlow:
 				cell = "fast_slow"
 			}
+			// Labelled by CLASS rather than by instance. The interesting cells
+			// are the slow ones and those are almost all one class, while chat
+			// is 76.9% of the requests and nearly all of it is fast, so an
+			// instance-labelled table would report a fleet that looks accurate
+			// because most of what it places is easy. The tier is the class's
+			// per-token budget in milliseconds, which is how every other series
+			// here names a class.
 			metrics.Counter("scheduler_fluidserve_placement_joint_total",
 				metrics.Labels{
-					{Name: "instance", Value: instanceID},
+					{Name: "tier", Value: strconv.Itoa(rec.tier)},
 					{Name: "cell", Value: cell},
 				}).Inc()
 		}
