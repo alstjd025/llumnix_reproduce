@@ -278,6 +278,8 @@ type FullModeSchedulingConfig struct {
 	FluidserveAffinityMetric    string
 	FluidservePerInstanceCorrection bool
 	FluidserveMemoryUsesPaceCap     bool
+	FluidservePerInstanceDelay      bool
+	FluidserveDeadlineUsesDelay     bool
 	FluidserveClassPin          string
 	FluidserveEnableFlux        bool
 	FluidserveClassHarm         bool
@@ -501,6 +503,35 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"weight is zero at an affinity weight of 1.0. Off by default. An instance "+
 			"with no live request has an infinite allowance and therefore an infinite "+
 			"capKv, so the minimum falls back to capMem there in either mode.")
+	flags.BoolVar(&c.FluidservePerInstanceDelay,
+		"fluidserve-per-instance-delay", false,
+		"Keep the queueing delay between a dispatch and its first token per "+
+			"instance instead of as one scalar for the fleet. That delay is the "+
+			"residual between what the decision predicted the prefill would cost "+
+			"and what the request realised, and it is added to the first-token "+
+			"budget on the holding path to decide whether a request can wait. "+
+			"Measured on the mix-shift hour trace, its p90 over the four instances "+
+			"is 1,265 / 1,520 / 2,564 / 20,022 ms, so a fleet scalar describes none "+
+			"of them and understates by an order of magnitude exactly the instance "+
+			"that is backlogged. Off by default. An instance with fewer than "+
+			"fsMinPlacementDelaySamples samples of its own falls back to the fleet "+
+			"value rather than to the fixed margin, so a newly restarted instance "+
+			"is not treated as though it had no queue.")
+	flags.BoolVar(&c.FluidserveDeadlineUsesDelay,
+		"fluidserve-deadline-uses-delay", false,
+		"Add that queueing delay to the first-token deadline test. The test asks "+
+			"whether waited + prefillMs exceeds the time-to-first-token budget, "+
+			"and prefillMs is the work rather than the wait: it prices this "+
+			"prompt's own prefill given the queue, computed as though the engine "+
+			"did nothing else, while the backlogged instance spends 45.3% of its "+
+			"steps on prefill and interleaves decode with the rest. Measured on "+
+			"deepresearch, that estimate reads 9,005 ms against a realised mean of "+
+			"13,028 ms and a 10,000 ms budget, which is why making the test a "+
+			"feasibility condition on its own refused 46,186 candidates and changed "+
+			"the admitted attainment by 0.1 points: the candidates it refused were "+
+			"already refused by another condition. The test is read by both the "+
+			"shed path and, when --fluidserve-deadline-feasible is set, the "+
+			"feasibility conjunction. Off by default.")
 	flags.StringVar(&c.FluidserveAffinityMetric, "fluidserve-affinity-metric", "share",
 		"What \"most of this class\" means when the class preference orders the "+
 			"feasible instances. `share` is the fraction of THAT INSTANCE's requests "+

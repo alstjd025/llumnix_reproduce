@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"llumnix/pkg/metrics"
+
 	"k8s.io/klog/v2"
 )
 
@@ -269,6 +271,18 @@ type requestRegistry struct {
 	delayMean   float64
 	delayMeanSq float64
 	delaySeen   int64
+	// The same three per instance, used when perInstanceDelay is set. The fleet
+	// values above stay live in both modes: they are what an instance with too
+	// few samples of its own falls back to, and they keep the meaning every
+	// earlier run was analysed with.
+	//
+	// EXP-98/100 is the measurement that puts the single value in question. The
+	// realised time from placement to first token has a p90 of 1,265, 1,520,
+	// 2,564 and 20,022 ms across the four engines of one run -- a sixteenfold
+	// spread against one number. This is the same defect, and the same fix, as
+	// the iteration-time correction that was split per instance on 2026-08-25.
+	delayByInst      map[string]*delayStat
+	perInstanceDelay bool
 	// The offered rate: prompt tokens per millisecond ARRIVING at the gateway,
 	// counted once per request rather than once per retry, and smoothed.
 	//
@@ -509,8 +523,23 @@ func (r *requestRegistry) reconcile(
 			// The RESIDUAL, not the whole delay: what happened between the
 			// placement and the first token beyond the prefill the decision
 			// path had already priced. See notePlacementDelayLocked.
-			r.notePlacementDelayLocked(
-				float64(nowMs-rec.dispatchedMs) - rec.prefillEstMs)
+			realised := float64(nowMs - rec.dispatchedMs)
+			r.notePlacementDelayLocked(instanceID, realised-rec.prefillEstMs)
+			// Published so that "is the first-token estimate right" can be
+			// answered from a run instead of by joining the client's records
+			// afterwards. The decision path compares waited+prefillEstMs
+			// against the TTFT budget, so the ratio of these two series is
+			// exactly the error that comparison carries. Measured on the
+			// mix-shift trace before this existed, the estimate was about 31%
+			// low on the engine that was missing its budget.
+			lbl := metrics.Labels{{Name: "instance", Value: instanceID}}
+			// Counters take an int; these are milliseconds in the thousands, so
+			// rounding costs nothing against the quantity being measured.
+			metrics.Counter("scheduler_fluidserve_placement_predicted_ms_total", lbl).
+				Add(int(rec.prefillEstMs + 0.5))
+			metrics.Counter("scheduler_fluidserve_placement_realised_ms_total", lbl).
+				Add(int(realised + 0.5))
+			metrics.Counter("scheduler_fluidserve_placement_samples_total", lbl).Inc()
 		}
 		rec.lastJ = j
 		prof := r.lengths.forTier(rec.tier)
@@ -540,6 +569,14 @@ func (r *requestRegistry) reconcile(
 	return out
 }
 
+// delayStat is one instance's running mean and mean-square of the queue
+// residual, plus how many samples built them.
+type delayStat struct {
+	mean   float64
+	meanSq float64
+	seen   int64
+}
+
 // notePlacementDelayLocked folds one realised QUEUE residual into the running
 // mean and mean-square: the time between a placement and its first token, minus
 // the prefill the decision path had already priced for that request.
@@ -562,7 +599,7 @@ func (r *requestRegistry) reconcile(
 //
 // Splitting it keeps the prompt-dependent part per request and measures only the
 // part that has no reason to depend on the prompt.
-func (r *requestRegistry) notePlacementDelayLocked(ms float64) {
+func (r *requestRegistry) notePlacementDelayLocked(instance string, ms float64) {
 	if ms < 0 {
 		// The prefill was priced above what the whole placement took. Real
 		// evidence that the queue cost nothing, so it counts as zero rather than
@@ -581,23 +618,72 @@ func (r *requestRegistry) notePlacementDelayLocked(ms float64) {
 		r.delayMeanSq += fsPlacementDelayAlpha * (ms*ms - r.delayMeanSq)
 	}
 	r.delaySeen++
+
+	if instance == "" {
+		return
+	}
+	if r.delayByInst == nil {
+		r.delayByInst = map[string]*delayStat{}
+	}
+	d, ok := r.delayByInst[instance]
+	if !ok {
+		// Start from what the fleet knows rather than from this one sample, for
+		// the same reason the per-instance correction does: an instance seen for
+		// the first time otherwise spends its early decisions on a mean built
+		// from a single observation.
+		d = &delayStat{mean: r.delayMean, meanSq: r.delayMeanSq}
+		r.delayByInst[instance] = d
+	}
+	d.mean += fsPlacementDelayAlpha * (ms - d.mean)
+	d.meanSq += fsPlacementDelayAlpha * (ms*ms - d.meanSq)
+	d.seen++
 }
 
 // PlacementDelayBound is the queue residual to reserve on TOP of this request's
 // own modelled prefill, as a one-sided upper bound rather than a mean. Returns
 // -1 before enough has been measured, which the caller reads as "use the old
 // fixed margin", so a fresh process behaves as it did before.
-func (r *requestRegistry) PlacementDelayBound(z float64) (float64, int64) {
+func (r *requestRegistry) PlacementDelayBound(instance string, z float64) (float64, int64) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.delaySeen < fsMinPlacementDelaySamples {
-		return -1, r.delaySeen
+	mean, meanSq, seen := r.delayMean, r.delayMeanSq, r.delaySeen
+	if r.perInstanceDelay && instance != "" {
+		if d, ok := r.delayByInst[instance]; ok && d.seen >= fsMinPlacementDelaySamples {
+			mean, meanSq, seen = d.mean, d.meanSq, d.seen
+		}
+		// Below the sample floor this falls back to the fleet value rather than
+		// to the fixed margin, which is the conservative direction: the fleet
+		// number is built from real placements and the margin is a constant.
 	}
-	variance := r.delayMeanSq - r.delayMean*r.delayMean
+	if seen < fsMinPlacementDelaySamples {
+		return -1, seen
+	}
+	variance := meanSq - mean*mean
 	if variance < 0 {
 		variance = 0
 	}
-	return r.delayMean + z*math.Sqrt(variance), r.delaySeen
+	return mean + z*math.Sqrt(variance), seen
+}
+
+// PlacementDelayFor reports one instance's bound and sample count for the
+// metrics, without the fallback the decision path uses. -1 means "not measured
+// here yet", which is what has to be visible to tell a genuinely fast instance
+// from one that has no samples.
+func (r *requestRegistry) PlacementDelayFor(instance string) (float64, int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.delayByInst[instance]
+	if !ok {
+		return -1, 0
+	}
+	return d.mean, d.seen
+}
+
+// SetPerInstanceDelay is called once at construction.
+func (r *requestRegistry) SetPerInstanceDelay(v bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.perInstanceDelay = v
 }
 
 // PlacementDelayMean is the centre of the same distribution, for telemetry. The

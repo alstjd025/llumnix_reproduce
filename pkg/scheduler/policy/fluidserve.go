@@ -129,6 +129,22 @@ type fluidserveConfig struct {
 	// min(capKv, capMem) rather than capMem alone. See where overMemory is
 	// computed.
 	memoryUsesPaceCap bool
+	// perInstanceDelay keeps the queueing delay between a dispatch and its
+	// first token per instance instead of one scalar for the fleet. The
+	// measured p90 of that delay spans 1,265 / 1,520 / 2,564 / 20,022 ms over
+	// the four instances of the mix-shift hour, so a fleet mean describes none
+	// of them and in particular understates the one instance that is
+	// backlogged. See requestRegistry.
+	perInstanceDelay bool
+	// deadlineUsesDelay adds that queueing delay to the first-token deadline
+	// test, which currently asks only `waited + prefillMs > ttftSloMs` and so
+	// prices the prefill work itself but not the wait in front of it. The
+	// same quantity is already added on the holding path, in canWait, so this
+	// makes the two paths ask the same question. Measured, the estimate the
+	// test reads is 9,005 ms against a 13,028 ms realised mean on deepresearch
+	// with a 10,000 ms budget, which is why turning the test into a
+	// feasibility condition on its own changed nothing.
+	deadlineUsesDelay bool
 	// classPin maps a class's per-token budget tier to the positions, in the
 	// sorted list of instance ids, that the class may be placed on. Empty means
 	// no pinning, which is the default and every experiment before EXP-59.
@@ -538,11 +554,20 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 				// modelled version this replaced had no spread at all, so a run
 				// where the two are close is a run where this change could not
 				// have mattered.
-				if b, n := p.registry.PlacementDelayBound(p.cfg.zSafety); n >= fsMinPlacementDelaySamples {
+				if b, n := p.registry.PlacementDelayBound("", p.cfg.zSafety); n >= fsMinPlacementDelaySamples {
 					metrics.Gauge("scheduler_fluidserve_placement_delay_bound_ms",
 						metrics.Labels{}).Set(b)
 					metrics.Gauge("scheduler_fluidserve_placement_delay_mean_ms",
 						metrics.Labels{}).Set(p.registry.PlacementDelayMean())
+				}
+				// And this instance's own, which is what the per-instance mode
+				// reads. -1 means it has no samples of its own yet, which is
+				// deliberately distinguishable from a genuinely small value.
+				if m, n := p.registry.PlacementDelayFor(f.id); n > 0 {
+					metrics.Gauge("scheduler_fluidserve_instance_delay_mean_ms", lbl).Set(m)
+					metrics.Gauge("scheduler_fluidserve_instance_delay_samples", lbl).Set(float64(n))
+				} else {
+					metrics.Gauge("scheduler_fluidserve_instance_delay_mean_ms", lbl).Set(-1)
 				}
 				// The two fleet-wide scalars -- the multiplicative correction and
 				// the prefill fraction -- are already published by reportLoop as
@@ -1838,7 +1863,9 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	// conditions failing together is visible as such instead of being attributed
 	// to whichever the code happens to test first.
 	if !c.feasible {
+		var failed []string
 		reason := func(v string) {
+			failed = append(failed, v)
 			metrics.Counter("scheduler_fluidserve_infeasible_total",
 				metrics.Labels{{Name: "reason", Value: v}}).Inc()
 		}
@@ -1865,6 +1892,19 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		}
 		if overDeadline {
 			reason("deadline")
+		}
+		// And whether this condition was the ONLY one refusing the candidate.
+		// The counters above answer "did this term fire"; they cannot answer
+		// "did this term refuse anything that would otherwise have been
+		// routed", because a candidate refused by the gate as well is refused
+		// with or without the term under test. That question is what an
+		// ablation of a single predicate has to answer, and the analysis of
+		// the first-token deadline experiment could only approach it
+		// indirectly, from the share of decisions whose feasible set was
+		// already empty (63.9% against 61.9%). Counted here directly.
+		if len(failed) == 1 {
+			metrics.Counter("scheduler_fluidserve_infeasible_sole_total",
+				metrics.Labels{{Name: "reason", Value: failed[0]}}).Inc()
 		}
 	}
 
@@ -1943,7 +1983,26 @@ func (p *fluidserveDispatchPolicy) missesTtftDeadline(
 		return true
 	}
 	waited := float64(req.nowMs - req.arrivedMs)
-	return waited+c.prefillMs > req.ttftSloMs
+	after := c.prefillMs
+	if p.cfg.deadlineUsesDelay {
+		// c.prefillMs is the work, not the wait: it is the time to push this
+		// prompt through prefill given what is already queued, computed as if
+		// the engine did nothing else, while the engine interleaves decode and
+		// on the backlogged instance spends 45.3% of its steps on prefill. The
+		// residual between what the decision predicted and what the request
+		// realised is exactly what the registry accumulates, so the same bound
+		// canWait already adds on the holding path is added here. Without it
+		// the two paths ask the same question with different quantities: a
+		// request is refused a hold on `prefillMs + bound` and then granted a
+		// placement on `prefillMs` alone.
+		if q, n := p.registry.PlacementDelayBound(
+			c.flux.id, p.cfg.zSafety); n >= fsMinPlacementDelaySamples {
+			after += q
+		} else {
+			after += p.cfg.ttftSafetyMs
+		}
+	}
+	return waited+after > req.ttftSloMs
 }
 
 func (p *fluidserveDispatchPolicy) missesOwnBudget(
@@ -2346,7 +2405,7 @@ func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveReques
 	// mix that is 76.9% chat, and applying chat's number to an agent request with
 	// a ten-times-longer prompt moved that class the wrong way.
 	after := best.prefillMs
-	if queue, samples := p.registry.PlacementDelayBound(p.cfg.zSafety); samples >= fsMinPlacementDelaySamples {
+	if queue, samples := p.registry.PlacementDelayBound(best.flux.id, p.cfg.zSafety); samples >= fsMinPlacementDelaySamples {
 		after += queue
 	} else {
 		after += p.cfg.ttftSafetyMs
@@ -2552,6 +2611,9 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 		gateSlack:         p.FluidserveGateSlack,
 
+		perInstanceDelay:  p.FluidservePerInstanceDelay,
+		deadlineUsesDelay: p.FluidserveDeadlineUsesDelay,
+
 		prefixAware:     p.FluidservePrefixAware,
 		prefixCalibrate: p.FluidservePrefixCalibration,
 		prefixBlockToks: p.FluidservePrefixBlockTokens,
@@ -2577,6 +2639,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		shedIDs:   map[string]int64{},
 		fluxCache: map[string]cachedFlux{},
 	}
+	policy.registry.SetPerInstanceDelay(cfg.perInstanceDelay)
 	if cfg.prefixAware {
 		policy.prefix = newPrefixIndex(cfg.prefixBlockToks, cfg.prefixCapacity)
 	}
@@ -2607,7 +2670,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, affmetric=%s, "+
 		// Both new fields go here, before the prefix block, for the reason the
 		// comment below gives about classpin.
-		"percorr=%v, pacecap=%v, "+
+		"percorr=%v, pacecap=%v, perdelay=%v, deadlinedelay=%v, "+
 		"flux=%v, classharm=%v, deadlinefeasible=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
 			"shedsignal=%s, oraclelen=%v, "+
@@ -2620,6 +2683,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
+		cfg.perInstanceDelay, cfg.deadlineUsesDelay,
 		cfg.enableFlux, cfg.classHarm,
 		cfg.deadlineFeasible,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
