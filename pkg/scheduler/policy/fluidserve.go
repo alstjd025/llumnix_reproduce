@@ -140,10 +140,14 @@ type fluidserveConfig struct {
 	// test, which currently asks only `waited + prefillMs > ttftSloMs` and so
 	// prices the prefill work itself but not the wait in front of it. The
 	// same quantity is already added on the holding path, in canWait, so this
-	// makes the two paths ask the same question. Measured, the estimate the
-	// test reads is 9,005 ms against a 13,028 ms realised mean on deepresearch
-	// with a 10,000 ms budget, which is why turning the test into a
-	// feasibility condition on its own changed nothing.
+	// makes the two paths ask the same question. Turning the test into a
+	// feasibility condition on its own changed nothing, because what it refused
+	// was already refused by another condition. Whether the delay is the missing
+	// term is NOT settled: on the 9-minute flat-rate trace the estimate
+	// over-predicts the post-dispatch time by 4.9 times, so adding to it would
+	// refuse more rather than better. The joint table published in reconcile is
+	// what decides this, because what a deadline test needs is not the right
+	// mean but a large estimate exactly where the wait turns out to be long.
 	deadlineUsesDelay bool
 	// classPin maps a class's per-token budget tier to the positions, in the
 	// sorted list of instance ids, that the class may be placed on. Empty means

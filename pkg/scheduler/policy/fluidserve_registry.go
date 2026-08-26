@@ -193,6 +193,14 @@ const (
 	// A sample beyond this straddles an engine restart or a record that outlived
 	// the request it describes; the gateway's own hold window is 35 s.
 	fsMaxPlacementDelayMs = 60 * 1000
+
+	// The line between a first token that arrived in time and one that did not,
+	// for the joint table published in reconcile. Deep research's
+	// time-to-first-token budget, because that is the class the first-token
+	// rule is about: over both EXP-100 repeats 19.3% of its completed requests
+	// exceeded 10 s to a first token and 0.0% exceeded its per-token budget.
+	// Instrumentation only; no decision reads it.
+	fsSlowFirstTokenMs = 10000.0
 )
 
 type requestRegistry struct {
@@ -528,10 +536,8 @@ func (r *requestRegistry) reconcile(
 			// Published so that "is the first-token estimate right" can be
 			// answered from a run instead of by joining the client's records
 			// afterwards. The decision path compares waited+prefillEstMs
-			// against the TTFT budget, so the ratio of these two series is
-			// exactly the error that comparison carries. Measured on the
-			// mix-shift trace before this existed, the estimate was about 31%
-			// low on the engine that was missing its budget.
+			// against the TTFT budget, so the relation between these two series
+			// is exactly the error that comparison carries.
 			lbl := metrics.Labels{{Name: "instance", Value: instanceID}}
 			// Counters take an int; these are milliseconds in the thousands, so
 			// rounding costs nothing against the quantity being measured.
@@ -540,6 +546,45 @@ func (r *requestRegistry) reconcile(
 			metrics.Counter("scheduler_fluidserve_placement_realised_ms_total", lbl).
 				Add(int(realised + 0.5))
 			metrics.Counter("scheduler_fluidserve_placement_samples_total", lbl).Inc()
+
+			// And the JOINT outcome, which the two sums above cannot give.
+			//
+			// A ratio of sums answers "is the estimate right on average", and
+			// that is not the question an admission test asks. The test asks
+			// whether the estimate is LARGE exactly when the wait turns out to
+			// be long, because a request whose first token arrives late is the
+			// only one it should refuse. An estimate can carry the right mean
+			// and still be uncorrelated with the outcome, in which case no
+			// threshold on it separates the two populations and no version of
+			// the deadline test can work -- which is a conclusion about the
+			// design, not a tuning result.
+			//
+			// So: a two-by-two table of (the decision expected this to be slow,
+			// it was slow), at one threshold. The threshold is deep research's
+			// time-to-first-token budget, because that is the class whose
+			// violations are 100% of this rule -- measured over both EXP-100
+			// repeats, 19.3% of its completed requests exceeded 10 s to a first
+			// token while 0.0% exceeded its 100 ms per-token budget.
+			//
+			// Read as: true-positive over (true-positive + false-negative) is
+			// how much of the late work the test could see at all, and
+			// false-positive is what refusing on it would have cost.
+			predSlow := rec.prefillEstMs >= fsSlowFirstTokenMs
+			realSlow := realised >= fsSlowFirstTokenMs
+			cell := "fast_fast"
+			switch {
+			case predSlow && realSlow:
+				cell = "slow_slow"
+			case predSlow && !realSlow:
+				cell = "slow_fast"
+			case !predSlow && realSlow:
+				cell = "fast_slow"
+			}
+			metrics.Counter("scheduler_fluidserve_placement_joint_total",
+				metrics.Labels{
+					{Name: "instance", Value: instanceID},
+					{Name: "cell", Value: cell},
+				}).Inc()
 		}
 		rec.lastJ = j
 		prof := r.lengths.forTier(rec.tier)

@@ -519,20 +519,25 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"is not treated as though it had no queue.")
 	flags.BoolVar(&c.FluidserveDeadlineUsesDelay,
 		"fluidserve-deadline-uses-delay", false,
-		"Add that queueing delay to the first-token deadline test. The test asks "+
-			"whether waited + prefillMs exceeds the time-to-first-token budget, "+
-			"and prefillMs is the work rather than the wait: it prices this "+
-			"prompt's own prefill given the queue, computed as though the engine "+
-			"did nothing else, while the backlogged instance spends 45.3% of its "+
-			"steps on prefill and interleaves decode with the rest. Measured on "+
-			"deepresearch, that estimate reads 9,005 ms against a realised mean of "+
-			"13,028 ms and a 10,000 ms budget, which is why making the test a "+
-			"feasibility condition on its own refused 60,440 and 61,402 candidates "+
-			"over two repeats -- 4.4% and 4.6% of all refusals -- and changed the "+
-			"admitted attainment by 0.1 points: the candidates it refused were "+
-			"already refused by another condition. The test is read by both the "+
-			"shed path and, when --fluidserve-deadline-feasible is set, the "+
-			"feasibility conjunction. Off by default.")
+		"Add the measured queueing delay to the first-token deadline test. The "+
+			"test asks whether waited + prefillMs exceeds the time-to-first-token "+
+			"budget, and prefillMs is the work rather than the wait: it prices "+
+			"this prompt's own prefill given the queue, computed as though the "+
+			"engine did nothing else, while the backlogged instance spends 45.3% "+
+			"of its steps on prefill and interleaves decode with the rest. The "+
+			"same bound is already added on the holding path in canWait, so "+
+			"without this flag the two paths ask the same question with different "+
+			"quantities. Making the test a feasibility condition WITHOUT this "+
+			"refused 60,440 and 61,402 candidates over two repeats, 4.4% and 4.6% "+
+			"of all refusals, and changed admitted attainment by 0.1 points, "+
+			"because what it refused was already refused by another condition. "+
+			"Whether adding the delay is the right direction is NOT settled: on "+
+			"the 9-minute flat-rate trace the estimate summed to 1,640 ms per "+
+			"placement against 334 ms realised, so it over-predicts by 4.9 times "+
+			"and adding to it would refuse more rather than better. Off by "+
+			"default. The test is read by the shed path and, when "+
+			"--fluidserve-deadline-feasible is set, by the feasibility "+
+			"conjunction.")
 	flags.StringVar(&c.FluidserveAffinityMetric, "fluidserve-affinity-metric", "share",
 		"What \"most of this class\" means when the class preference orders the "+
 			"feasible instances. `share` is the fraction of THAT INSTANCE's requests "+
