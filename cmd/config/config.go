@@ -280,6 +280,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveMemoryUsesPaceCap     bool
 	FluidservePerInstanceDelay      bool
 	FluidserveDeadlineUsesDelay     bool
+	FluidserveShedIgnoresFirstToken bool
 	FluidserveClassPin          string
 	FluidserveEnableFlux        bool
 	FluidserveClassHarm         bool
@@ -538,6 +539,20 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"default. The test is read by the shed path and, when "+
 			"--fluidserve-deadline-feasible is set, by the feasibility "+
 			"conjunction.")
+	flags.BoolVar(&c.FluidserveShedIgnoresFirstToken,
+		"fluidserve-shed-ignores-first-token", false,
+		"Take the first-token branch out of the shed test, leaving it to judge on "+
+			"per-token pace alone. The shed test asks whether the placement that "+
+			"would actually be made still meets the request's own budget, and for a "+
+			"class judged on a per-token budget that is the first-token branch OR "+
+			"the pace branch. For deep research the pace branch never fires -- over "+
+			"both EXP-100 repeats 0.0% of its completed requests exceeded its 100 ms "+
+			"per-token budget -- so its 30.0% and 29.6% rejection runs entirely "+
+			"through the first-token estimate, which on the 9-minute flat-rate trace "+
+			"over-predicts the post-dispatch time by 4.9 times. This does NOT turn "+
+			"shedding off: chat and the agent class keep being judged on the branch "+
+			"that fires for them, which is what separates this from the shed-off "+
+			"ablation. Off by default.")
 	flags.StringVar(&c.FluidserveAffinityMetric, "fluidserve-affinity-metric", "share",
 		"What \"most of this class\" means when the class preference orders the "+
 			"feasible instances. `share` is the fraction of THAT INSTANCE's requests "+

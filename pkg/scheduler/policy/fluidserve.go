@@ -149,6 +149,25 @@ type fluidserveConfig struct {
 	// what decides this, because what a deadline test needs is not the right
 	// mean but a large estimate exactly where the wait turns out to be long.
 	deadlineUsesDelay bool
+	// shedIgnoresFirstToken takes the first-token branch OUT of the shed test,
+	// leaving it to judge on per-token pace alone.
+	//
+	// This is the opposite direction from deadlineUsesDelay and exists because
+	// the measurement may call for it. The shed test is
+	// `best.missesOwnBudget`, which for a class judged on a per-token budget is
+	// the first-token branch OR the pace branch, and for deep research the pace
+	// branch never fires: over both EXP-100 repeats 0.0% of its completed
+	// requests exceeded its 100 ms per-token budget. So that class's 30.0% and
+	// 29.6% rejection runs entirely through an estimate that, on the 9-minute
+	// flat-rate trace, over-predicts the post-dispatch time by 4.9 times. If the
+	// joint table published in reconcile says the estimate flags requests that
+	// turn out to be fast, this is the arm that measures what those refusals
+	// cost.
+	//
+	// It does NOT turn shedding off: chat and the agent class keep being judged
+	// on the branch that fires for them, which is what distinguishes this from
+	// the shed-off ablation.
+	shedIgnoresFirstToken bool
 	// classPin maps a class's per-token budget tier to the positions, in the
 	// sorted list of instance ids, that the class may be placed on. Empty means
 	// no pinning, which is the default and every experiment before EXP-59.
@@ -2019,7 +2038,7 @@ func (p *fluidserveDispatchPolicy) missesOwnBudget(
 	if req.isE2E {
 		return waited+c.prefillMs+req.expectedToks*c.meanAfter > req.budgetMs
 	}
-	if p.missesTtftDeadline(req, c) {
+	if !p.cfg.shedIgnoresFirstToken && p.missesTtftDeadline(req, c) {
 		return true
 	}
 	// The pace this is compared against is the same quantity `feasible` compares,
@@ -2615,7 +2634,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 		gateSlack:         p.FluidserveGateSlack,
 
-		perInstanceDelay:  p.FluidservePerInstanceDelay,
+		perInstanceDelay:      p.FluidservePerInstanceDelay,
+		shedIgnoresFirstToken: p.FluidserveShedIgnoresFirstToken,
 		deadlineUsesDelay: p.FluidserveDeadlineUsesDelay,
 
 		prefixAware:     p.FluidservePrefixAware,
@@ -2674,7 +2694,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"ttft margin %dms, pend=%v, shed=%v, affinity=%v, affweight=%.2f, affmetric=%s, "+
 		// Both new fields go here, before the prefix block, for the reason the
 		// comment below gives about classpin.
-		"percorr=%v, pacecap=%v, perdelay=%v, deadlinedelay=%v, "+
+		"percorr=%v, pacecap=%v, perdelay=%v, deadlinedelay=%v, shednoft=%v, "+
 		"flux=%v, classharm=%v, deadlinefeasible=%v, "+
 		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
 			"shedsignal=%s, oraclelen=%v, "+
@@ -2687,7 +2707,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
-		cfg.perInstanceDelay, cfg.deadlineUsesDelay,
+		cfg.perInstanceDelay, cfg.deadlineUsesDelay, cfg.shedIgnoresFirstToken,
 		cfg.enableFlux, cfg.classHarm,
 		cfg.deadlineFeasible,
 		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
