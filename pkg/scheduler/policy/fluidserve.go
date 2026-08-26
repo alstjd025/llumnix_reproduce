@@ -2552,6 +2552,39 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 
 	metrics.Counter("scheduler_fluidserve_decisions_total",
 		metrics.Labels{{Name: "decision", Value: kind}}).Inc()
+
+	// One line per placement carrying what the decision PREDICTED, so that the
+	// prediction can be compared against what the request actually did.
+	//
+	// This exists because the scheduler cannot observe the quantity it
+	// predicts. reconcile marks a request as having started decoding when the
+	// engine's GLOBAL step counter passes stepAtDispatch + prefillSteps, which
+	// is a modelled number of steps and not an observation of this request: a
+	// request sitting behind fifteen seconds of other work trips that within a
+	// second, because the counter counts the engine's steps rather than its
+	// own. Measured on the EXP-101 control condition, the scheduler's implied
+	// time from placement to first token is 314 ms of mean with ZERO placements
+	// over ten seconds, while the ground truth -- the client's first-token
+	// latency minus the arrival-to-dispatch wait, joined through the dispatch
+	// log for all 77,920 placements -- is 0.90 s of median and 16.20 s of p90
+	// for deep research, of which 22.8% exceed its ten-second budget.
+	//
+	// So the two counters published in reconcile compare one model against
+	// another, and the ratio they report says nothing about the estimate. This
+	// line is what makes the real comparison possible: it is joined offline
+	// against request_ids.jsonl and metrics.csv, both of which are recorded per
+	// run already, and needs no per-request reporting from the engine.
+	//
+	// The prefix is "[Schedule] dispatch request <uuid>" because
+	// llumnix_metrics.py greps the scheduler's output at the source and that
+	// pattern is already in its filter. build_request_engine_map.py requires
+	// "to <something> instance <digits>" after the uuid and so ignores this
+	// line, which is correct: the attribution join must keep reading the
+	// generic dispatch line, not this one.
+	klog.Infof("[Schedule] dispatch request %s fsplacement tier=%d waited=%d "+
+		"prefillest=%.1f prefillraw=%.1f prompt=%d decision=%s inst=%s",
+		req.id, req.tier, req.nowMs-req.arrivedMs, c.prefillMs, c.prefillRaw,
+		req.promptTokens, kind, c.flux.id)
 	metrics.Histogram("scheduler_fluidserve_headroom_at_dispatch",
 		metrics.Labels{}).Observe(c.headroomAfter)
 	metrics.Histogram("scheduler_fluidserve_harm", metrics.Labels{}).Observe(c.harm)
