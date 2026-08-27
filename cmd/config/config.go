@@ -262,6 +262,16 @@ type FullModeSchedulingConfig struct {
 	// PolyServe
 	PolyserveTierDecodeTokens string
 	PolyserveDecodeTokens     int
+	// The five switches below each restore one mechanism of the paper that the
+	// first port left out or inverted. Every one of them defaults to the port's
+	// previous behaviour, so a run that does not name them decides exactly as
+	// every PolyServe run before 2026-08-27 did.
+	PolyserveAdmissionBinds          bool
+	PolyserveSteadyStateIgnoresPref  bool
+	PolyserveLazyPromotion           bool
+	PolyservePartition               string
+	PolyservePreferLoaded            bool
+	PolyserveKvAdmission             bool
 
 	// FluidServe
 	FluidserveProfilePath       string
@@ -390,6 +400,47 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"Tiers not listed fall back to --polyserve-decode-tokens.")
 	flags.IntVar(&c.PolyserveDecodeTokens, "polyserve-decode-tokens", consts.DefaultPolyserveDecodeTokens,
 		"PolyServe expected output length for tiers absent from --polyserve-tier-decode-tokens")
+
+	flags.BoolVar(&c.PolyserveAdmissionBinds, "polyserve-admission-binds", false,
+		"Let the section 4.5/4.6 admission test decide. With this off, Llumnix's second "+
+			"scheduling pass drops the admission filter when no server passes it, so the "+
+			"request is placed on the least loaded server of its tier and admission changes "+
+			"no outcome at all -- which is why this arm rejected 0.0% of requests. With it "+
+			"on, a request no server admits is held at the gateway (the paper's pending "+
+			"queue, section 4.6) and is refused once its own TTFT budget can no longer be "+
+			"met however long it waits.")
+	flags.BoolVar(&c.PolyserveSteadyStateIgnoresPref, "polyserve-steady-state-ignores-prefill", false,
+		"Keep the queued prefill chunk out of the steady-state iteration estimate, as "+
+			"section 4.5 does (\"PolyServe only considers batch size and KV cache size\"). "+
+			"The near-term estimate keeps it, because the wait time section 4.6 asks about "+
+			"IS that chunk on a co-located server. With this off both estimates carry it, "+
+			"and since a full 8,192-token chunk costs 520-634 ms against tier budgets of "+
+			"25-100 ms, no server passes admission whenever any prefill is queued.")
+	flags.BoolVar(&c.PolyserveLazyPromotion, "polyserve-lazy-promotion", false,
+		"Section 4.4: when every server of a request's own tier refuses it, offer the "+
+			"request to servers of a TIGHTER tier before growing the tier. The guest is "+
+			"judged against the HOST tier's per-token budget rather than its own, which is "+
+			"what makes the paper's claim that a looser guest is harmless true rather than "+
+			"assumed.")
+	flags.StringVar(&c.PolyservePartition, "polyserve-partition", "demand",
+		"How servers are divided between tiers. \"demand\" recomputes the split every 10 s "+
+			"from arrival rate times a profiled per-request cost, which is this port's own "+
+			"invention -- the paper computes no demand at all. \"elastic\" follows section "+
+			"4.3: servers sit in an idle pool, a tier takes one when its requests start "+
+			"pending, and gives one back when the last server of that tier runs empty.")
+	flags.BoolVar(&c.PolyservePreferLoaded, "polyserve-prefer-loaded", false,
+		"Among the servers that pass admission, pick the most loaded rather than the "+
+			"least loaded (section 4.3). This is not a preference: it is what leaves the "+
+			"last server of a tier empty, and an empty last server is the only signal the "+
+			"paper uses to return a server to the idle pool. With least-loaded selection "+
+			"every server stays partly full and --polyserve-partition=elastic can never "+
+			"release one.")
+	flags.BoolVar(&c.PolyserveKvAdmission, "polyserve-kv-admission", false,
+		"Refuse a server whose KV cache cannot hold the batch section 4.5 simulates "+
+			"forward to. The port has no memory predicate at all, so the fleet is driven "+
+			"past its KV capacity and vLLM recovers by preempting and recomputing. The "+
+			"comparison is against the instance's reported total GPU token capacity, so "+
+			"this introduces no threshold to choose.")
 
 	flags.StringVar(&c.FluidserveProfilePath, "fluidserve-profile-path", "",
 		"FluidServe offline profile (decode step law + per-class output-length "+

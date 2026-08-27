@@ -2,6 +2,8 @@ package policy
 
 import (
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	"k8s.io/klog/v2"
@@ -471,6 +473,34 @@ type polyserveDispatchPolicy struct {
 	baseDispatchPolicy
 	tierPartition *tierPartition
 	repartitioner *tierRepartitioner
+	fleet         *polyserveFleet
+	waitLog       *polyserveWaitLog
+	cfg           polyserveConfig
+
+	// rejected carries a refusal from the selector, which can only answer "no
+	// instance", out to Schedule(), which has to tell the gateway whether that
+	// meant "hold this" or "give it back to the client". Read once and cleared,
+	// so it describes the scheduling call that just ran.
+	rejectedMu sync.Mutex
+	rejected   map[string]struct{}
+}
+
+func (p *polyserveDispatchPolicy) markRejected(requestID string) {
+	p.rejectedMu.Lock()
+	defer p.rejectedMu.Unlock()
+	p.rejected[requestID] = struct{}{}
+}
+
+// admissionRejected reports and clears the flag, satisfying the interface
+// Schedule() uses to separate a refusal from a hold.
+func (p *polyserveDispatchPolicy) admissionRejected(requestID string) bool {
+	p.rejectedMu.Lock()
+	defer p.rejectedMu.Unlock()
+	if _, ok := p.rejected[requestID]; !ok {
+		return false
+	}
+	delete(p.rejected, requestID)
+	return true
 }
 
 // calculateMetrics is the scheduling path's only per-request hook that sees both
@@ -489,8 +519,34 @@ func (p *polyserveDispatchPolicy) calculateMetrics(
 		return
 	}
 	if inferType == consts.InferTypeNeutral {
-		p.repartitioner.observe(request)
-		p.repartitioner.maybeRepartition(time.Now(), instanceViews)
+		now := time.Now()
+		if p.cfg.elastic {
+			// The idle pool of section 4.3. Membership is refreshed here for the
+			// same reason the demand allocator ran here: this is the only hook
+			// that sees the request and the live instance set together, so the
+			// allocation the ladder reads is the one this request will be
+			// scheduled against.
+			if request != nil {
+				p.fleet.observe(request.TpotSloMs)
+			}
+			p.fleet.sync(instanceViews)
+			p.fleet.maybeRelease(now, instanceViews)
+		} else {
+			p.repartitioner.observe(request)
+			p.repartitioner.maybeRepartition(now, instanceViews)
+		}
+		if request != nil {
+			ctx := &polyserveRequest{
+				id:        request.Id,
+				tier:      request.TpotSloMs,
+				ttftSloMs: float64(request.TtftSloMs),
+				tpotSloMs: float64(request.TpotSloMs),
+				waitedMs:  p.waitLog.waited(request.Id, now.UnixMilli()),
+			}
+			for _, view := range instanceViews {
+				view.schedulingCtx.polyserveRequest = ctx
+			}
+		}
 	}
 	p.baseDispatchPolicy.calculateMetrics(inferType, request, instanceViews)
 }
@@ -517,6 +573,21 @@ func newPolyserveDispatchFullMode(p *options.SchedulerConfig) *polyserveDispatch
 			decodeTokens,
 			GetLatencyPredictor(p.TtftProfilingDataPath, p.TpotProfilingDataPath),
 			partition),
+		fleet:    newPolyserveFleet(),
+		waitLog:  newPolyserveWaitLog(),
+		rejected: map[string]struct{}{},
+		cfg: polyserveConfig{
+			admissionBinds:  p.PolyserveAdmissionBinds,
+			ignorePrefill:   p.PolyserveSteadyStateIgnoresPref,
+			lazyPromotion:   p.PolyserveLazyPromotion,
+			elastic:         strings.EqualFold(p.PolyservePartition, "elastic"),
+			preferLoaded:    p.PolyservePreferLoaded,
+			kvAdmission:     p.PolyserveKvAdmission,
+			globalTtftSloMs: p.TtftSlo,
+			globalTpotSloMs: p.TpotSlo,
+			ttftMultiplier:  p.TtftSloDispatchThreshold,
+			tpotMultiplier:  p.TpotSloDispatchThreshold,
+		},
 		baseDispatchPolicy: baseDispatchPolicy{
 			consts.InferTypeNeutral: {
 				metrics: map[string]func() instanceSchedulingMetric{
@@ -531,34 +602,49 @@ func newPolyserveDispatchFullMode(p *options.SchedulerConfig) *polyserveDispatch
 						failoverDomain: p.FailoverDomain,
 					},
 				},
+				// Only the two structural filters remain. Tier affinity and
+				// admission moved into the selector because the ladder needs to
+				// know that EVERY server of a tier refused the request -- a fact
+				// no singleInstanceFilter can see, and the reason Llumnix's
+				// blanket fallback pass had to stand in for it and in doing so
+				// removed admission from every decision it was meant to make.
 				singleInstanceFilters: []singleInstanceFilter{
 					&schedulabilityFilter{},
 					&stalenessFilter{
 						instanceStalenessSeconds: p.InstanceStalenessSeconds,
 					},
-					// Tier isolation holds even on the fallback pass; admission
-					// relaxes so an overloaded tier degrades to "least loaded
-					// server in my tier" instead of being rejected.
-					&tierAffinityFilter{partition: partition},
-					&polyserveAdmissionFilter{
-						globalTtftSloMs:   p.TtftSlo,
-						globalTpotSloMs:   p.TpotSlo,
-						ttftSloMultiplier: p.TtftSloDispatchThreshold,
-						tpotSloMultiplier: p.TpotSloDispatchThreshold,
-					},
 				},
-				selectors: &leastBindingLatencySelector{
-					globalTtftSloMs: p.TtftSlo,
-					globalTpotSloMs: p.TpotSlo,
-				},
+				selectors: &polyserveSelector{},
 			},
 		},
 	}
 
+	policy.baseDispatchPolicy[consts.InferTypeNeutral].selectors.(*polyserveSelector).policy = policy
+
+	// The startup line is the only authority on what a run actually decided
+	// with: the deployment spec can carry a flag the binary does not have, and a
+	// driver can set one the operator did not intend. Every switch that changes
+	// a decision is named here.
 	klog.Infof("PolyServe dispatch policy created: ttftSlo=%.0fms tpotSlo=%.0fms "+
-		"(dispatch thresholds %.2f/%.2f), tier decode tokens %q (default %d)",
+		"(dispatch thresholds %.2f/%.2f), tier decode tokens %q (default %d), "+
+		"admissionbinds=%v, steadynoprefill=%v, promotion=%v, partition=%s, "+
+		"preferloaded=%v, kvadmission=%v",
 		p.TtftSlo, p.TpotSlo, p.TtftSloDispatchThreshold, p.TpotSloDispatchThreshold,
-		p.PolyserveTierDecodeTokens, p.PolyserveDecodeTokens)
+		p.PolyserveTierDecodeTokens, p.PolyserveDecodeTokens,
+		policy.cfg.admissionBinds, policy.cfg.ignorePrefill, policy.cfg.lazyPromotion,
+		strings.ToLower(p.PolyservePartition), policy.cfg.preferLoaded,
+		policy.cfg.kvAdmission)
+
+	if policy.cfg.elastic && !policy.cfg.preferLoaded {
+		// Not fatal, because the combination is a legitimate ablation -- but it
+		// is one whose result is known in advance, and a run that reached it by
+		// accident would be read as evidence about the idle pool rather than
+		// about the selection rule.
+		klog.Warning("PolyServe: --polyserve-partition=elastic with least-loaded " +
+			"selection. Every server stays partly full, so the last server of a tier " +
+			"never runs empty and no server is ever returned to the idle pool: the " +
+			"allocation can only grow.")
+	}
 
 	return policy
 }

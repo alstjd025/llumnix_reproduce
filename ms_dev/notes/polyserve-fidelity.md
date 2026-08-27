@@ -10,6 +10,14 @@
 시간순 기록은 [POLYSERVE_PROGRESS.md](../../POLYSERVE_PROGRESS.md)
 **같은 형식의 앞 문서**: [qoserve-niyama-fidelity.md](qoserve-niyama-fidelity.md)
 
+> ⚠ **2026-08-27에 §9가 추가됐고 그것이 지금 코드의 정본이다.** 아래 §0~§8은 2026-08-04
+> 시점의 대조 기록이고, **지금 무엇이 구현돼 있는지를 묻는 질문에는 §9를 읽는다.** 특히
+> 다음 넷이 §9에서 뒤집혔다: §0의 "lazy promotion 미구현"(구현됐다), §1의 8번
+> "거절 경로가 없는 것이 충실하다"(논문에 없는 것은 거절이고 **보류는 있다** — §4.3의
+> pending과 §4.6의 pending time), §3.1의 "선택 규칙을 뒤집은 것이 정당하다"(오토스케일링을
+> 되살리면 그 정당화가 사라진다), §4의 "고부하에서 admission이 무력화되는 것은 발견이다"
+> (원인의 절반은 우리 쪽 결함이었다). §2의 출력 길이 문제는 2026-08-05에 고쳐졌다.
+
 ---
 
 ## 0. 세 문장 요약
@@ -433,3 +441,144 @@ implementation.md §57.2가 기록한 미해결 항목이다.
 | implementation.md §57 | EXP-53 네 정책 sweep. §57.2가 migration 미해결 항목 |
 | `Agent_applications/.../experiments/EXP-21_polyserve-routing.md` | PolyServe가 엔진 스케줄러 5종을 압도한 실험의 정본 |
 | `related_works/[arxiv] PolyServe*.pdf` | 원문 |
+
+---
+
+## 9. 2026-08-27 — 논문의 메커니즘 여섯을 되살렸다 (구현 완료, 미측정)
+
+**⚠ 이 절이 §3.1·§3.2·§4를 대체한다.** 그 세 절은 "왜 다르게 했는가"의 기록으로 남기되,
+**지금 코드의 동작을 설명하는 절로 읽으면 안 된다.** 무엇이 바뀌었는지는 아래 표에 있다.
+
+**아직 아무것도 측정하지 않았다.** 여섯 스위치의 기본값이 전부 종전 동작이므로,
+스위치를 명시하지 않은 실행은 2026-08-27 이전의 모든 PolyServe 조건과 같은 결정을 내린다.
+사전 등록한 판정 규칙은 `experiments/EXP-106_polyserve-paper-fidelity.md`에 있다.
+
+### 9.1 무엇이 잘못돼 있었나 — 결함 둘이 서로를 가리고 있었다
+
+**admission 검사 셋(§4.5·§4.6)이 결정을 하나도 바꾸지 못했다.** 원인이 둘이고, 둘이 동시에
+작동해서 어느 쪽도 증상으로 드러나지 않았다.
+
+1. **`polyserveAdmissionFilter.skipWhenFallback()`이 true였다.** Llumnix는 1차 필터에서
+   남는 인스턴스가 0개면 relaxable 필터를 전부 빼고 2차 pass를 돈다. admission이 relaxable로
+   등록돼 있었으므로, **아무 서버도 통과하지 못하면 요청은 거절되는 것이 아니라 자기 tier
+   안에서 가장 덜 찬 서버로 그냥 배치됐다.** §1.1은 이것을 "논문에 drop 경로가 없으니 충실"
+   이라고 적었는데, 논문에 없는 것은 **거절**이지 **보류**가 아니다 — §4.3이 "requests start
+   pending for one SLO tier"라고 적고 §4.6이 "time in the pending queue (pending time)"을
+   TTFT 회계에 넣는다. 보류가 논문의 메커니즘인데 우리는 그것을 강제 배치로 바꿔 놓았다.
+2. **iteration 추정에 대기 prefill 청크 비용이 들어갔다.** §4.5는 반대로 적는다 —
+   *"PolyServe only considers batch size and KV cache size"* — 그리고 prefill은 §4.7에서
+   TTFT 쪽으로 따로 다룬다. 우리는 full chunk(8,192 토큰) 비용 520~634 ms를 두 추정 모두에
+   더했고, tier 예산이 25/50/100 ms이므로 **대기 중인 prefill이 조금이라도 있으면 어느
+   서버도 통과할 수 없었다.**
+
+**둘을 합치면 지나치게 엄격해서 아무도 통과하지 못하고, 아무도 통과하지 못하니까 필터가
+통째로 꺼진다.** 그래서 EXP-71 한 시간 trace에서 이 arm의 거절률이 **0.0%**이고, 같은 run에서
+총 출력이 11,145 tok/s로 FluidServe의 11,501의 **96.9%**인데 offered 달성률은 **11.2점**이다.
+토큰은 거의 같은 양을 만드는데 예산 안에 도착하는 것이 없다.
+
+**그 위에 세 가지가 더 없거나 반대였다.** lazy promotion(§4.4)이 없고, tier 안 선택이 논문의
+"가장 부하 높은 서버"의 반대이며, 재분할이 논문에 없는 수요 모형(도착률 × 프로파일 비용)으로
+돌아간다. 그리고 **KV 용량을 보는 판정 조건이 아예 없어서** 함대가 용량을 넘겨 구동되고
+vLLM이 recompute preemption으로 수습한다(실측: 3,000 rpm 8분에 549회).
+
+### 9.2 무엇을 바꿨나
+
+| 스위치 (기본값 = 종전 동작) | 논문 | 무엇이 달라지나 |
+|---|---|---|
+| `--polyserve-admission-binds` | §4.3·§4.6 | 아무 서버도 받아들이지 않으면 강제 배치하지 않는다. 요청은 게이트웨이에서 보류되고(= 논문의 pending queue), **자기 TTFT 예산이 아무리 기다려도 못 맞추는 상태가 되면** 거절된다 |
+| `--polyserve-steady-state-ignores-prefill` | §4.5 | 정상상태 추정에서 prefill 항을 뺀다. 근거리 추정(§4.6의 wait time)에는 남긴다 — co-location에서 "서버가 지금 iteration을 끝내기를 기다리는 시간"이 바로 그 청크이기 때문 |
+| `--polyserve-lazy-promotion` | §4.4 | 자기 tier의 모든 서버가 거부했을 때만 **더 빡빡한 tier**의 서버에 시도한다. **손님은 호스트 tier의 예산으로 판정한다** |
+| `--polyserve-partition=elastic` | §4.3 | 수요 계산을 없애고 idle pool로 바꾼다. **보류가 생기면 +1, 그 tier의 마지막 서버가 비면 −1** |
+| `--polyserve-prefer-loaded` | §4.3 | admission을 통과한 것 중 **가장 부하가 높은** 서버를 고른다 |
+| `--polyserve-kv-admission` | (논문 시뮬레이터가 모델링하는 것) | §4.5가 이미 계산하는 최대 KV를 인스턴스가 보고하는 총 KV 용량과 비교한다. **고를 문턱값이 없다** |
+
+**구조도 바뀌었다.** tier affinity와 admission을 필터에서 빼고 **결정 사다리를 selector 안으로
+옮겼다**(`polyserveSelector`). 필터로는 표현할 수 없기 때문이다 — 사다리의 네 단 중 셋이
+**"이 tier의 모든 서버가 거부했다"**는 tier 전체에 대한 사실을 필요로 하는데
+`singleInstanceFilter`는 인스턴스를 하나씩만 본다. Llumnix의 2-pass가 그 자리를 대신하고
+있었고, 그러면서 admission을 모든 결정에서 없앴다. FluidServe가 같은 이유로 이미 같은 모양을
+쓴다.
+
+**사다리는 논문 Figure 5의 순서다**: ③ 자기 tier 안에서 greedy → ④ promotion → ⑤ pool에서
+scale-up → 그밖에는 pending queue.
+
+### 9.3 두 스위치가 서로 의존한다
+
+**`elastic`은 `prefer-loaded` 없이 쓰면 동작하지 않는다.** 논문이 서버를 tier에서 빼는 조건이
+*"마지막 서버에 그 tier의 요청이 하나도 없다"* 하나뿐인데, 가장 부하가 **낮은** 서버를 고르면
+모든 서버가 항상 조금씩 차 있어서 그 상태가 만들어지지 않는다. 그러면 배분은 처음 도달한 값에
+굳고 −1이 한 번도 일어나지 않는다. **치명적이지는 않아서(그 조합도 정당한 ablation이다)
+기동 시 경고만 찍고 진행한다** — 결과를 idle pool에 대한 증거로 읽지 않게 하기 위해서다.
+
+§3.1이 "오토스케일링을 제외했으므로 부하 순서 규칙의 보상이 0이라 뒤집었다"고 적었는데,
+**오토스케일링을 되살리면 그 정당화가 사라진다.**
+
+### 9.4 우리 규모에서 예상되는 것 — 서버 4대에 tier 3개
+
+**pool은 실행 시작 몇 초 만에 비고 그 뒤로는 대부분 0대다.** 그러므로 이 규모에서 이용률을
+만드는 것은 오토스케일링이 아니라 **promotion**이다. 논문은 수십~수백 대를 시뮬레이션하므로
+이 비율이 반대이고, 이것은 논문에 범위로 적어야 한다.
+
+**그리고 규모 때문에 논문에 없는 규칙을 하나 넣었다**: 스케줄러가 본 적 있는 tier가 서버를
+0대 들고 있으면 가장 많이 든 tier에서 한 대를 가져온다. 넣지 않으면 시작 몇 초의 순서로
+진 tier가 **남은 한 시간 내내 모든 요청을 보류**한다. 논문은 pool이 제약이 되지 않는 규모라
+이 규칙이 필요 없다. **논문에 명시해야 하는 이탈이다.**
+
+### 9.5 swe의 예산이 틀려 있었다 — 이것이 admission보다 먼저다
+
+**PolyServe는 swe를 토큰당 25 ms로 판정하고 있었다.** swe의 진짜 목표는 전체 시간 30초이고
+채점도 항상 그렇게 한다. 25는 `mix_short_m1_balanced.json`의 `slo.swe.tbt_ms`에 적힌 값으로
+**EXP-16에서 잰 유휴 상태 디코드 ITL 중앙값**이고, FluidServe는 그것을 tier 이름으로만 쓰고
+`--fluidserve-class-budgets 25:e2e:30000`으로 예산을 다시 정의한다. **PolyServe에는 그
+재정의가 없어서 곧이곧대로 읽었다.**
+
+프로파일 표(`deploy/profiling/llama31-70b-b200-tp2/tpot.json`)를 직접 풀면 그 차이가 나온다.
+swe의 요청당 KV는 입력 6,812 + 출력 494 = **7,306 토큰**이다.
+
+| 주는 예산 | 그 예산을 지키며 담을 수 있는 최대 배치 |
+|---|---|
+| **25 ms (지금까지)** | **23** |
+| 52 ms (`mix_short_m1_slofair.json`의 값) | 163 |
+| (30,000 − 2,500) / 494 = 55.7 ms | 186 |
+| (40,000 − 2,500) / 494 = 75.9 ms | 260 |
+
+**7~9배다.** admission이 fallback에서 풀려 있었기 때문에 지금까지는 결과에 나타나지 않았지만,
+구속력을 갖게 하는 순간 이 값이 그대로 swe의 수용량이 된다. **고치지 않고 `admission-binds`를
+켜면 "수정된 우리 시스템 대 잘못된 예산을 받은 기준선"을 비교하게 된다.**
+
+**고치는 방법은 저장소에 이미 있다.** `mix_short_m1_slofair.json`이 정확히 이 상황을 위해
+만들어진 파일이고(그 파일의 `_comment`가 그렇게 적는다), **Llumnix SLO는 이미 그것으로 돈다.**
+PolyServe만 balanced로 남아 있었다.
+
+**그리고 그 결과가 그 자체로 결과다.** m1f에서 tier가 **chat 50 / swe 52 / dr 100**이 된다.
+**PolyServe는 토큰당 예산으로 요청을 나누는 시스템인데, 전체 시간 예산을 가진 클래스를 속도로
+환산하면 그 값이 chat 위에 겹친다.** 즉 이 워크로드의 세 클래스를 PolyServe의 분류 축으로는
+셋으로 나눌 수 없다. 이식의 결함이 아니라 그 설계의 성질이므로 그대로 측정해서 적는다.
+
+**재발 방지**: tier 표를 워크로드 설정의 `slo.<class>.tbt_ms`에서 유도하도록 바꿨다
+(`set_scheduler_profiling.py`의 `tier_by_class()`). 그 필드가 클라이언트가 요청에 실어 보내는
+값이고 스케줄러가 binning하는 값이므로, **같은 양이 두 곳에 따로 적혀 한쪽만 갱신되는 것**을
+막는다. EXP-105가 swe를 40초로 올리면 그 파일 하나만 고치면 tier도 같이 움직인다.
+
+### 9.6 새로 나오는 계측
+
+| 시리즈 | 무엇 |
+|---|---|
+| `scheduler_polyserve_placement_total{stage}` | 요청이 사다리의 어느 단에서 처리됐나 — `own_tier` / `promotion` / `scale_up` / `forced` / `pending` / `refused` |
+| `scheduler_polyserve_refused_total{stage,reason}` | 서버가 왜 거부했나 — `first_token` / `second_token` / `steady_state` / `memory` |
+| `scheduler_polyserve_scale_total{event}` | `from_pool` / `from_tier` / `to_pool` |
+| `scheduler_polyserve_pool_servers` | idle pool의 서버 수 |
+
+**이것 없이는 admission이 한 번도 구속하지 않은 run과 구속했는데 promotion이 전부 흡수한 run이
+요청 단위 지표에서 완전히 같아 보인다.**
+
+⚠ **Go에 메트릭을 추가하는 것만으로는 수집되지 않는다** — `llumnix_metrics.py`의 시리즈 이름
+목록에도 넣어야 한다(EXP-96에서 이것 때문에 카운터 한 벌을 통째로 잃었다). 그 편집은
+`/home/nxclab/tools/staging/polyserve-paper/`에 대기 중이고, EXP-105가 끝난 뒤 `apply.sh`가
+넣는다.
+
+### 9.7 §7의 할 일 표는 이렇게 바뀐다
+
+1·2·4번(tier decode tokens를 프로파일에서 유도)은 2026-08-05에 끝났다. 3번(재배치가 tier를
+넘었는가)은 그대로 남아 있다. **5번(lazy promotion)은 이 절이 구현으로 닫았고, 대신 §9.4의
+"서버를 0대 든 tier에 한 대를 준다"는 규칙이 새 이탈로 추가됐다.**

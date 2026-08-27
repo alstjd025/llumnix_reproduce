@@ -3,6 +3,7 @@ package policy
 import (
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,7 +94,19 @@ type polyserveIterTime struct {
 	latencyPredictor *LatencyPredictor
 	decodeTokens     *tierDecodeTokens
 	atMaxKV          bool
-	latency          float64
+	// includePrefill decides whether the queued prefill chunk is charged to this
+	// estimate. Section 4.5 states plainly that it should not be -- "PolyServe
+	// only considers batch size and KV cache size" -- and handles prefill through
+	// TTFT in section 4.7 instead. The near-term estimate is the exception: the
+	// wait time section 4.6 asks about is "waiting for the server to finish the
+	// current iteration", and on a co-located server that iteration IS the chunk.
+	// See --polyserve-steady-state-ignores-prefill.
+	includePrefill bool
+	latency        float64
+	// projectedKvTokens is the total KV the batch reaches under the section 4.5
+	// forward simulation, kept so the memory predicate can compare it against the
+	// instance's capacity without simulating a second time.
+	projectedKvTokens float64
 }
 
 func (m *polyserveIterTime) Calculate(
@@ -123,6 +136,8 @@ func (m *polyserveIterTime) Calculate(
 		kv += batch * int32(m.decodeTokens.forTier(tpotSloMs))
 	}
 
+	m.projectedKvTokens = float64(kv)
+
 	iter, err := m.latencyPredictor.predictTpotLatency(batch, kv)
 	if err != nil {
 		klog.Warningf("[polyserveIterTime] tpot predict failed: %v", err)
@@ -136,7 +151,7 @@ func (m *polyserveIterTime) Calculate(
 	// batch. Omitting this is what makes a snapshot TPOT estimate useless here
 	// -- a full chunk costs hundreds of milliseconds against tens for a pure
 	// decode step.
-	if pending := int32(m.allPrefillsTokensNum.GetValue()); pending > 0 {
+	if pending := int32(m.allPrefillsTokensNum.GetValue()); m.includePrefill && pending > 0 {
 		chunk := pending
 		if instanceView.cmsView != nil && instanceView.cmsView.Metadata != nil {
 			if budget := instanceView.cmsView.Metadata.MaxNumBatchedTokens; budget > 0 && chunk > budget {
@@ -359,4 +374,432 @@ func (s *leastBindingLatencySelector) selectInstance(
 	klog.V(4).Infof("PolyServe selected instance %s (binding utilisation %.3f, fallback=%v)",
 		selected.GetInstanceId(), bestScore, fallback)
 	return selected
+}
+
+// ---------------------------------------------------------------------------
+// The decision ladder.
+//
+// The first port expressed PolyServe as two Llumnix filters (tier affinity,
+// admission) plus a selector. That cannot express what the paper does, because
+// three of its four steps need a fact about the WHOLE tier -- "every server of
+// this tier refused the request" -- and a singleInstanceFilter is shown one
+// instance at a time. Llumnix's own escalation is a single blanket retry with
+// the relaxable filters removed, which turned admission into a test whose
+// failure had no consequence.
+//
+// So the ladder lives in the selector instead, the same shape FluidServe uses,
+// and follows Figure 5 of the paper: greedy scheduling inside the tier (3),
+// promotion to a tighter tier (4), scaling up from the idle pool (5), and
+// otherwise the request stays in the pending queue that section 4.6 accounts
+// for as part of TTFT.
+
+// polyserveConfig is the paper's mechanisms, each behind its own switch so that
+// a run can be attributed to one of them rather than to "the new PolyServe".
+type polyserveConfig struct {
+	admissionBinds bool
+	ignorePrefill  bool
+	lazyPromotion  bool
+	elastic        bool
+	preferLoaded   bool
+	kvAdmission    bool
+
+	globalTtftSloMs float32
+	globalTpotSloMs float32
+	ttftMultiplier  float32
+	tpotMultiplier  float32
+}
+
+// polyserveRequest is the per-request context. A selector is handed instance
+// views and no request, so the policy's calculateMetrics hook writes this onto
+// every view before any filter or selector runs -- the same route the vLLM
+// router baseline and FluidServe already use.
+type polyserveRequest struct {
+	id        string
+	tier      int // the TPOT SLO in ms, which IS the tier identity (section 4.2)
+	ttftSloMs float64
+	tpotSloMs float64
+	// waitedMs is how long this request has already spent in the pending queue,
+	// measured from the first time the scheduler was asked about it. The gateway
+	// re-asks about a held request on a fixed period, so this is the "pending
+	// time" of section 4.6 and it is what makes the refusal rule below a
+	// statement about the request's own deadline rather than about a timeout.
+	waitedMs float64
+}
+
+// polyserveWaitLog remembers when each request was first seen so that the time
+// it has spent pending can be charged against its TTFT budget. Entries are
+// dropped when the request is placed or refused; the sweep is only for requests
+// that vanish without either, which happens when the client disconnects.
+type polyserveWaitLog struct {
+	mu        sync.Mutex
+	firstSeen map[string]int64
+	lastSweep int64
+}
+
+// polyserveWaitLogSweepMs bounds how long a forgotten entry survives. It is
+// housekeeping, not a decision: no outcome depends on its value, and it only has
+// to exceed the longest a gateway will hold a request.
+const polyserveWaitLogSweepMs = 120000
+
+func newPolyserveWaitLog() *polyserveWaitLog {
+	return &polyserveWaitLog{firstSeen: map[string]int64{}}
+}
+
+func (w *polyserveWaitLog) waited(id string, nowMs int64) float64 {
+	if id == "" {
+		return 0
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	first, seen := w.firstSeen[id]
+	if !seen {
+		w.firstSeen[id] = nowMs
+		first = nowMs
+	}
+	if nowMs-w.lastSweep > polyserveWaitLogSweepMs {
+		for k, t := range w.firstSeen {
+			if nowMs-t > polyserveWaitLogSweepMs {
+				delete(w.firstSeen, k)
+			}
+		}
+		w.lastSweep = nowMs
+	}
+	return float64(nowMs - first)
+}
+
+func (w *polyserveWaitLog) forget(id string) {
+	if id == "" {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.firstSeen, id)
+}
+
+// polyserveVerdict is one server's answer to "may I take this request and still
+// meet the budget that applies here". The budget is not always the request's
+// own: under lazy promotion a guest is judged by its host's, which is what makes
+// the paper's claim that a looser guest is harmless enforced rather than assumed.
+type polyserveVerdict struct {
+	admitted bool
+	reason   string
+	util     float32
+}
+
+func metricValue(view *instanceViewScheduling, name string) float64 {
+	m, ok := view.schedulingCtx.metrics[name]
+	if !ok || m == nil {
+		return math.Inf(1)
+	}
+	return float64(m.GetValue())
+}
+
+// projectedKvTokens reads back the largest KV the section 4.5 forward simulation
+// reached for this candidate. Returns 0 when the estimate is not the polyserve
+// one, which disables the memory predicate rather than inventing a number.
+func projectedKvTokens(view *instanceViewScheduling) float64 {
+	m, ok := view.schedulingCtx.metrics[consts.SchedulingMetricPolyserveIterMax]
+	if !ok {
+		return 0
+	}
+	iter, ok := m.(*polyserveIterTime)
+	if !ok {
+		return 0
+	}
+	return iter.projectedKvTokens
+}
+
+func kvCapacityTokens(view *instanceViewScheduling) float64 {
+	if view.cmsView == nil || view.cmsView.Status == nil {
+		return 0
+	}
+	return float64(view.cmsView.Status.NumTotalGpuTokens)
+}
+
+// judge runs the paper's admission test for one server. hostTierMs is the tier
+// the server currently belongs to; passing 0 means "no tier restriction", in
+// which case the request's own budget is the only one that applies.
+func (c *polyserveConfig) judge(
+	view *instanceViewScheduling, req *polyserveRequest, hostTierMs int) polyserveVerdict {
+
+	ttftSlo := float64(effectiveSloMs(int(req.ttftSloMs), c.globalTtftSloMs) * c.ttftMultiplier)
+	tpotBudget := req.tpotSloMs
+	if hostTierMs > 0 && float64(hostTierMs) < tpotBudget {
+		// Section 4.4. The guest is looser than the host, so the host's residents
+		// are the ones at risk; judging the guest by its own budget would let it
+		// break them.
+		tpotBudget = float64(hostTierMs)
+	}
+	tpotSlo := float64(effectiveSloMs(int(tpotBudget), c.globalTpotSloMs) * c.tpotMultiplier)
+
+	ttft := metricValue(view, consts.SchedulingMetricPredictedTtft)
+	iterNow := metricValue(view, consts.SchedulingMetricPolyserveIterNow)
+	iterMax := metricValue(view, consts.SchedulingMetricPolyserveIterMax)
+
+	// The load of the dimension that would bind first on this server, so that
+	// "most loaded that still meets the SLO" (section 4.3) is a single number
+	// drawn from two budgets in different units.
+	//
+	// Deliberately measured against the request's own UNSCALED budgets, not the
+	// ones the admission test just tightened. The two dispatch multipliers can be
+	// set independently, and scaling the two dimensions by different factors
+	// would change which of them is the maximum -- that is, it would change the
+	// route -- as a side effect of a threshold that is only meant to decide
+	// whether a server is admissible at all. This is also what keeps the ordering
+	// identical to the selector this replaced.
+	ttftRef := float64(effectiveSloMs(int(req.ttftSloMs), c.globalTtftSloMs))
+	tpotRef := float64(effectiveSloMs(int(req.tpotSloMs), c.globalTpotSloMs))
+	util := float32(0)
+	if ttftRef > 0 {
+		util = float32(ttft / ttftRef)
+	}
+	if tpotRef > 0 {
+		if r := float32(iterMax / tpotRef); r > util {
+			util = r
+		}
+	}
+
+	switch {
+	case ttft > ttftSlo:
+		return polyserveVerdict{reason: "first_token", util: util}
+	case ttft+iterNow > ttftSlo+tpotSlo:
+		return polyserveVerdict{reason: "second_token", util: util}
+	case iterMax > tpotSlo:
+		return polyserveVerdict{reason: "steady_state", util: util}
+	}
+	if c.kvAdmission {
+		if capTokens := kvCapacityTokens(view); capTokens > 0 && projectedKvTokens(view) > capTokens {
+			return polyserveVerdict{reason: "memory", util: util}
+		}
+	}
+	return polyserveVerdict{admitted: true, util: util}
+}
+
+// pick returns the admissible server the paper would choose among candidates:
+// the most loaded one, or the least loaded one when the load ordering has been
+// inverted. Ties break on instance ID, because Go randomises map iteration and
+// an unstable choice would make a run unreproducible.
+func (c *polyserveConfig) pick(
+	candidates map[string]*instanceViewScheduling, req *polyserveRequest, hostTierMs int,
+) (*instanceViewScheduling, map[string]int) {
+
+	refused := map[string]int{}
+	var best *instanceViewScheduling
+	var bestUtil float32
+	var bestID string
+	for id, view := range candidates {
+		v := c.judge(view, req, hostTierMs)
+		if !v.admitted {
+			refused[v.reason]++
+			continue
+		}
+		better := best == nil ||
+			(c.preferLoaded && v.util > bestUtil) ||
+			(!c.preferLoaded && v.util < bestUtil) ||
+			(v.util == bestUtil && id < bestID)
+		if better {
+			best, bestUtil, bestID = view, v.util, id
+		}
+	}
+	return best, refused
+}
+
+// leastLoadedIgnoringAdmission is the behaviour Llumnix's fallback pass produced
+// before admission was allowed to bind: place the request on the emptiest server
+// of its tier whatever the estimates say. It is kept because the paper has no
+// drop path, so with --polyserve-admission-binds off this is what overload looks
+// like -- a missed SLO rather than a refusal.
+func (c *polyserveConfig) leastLoadedIgnoringAdmission(
+	candidates map[string]*instanceViewScheduling, req *polyserveRequest,
+) *instanceViewScheduling {
+
+	var best *instanceViewScheduling
+	var bestUtil float32
+	var bestID string
+	for id, view := range candidates {
+		v := c.judge(view, req, 0)
+		if best == nil || v.util < bestUtil || (v.util == bestUtil && id < bestID) {
+			best, bestUtil, bestID = view, v.util, id
+		}
+	}
+	return best
+}
+
+// polyserveSelector walks the ladder of Figure 5 for one request.
+//
+//	1. its own tier, greedily (section 4.3)
+//	2. a tighter tier, if its own refused it everywhere (section 4.4)
+//	3. a server from the idle pool (section 4.3)
+//	4. otherwise the request stays in the pending queue, which is what makes
+//	   step 3 possible on the next attempt, and is refused only once its own
+//	   TTFT budget is gone
+//
+// With every switch at its default the ladder collapses to what the filter pair
+// it replaced did: try the request's own tier, and if nothing there admits it,
+// place it on the emptiest server of that tier anyway.
+type polyserveSelector struct {
+	policy *polyserveDispatchPolicy
+}
+
+// tierServers is the set of live instances currently serving a tier. The two
+// partition modes answer this differently, and the difference matters at
+// start-up: the demand allocator treats a tier it has not allocated yet as
+// unrestricted, so its first requests may go anywhere, while the idle pool
+// treats it as holding nothing, so its first request pends once and then claims
+// a server. Both are deliberate -- the first keeps a tier from being
+// unschedulable before the allocator has run, the second is the paper's own
+// sequence.
+func (p *polyserveDispatchPolicy) tierServers(
+	tier int, all map[string]*instanceViewScheduling,
+) map[string]*instanceViewScheduling {
+
+	if p.cfg.elastic {
+		return p.fleet.serving(tier, all)
+	}
+	out := make(map[string]*instanceViewScheduling, len(all))
+	for id, view := range all {
+		if p.tierPartition.allows(tier, id) {
+			out[id] = view
+		}
+	}
+	return out
+}
+
+// hostTierOf is the tier a server currently belongs to, which is the budget a
+// promoted guest is judged against. Zero means the server is not restricted to
+// a tier, so only the request's own budget applies.
+func (p *polyserveDispatchPolicy) hostTierOf(id string) int {
+	if p.cfg.elastic {
+		return p.fleet.tierOfInstance(id)
+	}
+	for tier, servers := range p.tierPartition.snapshot() {
+		if _, ok := servers[id]; ok {
+			return tier
+		}
+	}
+	return 0
+}
+
+// deadlineGone answers whether holding this request any longer can still help.
+// The pending time it has already spent counts against its TTFT, which is what
+// section 4.6 says it does, so if the fastest first token any live server could
+// produce still lands past the budget, no later attempt will be better and the
+// request is refused rather than held until the gateway's own patience runs out.
+//
+// The alternative is to hold every unplaceable request until the gateway cuts
+// it, which would put the refusal decision in a deployment setting -- and the
+// gateway's holding window has already been measured to move this workload's
+// attainment by more than ten points, so it is not a neutral place to leave it.
+func (p *polyserveDispatchPolicy) deadlineGone(
+	req *polyserveRequest, all map[string]*instanceViewScheduling) bool {
+
+	ttftSlo := float64(effectiveSloMs(int(req.ttftSloMs), p.cfg.globalTtftSloMs) * p.cfg.ttftMultiplier)
+	if ttftSlo <= 0 {
+		return false
+	}
+	best := math.Inf(1)
+	for _, view := range all {
+		if t := metricValue(view, consts.SchedulingMetricPredictedTtft); t < best {
+			best = t
+		}
+	}
+	if math.IsInf(best, 1) {
+		return false
+	}
+	return req.waitedMs+best > ttftSlo
+}
+
+func (s *polyserveSelector) selectInstance(
+	instances map[string]*instanceViewScheduling, fallback bool) *instanceViewScheduling {
+
+	p := s.policy
+	if len(instances) == 0 {
+		return nil
+	}
+
+	// Every view carries the same request context; take it from any of them.
+	var req *polyserveRequest
+	for _, v := range instances {
+		req = v.schedulingCtx.polyserveRequest
+		break
+	}
+	if req == nil {
+		klog.Warning("PolyServe selector: no request context, falling back to first instance")
+		return anyInstance(instances)
+	}
+
+	own := p.tierServers(req.tier, instances)
+
+	// 1. Greedy scheduling inside the request's own tier.
+	if chosen, refused := p.cfg.pick(own, req, req.tier); chosen != nil {
+		countPlacement("own_tier")
+		p.waitLog.forget(req.id)
+		return chosen
+	} else {
+		countRefusals("own_tier", refused)
+	}
+
+	// 2. Lazy promotion. Only upward, and only now that the request's own tier
+	//    is full, which is the whole difference between lazy and eager: a guest
+	//    that arrives before its own tier is full lowers the host tier's
+	//    utilisation for nothing.
+	if p.cfg.lazyPromotion {
+		for _, host := range p.promotionTargets(req.tier) {
+			hosts := p.tierServers(host, instances)
+			if chosen, refused := p.cfg.pick(hosts, req, host); chosen != nil {
+				countPlacement("promotion")
+				p.waitLog.forget(req.id)
+				return chosen
+			} else {
+				countRefusals("promotion", refused)
+			}
+		}
+	}
+
+	// 3. Grow the tier. The pending that got us here IS the trigger section 4.3
+	//    names; there is no demand calculation behind it.
+	if p.cfg.elastic {
+		if id := p.fleet.claim(req.tier, instances); id != "" {
+			countPlacement("scale_up")
+			p.waitLog.forget(req.id)
+			return instances[id]
+		}
+	}
+
+	// 4. Nothing admits it.
+	if !p.cfg.admissionBinds {
+		// The paper has no drop path, and with admission relaxable this is what
+		// Llumnix's fallback pass did: place it anyway and let the overload show
+		// up as a missed SLO.
+		countPlacement("forced")
+		p.waitLog.forget(req.id)
+		if chosen := p.cfg.leastLoadedIgnoringAdmission(own, req); chosen != nil {
+			return chosen
+		}
+		return anyInstance(instances)
+	}
+	if p.deadlineGone(req, instances) {
+		countPlacement("refused")
+		p.markRejected(req.id)
+		p.waitLog.forget(req.id)
+		return nil
+	}
+	countPlacement("pending")
+	return nil
+}
+
+// promotionTargets are the tiers a request of this tier may be promoted onto,
+// tightest first.
+func (p *polyserveDispatchPolicy) promotionTargets(tier int) []int {
+	if p.cfg.elastic {
+		return p.fleet.tighterThan(tier)
+	}
+	out := []int{}
+	for host := range p.tierPartition.snapshot() {
+		if host > 0 && host < tier {
+			out = append(out, host)
+		}
+	}
+	sort.Ints(out)
+	return out
 }

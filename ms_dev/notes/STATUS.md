@@ -61,6 +61,43 @@ EXP-80이 여덟 도착률 전부를 2반복으로 채운 뒤 **28.0 / 19.9**다
 | 끝남 | EXP-81 vLLM router + QoServe (18조건) / EXP-80 정적 sweep 2반복 (23조건) / EXP-64 오라클 (16조건) | 08-14 / 08-13 / 08-12 |
 | 준비 완료, 안 걸었음 | EXP-79 본 실험 6조건 | 손잡이가 거절 양을 조절 못 하는 문제로 **설계를 다시 봐야 한다** |
 
+### ▶ 대기 중 (2026-08-27) — EXP-106, PolyServe 기준선에 논문의 메커니즘을 되살렸다
+
+**구현·단위테스트·빌드까지 끝났고 아직 걸지 않았다.** 바이너리
+`/home/nxclab/tools/staging/scheduler-polyserve-paper`(md5 `47f3e2b5`), 설정 편집은
+`/home/nxclab/tools/staging/polyserve-paper/apply.sh`가 EXP-105가 끝난 뒤에 넣는다(러너 Job이
+하나라도 돌면 스스로 거부한다). 정본은 `experiments/EXP-106_polyserve-paper-fidelity.md`와
+[polyserve-fidelity.md](polyserve-fidelity.md) **§9**.
+
+**왜**: 지금 표의 PolyServe에는 **작동하는 admission control이 없다.** 거절률이 여덟 도착률
+전부에서 0.0%인 것이 그 증상이고, 원인이 둘이 겹쳐 있었다 — admission 필터가 Llumnix의 2차
+pass에서 relaxable이라 아무도 통과 못 하면 **거절이 아니라 tier 안 최저부하로 강제 배치**되고,
+동시에 iteration 추정에 대기 prefill 청크(520~634 ms)가 들어가 **tier 예산 25/50/100 ms를
+어차피 아무도 통과할 수 없었다.** 논문에 없는 것은 **거절**이지 **보류**가 아니다(§4.3의
+pending, §4.6의 pending time).
+
+**바꾼 것 여섯**(전부 플래그, 기본값은 종전 동작이라 명시 안 한 실행은 종전과 같은 결정):
+admission 구속력 / 정상상태 추정에서 prefill 제거(§4.5 원문) / lazy promotion(§4.4, **손님을
+호스트 tier 예산으로 판정**) / idle pool(§4.3, 보류 +1·마지막 서버 빔 −1) / 최고부하 선택
+(§4.3, **elastic의 전제조건이다**) / KV 용량 판정. 구조로는 tier affinity와 admission을
+필터에서 빼고 **결정 사다리를 selector로 옮겼다** — 사다리 네 단 중 셋이 "이 tier의 모든
+서버가 거부했다"는 tier 전체에 대한 사실을 필요로 하는데 `singleInstanceFilter`는 인스턴스를
+하나씩만 본다.
+
+**⚠ 같이 고쳐야 하는 것: PolyServe가 swe를 토큰당 25 ms로 판정하고 있었다.** swe의 진짜
+목표는 전체 시간 30초이고 25는 tier 이름일 뿐이다(FluidServe는 `25:e2e:30000`으로 다시
+정의하는데 PolyServe에는 그 재정의가 없다). 프로파일 표를 풀면 swe의 요청당 KV 7,306 토큰에서
+**25 ms는 배치 23까지, 30초를 속도로 환산한 55.7 ms는 186까지** 허용한다 — **7~9배.**
+지금까지 admission이 결정을 안 바꿔서 드러나지 않았다. **m1f로 옮기고, tier 표를 워크로드
+설정의 `slo.<class>.tbt_ms`에서 유도하도록 바꿨다.** 그러면 tier가 chat 50 / swe 52 / dr 100이
+되어 **chat과 swe가 2 ms 떨어진다 — PolyServe의 분류 축으로는 이 워크로드를 셋으로 나눌 수
+없다는 것이고 그 자체가 결과다.**
+
+**⚠ 인용 주의**: 이 변경 뒤의 PolyServe 수치는 EXP-53·57·71·80·86의 것과 같은 표에 못 들어간다
+(워크로드 설정이 m1 → m1f로 바뀐다). `retracted.tsv`에 넣는 것은 대체값이 생긴 뒤에 한다.
+
+---
+
 ### ▶ 지금 도는 것 (2026-08-27 14:04 KST) — EXP-105, swe 예산 40초
 
 **mix-shift 한 시간 trace, `fsv3b40` / `fsv3noaffb40` 2반복씩 4조건. 끝나는 시각

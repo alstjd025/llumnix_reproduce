@@ -157,12 +157,16 @@ func getSchedulingMetric(p *options.SchedulerConfig, metricName string) func() i
 			panic(fmt.Sprintf("invalid --polyserve-tier-decode-tokens: %v", err))
 		}
 		atMaxKV := metricName == consts.SchedulingMetricPolyserveIterMax
+		// Only the steady-state estimate can shed the prefill term; the near-term
+		// one is where section 4.6's wait time lives and always carries it.
+		includePrefill := !atMaxKV || !p.PolyserveSteadyStateIgnoresPref
 		return func() instanceSchedulingMetric {
 			return &polyserveIterTime{
 				baseMetric:       baseMetric{name: metricName},
 				latencyPredictor: GetLatencyPredictor(p.TtftProfilingDataPath, p.TpotProfilingDataPath),
 				decodeTokens:     decodeTokens,
 				atMaxKV:          atMaxKV,
+				includePrefill:   includePrefill,
 			}
 		}
 	case consts.SchedulingMetricNumTokens:

@@ -120,9 +120,15 @@ func TestPolyserveDispatchThresholdTightensBudget(t *testing.T) {
 	assert.True(t, f.instanceFilteredOut(polyserveView("i", 11800, 25, 100, 10, 24)))
 }
 
-// Admission relaxes on the fallback pass so an overloaded tier still places its
-// requests; tier affinity does not, so isolation survives overload. This is the
-// pairing the whole design rests on.
+// The filter pair the policy used before the placement ladder existed, kept
+// because it is the record of what every PolyServe run before 2026-08-27 did and
+// because TestLadderDefaultsDecideWhatTheFilterPairDecided pins the ladder to it.
+//
+// It also shows why the pair had to go. Admission relaxed on the fallback pass,
+// so when no server passed it the request was placed on the emptiest server of
+// its tier anyway -- an admission test whose failure had no consequence, which
+// is why that arm refused 0.0% of requests at every arrival rate. Tier affinity
+// did not relax, so the partition was the only thing left deciding anything.
 func TestPolyserveFallbackSemantics(t *testing.T) {
 	assert.True(t, admissionFilter().skipWhenFallback(), "admission must relax")
 	assert.False(t, (&tierAffinityFilter{partition: newTierPartition()}).skipWhenFallback(),

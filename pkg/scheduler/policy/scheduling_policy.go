@@ -64,6 +64,11 @@ type schedulingCtx struct {
 	// or selector runs.
 	fluidserveRequest *fluidserveRequest
 	fluidserveFlux    *instanceFlux
+
+	// PolyServe, for the same reason: three of the four rungs of its placement
+	// ladder need a fact about the whole tier rather than about one instance,
+	// so the ladder runs in the selector and the request has to reach it.
+	polyserveRequest *polyserveRequest
 }
 
 type clusterViewScheduling struct {
