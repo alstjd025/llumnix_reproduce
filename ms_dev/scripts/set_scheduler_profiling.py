@@ -98,7 +98,15 @@ def polyserve_flags():
 # per-token ceiling it does not need.
 FLUIDSERVE_FLAGS = {
     "--fluidserve-profile-path": f"{MOUNT}/fluidserve.json",
-    "--fluidserve-class-budgets": "25:e2e:30000,50:decode,100:decode",
+    # The swe end-to-end budget is settable from the environment because it is a
+    # property of the WORKLOAD's service objective rather than of the policy, and
+    # a sensitivity condition varies it. Changing it here alone is not enough --
+    # the scoring rule has to move with it or the policy and the analysis judge
+    # the same requests against different budgets. The scorer takes
+    # FS_SWE_E2E_S (in seconds) for that, and prints a banner when it is not 30.
+    "--fluidserve-class-budgets":
+        f"25:e2e:{int(float(os.environ.get('FS_SWE_E2E_MS', '30000')))},"
+        "50:decode,100:decode",
     "--fluidserve-horizon-steps": "100",
     "--fluidserve-z-safety": "1.65",
     "--fluidserve-enable-pend": "true",
@@ -614,6 +622,40 @@ def verify_effective(policy, logs, applied_args):
             except ValueError:
                 return ("unparseable", text)
         return ("unparseable", text)
+
+    # The class budgets are checked separately, and were not checked at all
+    # until 2026-08-27. Their value contains ':' and ',', which the general
+    # token regex above does not capture, so a budget that was asked for and not
+    # applied passed in silence -- and this is the one setting that has to move
+    # in TWO places at once, here and in the scorer's SLO_RULES. A condition
+    # whose policy uses one end-to-end budget while the analysis scores against
+    # another produces numbers that look ordinary and mean nothing.
+    #
+    # Compared as a map rather than as a string: the Go side prints the tiers in
+    # sorted order, which is the mistake already made once with the class pin,
+    # where a correct setting failed a textual comparison and the condition could
+    # not be run.
+    def _budget_map(text):
+        out = {}
+        for part in (text or "").split(","):
+            part = part.strip()
+            if not part:
+                continue
+            bits = part.split(":")
+            out[bits[0]] = ":".join(bits[1:])
+        return out
+
+    m = re.search(r'budgets "([^"]*)"', line)
+    if m is not None and "--fluidserve-class-budgets" in want:
+        asked_b = _budget_map(want["--fluidserve-class-budgets"])
+        got_b = _budget_map(m.group(1))
+        if asked_b != got_b:
+            bad.append(f"--fluidserve-class-budgets: asked "
+                       f"{want['--fluidserve-class-budgets']}, scheduler "
+                       f"reports budgets \"{m.group(1)}\"")
+    elif "--fluidserve-class-budgets" in want:
+        bad.append("the start-up line does not report budgets; the class "
+                   "budgets cannot be verified and this condition must not run")
 
     m = re.search(r"shedsignal=([^,]+)", line)
     got_shed = m.group(1).strip() if m else None
