@@ -856,6 +856,15 @@ CrashLoopBackOff가 된다. 그런데 **옛 파드는 계속 Running이라 클�
   → **끝났는지는 결과 디렉토리 개수와 로그의 마지막 줄로 확인한다**(함정 B의 감시 항목과 같다).
 - **`pkill -f <이름>`은 자기를 실행한 셸도 죽인다.** 그 셸의 명령줄에 같은 문자열이 들어
   있기 때문이다. `pkill -f "exp34_flux[c]ount"`처럼 대괄호로 자기 매칭을 피한다.
+- **`git filter-branch`로 파일을 히스토리에서 빼면 마지막 checkout이 그 파일을 작업
+  트리에서도 지운다 (2026-08-28, 실제로 당함).** `--index-filter`의 `git rm --cached`는
+  인덱스만 건드리지만, 재작성이 끝나고 브랜치를 다시 checkout할 때 새 트리에 없는 파일이
+  디스크에서 사라진다. swe transcript 1.5 GB 두 개가 이렇게 지워졌고, **재작성 전 ref
+  (`refs/original/...`)의 blob에서 `git show ref:path > file`로 바이트 동일하게 복구했다**
+  (git 객체는 내용 주소라 md5 대조가 곧 검증이다). → 히스토리에서 큰 파일을 빼기 전에
+  **작업 트리 사본을 먼저 안전한 경로에 두거나, 재작성 직후 파일 존재를 확인한다.**
+  그리고 100 MB 넘는 파일은 애초에 추적하지 않는다 — GitHub이 push를 통째로 거부해서
+  히스토리 재작성 말고는 되돌릴 방법이 없다(gitignore에 등록해 두는 것이 유일한 예방이다).
 - `kubectl logs deploy/<name>`은 Terminating 중인 옛 파드를 고를 수 있다. 롤아웃 직후에는
   파드 이름을 직접 지정하고, 목록은 `--sort-by=.metadata.creationTimestamp`로 정렬한다.
 - 스케줄러를 `-v 4`로 띄우면 초당 수백 줄이 나와 컨테이너 로그가 1분 남짓만 남는다.
