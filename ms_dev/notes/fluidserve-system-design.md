@@ -1,8 +1,13 @@
-# FluidServe 시스템 설계 완전판 — 코드 기준 참조 문서 (v3)
+# FluidServe 시스템 설계 완전판 — 코드 기준 참조 문서 (v4)
 
-**2026-08-26 개정, FluidServe v0.3 기준.** 배포 바이너리 **`d867351a`**
+**2026-08-28 개정, FluidServe v0.4 기준.** 배포 바이너리 **`6dc9f035`**
 (`bin/scheduler-exp07`, 파드 안 `md5sum /proc/1/exe`로 검증)의 소스를 직접 읽고 만들었고,
 수식과 수도코드는 코드를 그대로 옮긴 것이다. **코드와 어긋나면 코드가 맞다.**
+
+**⚠ v0.4는 "채택된 구성"이지 "컴파일 기본값"이 아니다.** 셋 중 둘(cap, force)은 기본값이
+아직 v0.3 쪽이고 arm이 플래그로 켠다. 그 간극과 옮기는 절차는
+[fluidserve-v0.4.md](fluidserve-v0.4.md) §2. **이 문서가 "v0.4"라고 적을 때는 채택 구성을
+가리킨다.**
 
 **이 문서의 용도**: 논문 design 섹션의 재료. 논문에 다 들어가지는 않지만, **논문이 필요로
 할 만한 모든 것이 여기 있어야 한다** — 변수·상수·상태 구조·입출력·수식·통합 지점·코드량,
@@ -16,6 +21,13 @@
 
 표기: `req.*`는 도착 요청, `f.*`는 인스턴스 상태(flux), `c.*`는 후보 평가 결과,
 `r.*`는 상주 요청(live). 파일:행은 전부 실제 위치.
+
+**v4(2026-08-28)에서 바뀐 것**: **v0.4의 세 변경**이 들어갔다 — 강제 배치 분기를 명시적
+거절로 되돌린 것(§4.6·§9.11), 클래스가 gate를 정하는 인스턴스 수의 guardrail 상한(§4.5.5,
+새 절), swe의 SLO를 per-token 형태로 전환한 것(§3.1·§4.3). 그리고 **§1에 여덟 번째 핵심
+개념**(약속의 형태가 집행의 형태와 같아야 한다)이 생겼다 — 이것이 셋째 변경의 근거이고,
+**E2E 형태가 보류 경로를 구조적으로 닫는다는 측정**이 거기 있다. §9는 9.8을 다시 쓰고
+9.11을 더했다.
 
 **v3.2(2026-08-28)에서 바뀐 것**: §1에 **일곱 번째 핵심 개념**(예측 거리를 결정이 필요로
 하는 만큼만 잡는다)이 생겼다. 코드에 있는 세 거리, 거리를 정한 이유가 정확도만이 아니라
@@ -53,9 +65,16 @@ EXP-64·EXP-90이 반증한다는 것**(총계는 안 움직이고 클래스 배
 1. **route** — 조건을 전부 만족하는 인스턴스가 있으면 그중 하나에 배치한다.
 2. **pend** — 아무 데도 없지만 **이 요청의 예산에 아직 기다릴 시간이 남았으면** 게이트웨이가
    붙들고 있게 하고, 잠시 뒤 다시 묻는다.
-3. **shed** — 기다릴 시간도 없고 **어디에 놓아도 자기 예산을 못 지키면** 거절한다.
-4. **force** — 기다릴 수는 없지만 자기 예산은 지킬 수 있으면, **피해가 가장 작은 곳**에
-   억지로 놓는다.
+3. **shed** — 기다릴 시간도 없으면 거절한다. 사유가 둘로 갈린다:
+   **`cannot_meet`**(어디에 놓아도 자기 예산을 못 지킨다 — 자기 보호)과
+   **`no_feasible`**(자기는 지킬 수 있지만 모든 배치가 상주 요청을 위반시킨다 — 타인 보호).
+
+**⚠ v0.4에서 갈래가 넷에서 셋이 됐다.** v0.3까지는 넷째 갈래 **force**가 있었다 — 기다릴
+수는 없지만 자기 예산은 지킬 수 있으면 **피해가 가장 작은 곳에 억지로** 놓는 분기이고,
+그 배치는 feasibility 조건이 거부한 것을 알면서 만들어진다. `--fluidserve-enable-force=false`가
+그 인구를 위 3단의 `no_feasible`로 보낸다. **원안 설계표가 이미 "만료된 latency-sensitive는
+REJECT"였고 force는 구현 과정의 이탈이었으므로, 이것은 새 기능이 아니라 회귀다.** 측정과
+기제는 §9.11.
 
 **이 순서가 "routing과 admission이 같은 결정"이라는 말의 실체다.** 거절은 별도의 관문이
 아니라 **배치할 곳을 찾는 데 실패한 결과**이고, 같은 후보 평가를 읽는다. → §4.6
@@ -194,7 +213,7 @@ EXP-64·EXP-90이 반증한다는 것**(총계는 안 움직이고 클래스 배
 
 ---
 
-## §1 핵심 개념 — 일곱
+## §1 핵심 개념 — 여덟
 
 이 절은 "무엇을 했나"가 아니라 **"왜 이 형태여야 했나"**를 적는다. 각 개념 밑에 그것을
 정하게 만든 측정과, 그 자리에서 검토했다가 버린 대안을 같이 둔다.
@@ -397,6 +416,88 @@ step으로 보고, *이 요청이 약속을 지키는가*는 요청이 끝날 �
 
 ---
 
+### ⑧ (v0.4에서 추가) 약속의 형태가 집행의 형태와 같아야 한다
+
+**SLO를 무슨 양으로 쓰느냐가 표현의 문제가 아니라 결정 경로의 문제다.** 이 정책은 클래스
+예산을 두 형태로 받는다(`fluidserve_registry.go:44-62`):
+
+| 형태 | 약속 | 코드 |
+|---|---|---|
+| **per-token** (chat 50, dr 100) | 토큰 하나당 평균 시간 | `budgetDecode` |
+| **E2E** (v0.3까지의 swe: 30초) | 요청 전체의 벽시계 시간 | `budgetE2E` |
+
+**둘은 같은 약속의 두 표기가 아니다.** admission이 집행하는 양은 **순간의 속도**인데,
+per-token은 약속도 순간량이라 순간 집행 = 수명 집행이고, **E2E는 약속이 수명 적분**이라
+둘 사이에 틈이 생긴다. 그 틈을 EXP-107 §10.2가 측정했다: **승인 하나하나는 정직한데
+(검사 시점 7초 창 예측 ≤ 69.2 ms) 함께 승인된 파이프라인이 이후 수십 초에 걸쳐 만드는
+합동 작동점이 78~80 ms가 된다.**
+
+#### 형태가 결정 경로에 들어가는 자리는 다섯이다
+
+| # | 자리 | E2E | per-token |
+|---|---|---|---|
+| 1 | **게이트(약속) 유도** (`nominalAllowanceLocked` registry.go:816) | `totalMs / E[L]` — **길이 통계에서 유도** | 선언된 상수 |
+| 2 | **잔액의 시계** (`liveViewLocked` :786) | `now − firstSeenMs` — **도착부터**. 대기·prefill·디코드가 한 계좌 | `now − decodeStartMs` — 디코드 시작부터. 대기는 TTFT 계좌 |
+| 3 | **첫토큰 마감 검사** (`missesTtftDeadline` :2111) | **적용되지 않는다** (`if req.isE2E { return false }`) | 적용된다 |
+| 4 | **거절 판정** (`missesOwnBudget` :2148) | `waited + prefillMs + expectedToks × meanAfter > budgetMs` | 예측 pace를 예산과 직접 비교 |
+| 5 | **보류 판정** (`canWait` :2549) | `deadline = budgetMs − after − expectedToks × pace − recheckMs` | `deadline = ttftSloMs − after − recheckMs` |
+
+#### 1과 5가 서로를 상쇄해서 보류 경로를 닫는다
+
+nominal이 `budgetMs / expectedToks`로 만들어지므로(자리 1) 자리 5의
+`expectedToks × pace ≈ budgetMs`이고, 따라서
+
+```
+deadline ≈ budgetMs − after − budgetMs − recheckMs  <  0
+```
+
+**즉 `waited < deadline`이 성립할 수 없다. E2E 클래스에게는 보류가 구조적으로 닫혀 있다.**
+
+**실측이 그대로 보여 준다.** 배치 로그의 `waited=` 필드로, route된 요청이 그때까지 기다린
+시간을 클래스별로 재면(같은 trace, 정책 설정은 swe 예산 형태만 다름):
+
+| arm | swe: 보류를 거친 비율 | swe: 대기 p90 | chat | dr |
+|---|---|---|---|---|
+| E2E 30초 r1 / r2 | **8.4% / 7.7%** | **0 ms / 0 ms** | 18.3 / 20.0% | 42.9 / 40.0% |
+| per-token 75 ms | **32.5%** | **1,005 ms** | 19.8% | 43.7% |
+
+**chat과 dr은 안 움직인다** — 둘은 양쪽 arm에서 per-token이므로 대조군 역할을 한다.
+**swe만 4배 움직인다.** 이 정책의 결정 중 **보류가 53%**인데(§4.6), 그 주된 메커니즘을
+E2E 클래스는 쓰지 못하고 있었다 — 처음 물어본 그 순간에 route 아니면 shed로 끝났다.
+
+#### 4가 예측 오차를 곱한다
+
+자리 4에서 E2E는 `meanAfter`에 `expectedToks`(swe 프로파일 평균 494)를 곱한다.
+**속도 예측이 1 ms 틀리면 판정이 약 494 ms 움직인다.** per-token 형태에는 곱하는 자리가
+없다 — 1 ms는 1 ms다.
+
+#### 1이 분포의 절반을 구조적으로 배신한다
+
+`totalMs / E[L]`은 **정확히 평균 길이 요청이 예산에 딱 맞도록** nominal을 정한다. 배포
+프로파일의 swe는 mean 494 / p50 486 / p90 645이므로, **평균보다 긴 요청은 전부 게이트가
+보장하는 속도보다 빨라야만 산다.** p90 길이(645토큰)는 645 × 60.7 ≈ **39초**로 30초 예산을
+애초에 못 지킨다. 이것은 이 구현의 결함이 아니라 **E2E 형태 자체의 성질**이다 — 전체 시간
+예산을 토큰당 속도 게이트로 옮기려면 길이 통계로 나눠야 하고, 그 순간 분포의 절반이 게이트
+위로 나간다.
+
+#### 그래서 v0.4가 한 것
+
+swe를 **TTFT 7초 + 토큰당 75 ms**로 바꿨다(`tier:decode:<ms>` 문법). **약속과 집행이 같은
+양이 되어 틈이 근본에서 사라진다.** 결과는 admitted 96.4 → **98.3**, swe admitted 69~71 →
+**90.1**, 네 구간 전부 admitted ≥ 95.6.
+
+**⚠ 대가를 같이 적지 않으면 오독된다.** 새 약속은 벽시계 기준으로 더 느슨하다 — admitted
+swe의 유효 e2e가 **중앙값 34.2초, 30초 초과 62.7%**이고, 같은 run을 옛 30초 잣대로 다시
+채점하면 offered −8.8 / admitted −4.4다. **쓸 수 있는 문장**: *약속과 집행을 같은 양으로
+맞추면 받아들인 것을 지키는 시스템이 되고, 그 대가로 그 클래스의 실제 완료 시간이 늘어난다.*
+
+**일반화**: 개념 ⑥이 *"같은 물리 현상을 두 곳에서 모형화하면 두 곳이 같은 근사를 써야
+한다"*였다면, 이것은 **"약속을 재는 양과 집행하는 양이 같은 종류여야 한다"**다. 둘 다
+**같은 것을 두 곳에서 다르게 표현했을 때 생기는 결함**이고, 이 저장소가 반복해서 걸린
+"같은 이름의 두 양" 함정의 서로 다른 판이다.
+
+---
+
 ## §2 컴포넌트와 각각의 상태(state)
 
 ### 2.1 전체 그림
@@ -423,7 +524,7 @@ offered 분모에서 불리하다).
 
 | 필드 | 무엇 | 수명 |
 |---|---|---|
-| `cfg` | 플래그 30개가 굳은 설정 구조체 | 프로세스 |
+| `cfg` | 플래그 33개가 굳은 설정 구조체 | 프로세스 |
 | `capacity` | 지연 모델 + 온라인 보정 둘 (§2.3) | 프로세스 |
 | `registry` | 어느 요청이 어느 인스턴스에 있고 얼마나 갔나 (§2.4) | 프로세스 |
 | `lengths` | 클래스별 출력 길이 분포 (§2.6) | 프로세스, 읽기 전용 |
@@ -432,6 +533,7 @@ offered 분모에서 불리하다).
 | `fluxCache[id]` | 인스턴스 상태의 캐시 (§4.2) | stepID·dispatchVersion이 같은 동안 |
 | `shedIDs[id]` | 거절한 요청 id (재도착 시 같은 결정을 반복하지 않기 위해) | `fsArrivalTTLMs` |
 | `lastProbe[id]` | 같은 status로 몇 번째 배치인지, 그때 headroom (이중 판매 감시) | 다음 status |
+| **`tierArr[tier]`** | (v0.4) 클래스별 도착률 λ·평균 프롬프트의 EWMA와 상한 히스테리시스 상태 — cap의 수요 추정 (§4.5.5) | 프로세스, `capMu`로 보호 |
 
 **`lastObs`가 담는 EWMA 다섯**(전부 `fsPrefillDutyAlpha = 0.1`, 유효 창 약 5초):
 `prefillMsEwma`/`totalMsEwma`(그 비가 `prefillDuty`), `elapsedEwma`/`stepsEwma`(그 비가
@@ -534,9 +636,21 @@ offered 분모에서 불리하다).
 보내지 않아도 되고, 새 클래스는 새 tier 값 하나로 생긴다.
 
 **⚠ tier 값이 곧 토큰당 예산인 것은 `--fluidserve-class-budgets`가 재정의하지 않는
-한에서다.** 배포 설정은 `25:e2e:30000`으로 **tier 25(swe)를 전체 시간 30초 예산으로
-다시 정의**한다 — 그 클래스의 진짜 제약이 토큰당이 아니라 E2E이기 때문이다. 그래서
-**25는 tier 이름일 뿐 토큰당 예산이 아니다.**
+한에서다.** tier 25(swe)의 키 25는 이 하드웨어의 디코드 바닥보다 낮은 역사적 식별자이고,
+그 값을 곧이곧대로 토큰당 예산으로 읽은 기준선이 그 클래스의 98%를 거절한 적이 있다.
+그래서 **25는 tier 이름일 뿐 토큰당 예산이 아니고**, 실예산은 이 플래그가 정한다.
+
+**문법이 셋이다** (`parseClassBudgets`, `fluidserve_registry.go:64-117`):
+
+| 표기 | 뜻 | 쓰는 곳 |
+|---|---|---|
+| `50:decode` | tier 키가 곧 토큰당 예산 (50 ms) | chat, dr |
+| `25:e2e:30000` | 전체 시간 30초 (v0.3까지의 swe) | — |
+| **`25:decode:75`** | (v0.4) tier 키는 25로 두고 **토큰당 예산은 75 ms** | **v0.4의 swe** |
+
+셋째 문법이 v0.4에서 추가됐다. **tier 키를 그대로 두는 것이 요점이다** — 프로파일 조회와
+로그·메트릭의 라벨이 전부 그 값으로 클래스를 부르므로, 키를 바꾸면 그 전부가 어긋난다.
+**형태가 결정 경로에 무엇을 하는지는 §1 ⑧.**
 
 ### 3.2 엔진 status (인스턴스별, 약 500 ms 주기, cmsView)
 
@@ -911,29 +1025,112 @@ false로 돌았다.** 즉 **기본값 그대로의 배포는 한 번도 측정�
 v0.3에서 이것을 옮기지 않기로 했으므로 **모든 arm이 `FS_CLASS_HARM=false`를 명시로
 계속 박는다**(fluidserve-v0.3.md §2).
 
-### 4.6 4-way 분기 (`selectInstance`)
+### 4.5.5 (v0.4) 후보 걸러내기 — class-instance cap (`applyInstanceCap`, instancecap.go)
+
+**정렬 앞에서 후보 목록 자체를 줄인다.** `applyClassPin` 다음, `sortCandidates` 앞이다
+(`fluidserve.go:1423`).
+
+**무엇을 고치나.** 인스턴스의 gate는 상주 요청들의 nominal 예산 중 최솟값이므로(§4.2),
+빡빡한 클래스의 요청 **하나**가 느슨한 인스턴스를 빡빡한 인스턴스로 바꾼다. **그 전환은
+배치 한 번인데 역전환은 그 클래스가 한 체류 시간(chat 약 21초) 동안 안 와야 시작되고**,
+라우팅이 계속 보내는 한 시작되지 않는다. 그래서 클래스별 footprint가 **현재 수요가 아니라
+과거 수요의 최댓값**을 따라간다 — 실측으로 25 req/s에서 스크레이프의 72~85%가 네 인스턴스
+전부 chat의 50 ms인데 chat의 일감 몫은 약 57%다.
 
 ```
-best = 정렬 1위
+// 수요, 인스턴스 단위. 모든 ready tier에 대해 한 번의 잠금 안에서 갱신한다
+//  (아래 starved 검사가 전부를 필요로 하고, 히스테리시스가 같은 박자로 나아가야 하므로)
+mu     = capacity.tierServiceRate(nominal × 0.90, meanPrompt, expectedToks, chunk, kvCap)
+demand = lambda / mu
+limit  = capLimitFor(state, demand)          // ⌈demand⌉, 바닥 1, 상승에만 +0.05 히스테리시스
+
+pool = [이 후보 목록에서 gateTier == req.tier 인 인스턴스]      // 목록 밖은 세지 않는다
+if len(pool) < limit: return cands                              // 상한 아래 = 무제한
+
+// guardrail 조항: 남에게서 뺏을 때만 구속력을 갖는다
+starved = 어떤 다른 tier o에 대해 (o의 gate 보유 수 < min(o.limit, n))
+if !starved: return cands                                       // 아무도 안 굶으면 퍼짐 허용
+
+// 상한 이상: 허용되는 목적지 둘
+designated = pool을 상주 수 내림차순(동점은 인스턴스 id)으로 정렬한 상위 limit개
+keep = [c for c in cands if
+          designated(c)                                   // 이미 가장 많이 든 gate 보유자
+       or (c.flux.gateTier != req.tier                     // riding: 이미 더 빡빡한 gate
+           and c.flux.gateTierNominal <= req.nominalMs)]
+if len(keep) == 0: 경고 + 안 거름                          // 도달 불가이나 하류 panic 방지
+```
+
+**설계 결정 넷, 각각 리뷰나 측정이 강제한 것**:
+
+- **후보를 제거하지, infeasible로 표시하지 않는다.** 표시였다면 force 경로가 feasibility와
+  무관하게 최소 피해 후보를 고르므로 **cap이 존재 이유인 바로 그 부하에서 새어 나간다.**
+  제거하면 route·pend·shed·force **모든** 하류 경로가 허용된 목적지만 본다.
+- **λ는 offered이지 admitted가 아니다.** admitted로 재면 거절이 상한을 줄이고 줄어든 상한이
+  더 많은 거절을 만든다. 보류 재시도가 500 ms마다 재진입하므로 registry의 **첫-사시
+  판정**으로 한 번만 센다 — 안 그러면 최대 70배 부풀어 오른다.
+- **μ는 prefill 할증을 포함한 닫힌 식**(`tierServiceRate`). 디코드 전용 식은 deepresearch에
+  6.3 req/s를 냈는데 **프롬프트 길이만으로 인스턴스 한 대의 상한이 3.8**이라 물리적으로
+  불가능했다.
+- **비례 정규화가 없다** — 아래.
+
+**⚠ 첫 구현이 여기서 기각됐다 (EXP-107 §5.5).** 과부하(Σ수요 > 함대 크기)에서 상한을 비례
+배분했는데, heavy-input 클래스의 낮은 μ 때문에 **원시 수요 합이 부하가 걸린 모든 순간에
+12~14**였고(함대 4대) 정규화가 예외가 아니라 **상시 체제**였다. chat의 상한이
+`⌈4×2/14⌉ = 1`로 run의 4분의 3 동안 고정됐고 그동안 chat 도착률은 10~30 req/s였다 — **cap이
+guardrail이 아니라 상시 파티션으로 동작했고** chat 거절이 10점 늘었다(offered −5.8).
+**수정은 로직 추가가 아니라 제거였다**: 정규화를 삭제하고 guardrail 조항을 넣었다.
+**인스턴스-등가 몫은 goodput 몫이 아니고, 함대에 못 미치는 수요는 admission이 할 일이지
+cap이 할 일이 아니다.**
+
+**빈 인스턴스는 riding이 안 된다.** 상주가 없으면 `gateTierNominal`이 +Inf라 riding 조건이
+거짓이 되고 제거 분기로 간다 — **빈 인스턴스를 새로 gate하는 것이 정확히 cap이 막으려는
+행위**이므로 의도한 동작이다.
+
+**fail-open 둘**: tier의 첫 5초 버킷이 완료되기 전(`ready == false`)에는 안 거른다.
+`class-pin`이 설정된 tier도 건너뛴다 — 명시적 운영자 배정이 이긴다.
+
+**실측 (EXP-107 §8, 2반복)**: 상한이 수요를 따라 움직이고(chat 히스토그램
+1:517 / 2:1447 / 3:1164 / 4:538), **cap이 결정을 바꾼 5초 창이 56.6~58.4%**로 죽은 변수가
+아니며, chat 없는 인스턴스-시간이 대조군 29~36% → **48.3~50.1%**(구판은 60.3%)다.
+deepresearch offered +4.0~+8.0을 chat 거절 +2.5로 산다.
+
+**⚠ cap이 하지 않는 것**: 용량을 만들지 않고(gate와 KV가 같은 토큰 재고를 읽는 시소는 허용
+집합 안에서 그대로), 상한 안쪽의 과잉 집중을 막지 않으며, 지속되는 진짜 홍수를 막지 않는다
+(홍수는 자기 상한을 키운다 — 의도된 동작이고, 클래스 보호는 운영자 가중치의 일이다).
+
+### 4.6 결정 사다리 (`selectInstance`) — v0.4에서 4단이 3단이 됐다
+
+```
+best = 정렬 1위 (cap이 거른 목록 위에서, §4.5.5)
 1) if best.feasible: commit(best, "route"); return best
 
 2) if enablePend and canWait(best, req): return nil    // 게이트웨이가 붙듦
-   canWait (:2464):
+   canWait (:2549):
      after = best.prefillMs + queueBound
        queueBound = delaySeen ≥ 50 ? delayMean + 1.65·sqrt(delayMeanSq − delayMean²)
                                    : 300ms 고정
      토큰당: waited < ttftSloMs − after − recheckMs
      E2E:    waited < budgetMs − after − expectedToks×meanAfter − recheckMs
+             ⚠ 이 변에서 expectedToks×pace ≈ budgetMs 라 deadline이 사실상 음수다 — §1 ⑧
 
 3) shedTest = shedFleetScale>0 ? missesOnFleet(전 후보 평균, scale) : best.missesOwnBudget
-   missesOwnBudget (:2073):
+   missesOwnBudget (:2141):
      E2E:    waited + prefillMs + expectedToks×meanAfter > budgetMs
      토큰당: (shedIgnoresFirstToken 아니고 waited + prefillMs > ttftSloMs)
              or (meanAfter > nominalMs × (forceMargin ? 0.90 : 1))
-   if enableShed and shedTest: registry.forget(id); 배치 로그 한 줄; return "admission rejected"
 
-4) commit(best, "force")   // 못 기다리지만 자기 예산은 지킴 — harm 최소인 곳에
+   reason = enableShed && shedTest ? "cannot_meet"        // 자기 예산도 못 지킨다
+          : !enableForce           ? "no_feasible"        // (v0.4) 자기는 지키나 남을 깨뜨린다
+          : (없음)
+   if reason: registry.forget(id); 배치 로그 한 줄(reason 포함); return "admission rejected"
+
+4) commit(best, "force")   // enableForce=true 일 때만 도달 — harm 최소인 곳에 강제 배치
 ```
+
+**v0.4에서 `enableForce`가 false다.** 그러면 4단에 도달하지 않고, 그 인구가 3단의
+**`no_feasible`**로 간다. 두 사유를 따로 세는 것이 이 변경의 계측이다 — `cannot_meet`은
+**자기 보호**(이 요청이 확실히 위반할 자리를 차지하는 것을 막는다), `no_feasible`은
+**타인 보호**(이미 돌고 있는 요청들을 깨뜨리는 것을 막는다). 측정과 기제는 §9.11.
 
 **⚠ `queueBound`가 신뢰할 수 없다** (§4.3의 경고): `delayMean`은 `realised − prefillEstMs`의
 EWMA인데 그 `realised`가 관측이 아니라 모델이다. **따라서 "측정된 큐 지연"은 측정된 것이
@@ -1038,7 +1235,12 @@ index가 eviction을 못 봐서 hit을 과대 주장하는 바로 그 실패가 
 
 | 시리즈 | 내용 |
 |---|---|
-| `..._decisions_total{decision}` | route/pend/shed/force |
+| `..._decisions_total{decision}` | route/pend/shed/force (v0.4의 force는 0) |
+| **`..._shed_reason_total{reason}`** | (v0.4) `cannot_meet`(자기 보호) / `no_feasible`(타인 보호 = 옛 force 인구) |
+| **`..._instcap_limit{tier}`** | (v0.4) 그 클래스의 인스턴스 상한. **유휴 sentinel은 −1** — 0이 유효한 값이라 그것을 유휴로 쓸 수 없다 |
+| **`..._instcap_gate_count{tier}`** / **`..._instcap_lambda{tier}`** | (v0.4) 지금 그 클래스가 gate하는 인스턴스 수 / 추정 도착률 |
+| **`..._instcap_excluded_total{tier}`** / **`..._instcap_blocked_feasible_total{tier}`** | (v0.4) cap이 뺀 후보 수 / **그중 feasible이었던 것** (= cap이 실제로 결정을 바꾼 횟수) |
+| **`..._instcap_empty_fallback_total{tier}`** | (v0.4) 거르면 목록이 비어 안 거른 횟수 — 도달하면 결함이다 |
 | `..._infeasible_total{reason}` | unpredictable/gate/incumbents/memory/**pace_kv**/deadline (동시 실패 각각) |
 | **`..._infeasible_sole_total{reason}`** | (v0.3) **그 조건 하나만 걸려서 거절된 후보 수** |
 | `..._observed_step_ms` / `..._predicted_step_ms` | 보정의 두 입력 |
@@ -1054,6 +1256,10 @@ index가 eviction을 못 봐서 hit을 과대 주장하는 바로 그 실패가 
 | **`..._placement_joint_total{tier,cell}`** | (v0.3) 예측과 결과의 2×2 표 ⚠ 같은 이유로 신뢰 불가 |
 | `gateway_scheduling_{waited,rejected,gave_up}_total`, `..._wait_milliseconds` | 게이트웨이 쪽 |
 | `dispatch_ordinal_in_step`, `headroom_move_in_step` | 이중 판매 감시 |
+
+**⚠ cap 계열 여섯은 생성 시 0(limit은 −1)으로 사전 등록된다.** 라벨 붙은 카운터는 한 번도
+증가하지 않으면 시리즈 자체를 안 내보내므로, 그것이 없으면 **"짧은 run이 cap을 한 번도
+건드리지 않았다"와 "수집기가 그 시리즈를 안 집고 있다"가 구분되지 않는다.**
 
 **⚠ 새 메트릭을 추가하면 `llumnix_metrics.py`의 화이트리스트에도 넣어야 한다.** 시리즈
 이름 목록으로 거르므로 **없으면 결과 디렉토리에 저장되지 않는다** — EXP-96이 그렇게
@@ -1088,6 +1294,10 @@ index가 eviction을 못 봐서 hit을 과대 주장하는 바로 그 실패가 
 | **`fsMinPrefillDuty`** | **0.05** | (v0.3) 이 아래면 첫토큰 추정을 안 늘림 | 스무 배 넘는 배수는 보정이 아니다. 실측 duty는 큐가 있으면 0.43~0.46, 없으면 0.16~0.29 |
 | `fsPlacementDelayAlpha` / 최소 표본 / 상한 | 0.01 / 50 / 60 s | 큐 잔차 | ⚠ 이 잔차가 관측이 아님(§4.3) |
 | `fsSlowFirstTokenMs` | 10,000 ms | 2×2 표의 경계 | deepresearch의 TTFT 예산 |
+| **`fsCapBucketMs`** | **5,000 ms** | (v0.4) cap의 도착률 버킷 폭 | 추정이 반응하면서 가장 바쁜 tier가 버킷당 수백 건을 갖는 길이 |
+| **`fsCapTauMinS` / `fsCapTauMaxS`** | **15 s / 120 s** | (v0.4) 수요 EWMA 시상수의 clamp | 하한은 짧은 클래스가 버스트를 좇는 것을, 상한은 deepresearch(체류 약 98초)가 trace 구간 하나만큼 뒤처지는 것을 막는다 |
+| **`fsCapRaiseEps`** | **0.05** | (v0.4) 상한 **상승**에만 붙는 히스테리시스 | swe의 실측 수요가 하필 0.995라 추정 잡음으로 상한이 깜빡였다 |
+| **`capWindowMult`** | **3.0** (플래그) | (v0.4) 시상수 = 이 배수 × 체류 시간 | **cap이 도입한 유일한 새 상수.** "수요 이동이 함대 몫을 얻으려면 얼마나 지속되어야 하는가" |
 | `ttftSafetyMs` | 300 ms | 표본 <50일 때의 고정 큐 여유 | — |
 | `fsRetireSurvival` / `fsMaxRecordAgeMs` | 0.02 / 20 min | 상주 기록 퇴역 | — |
 | `fsArrivalTTLMs` | 5 min | 도착 기록 보존 | 게이트웨이 hold 창(35 s)보다 충분히 길게 |
@@ -1102,14 +1312,14 @@ index가 eviction을 못 봐서 hit을 과대 주장하는 바로 그 실패가 
 
 ---
 
-## §7 플래그 (30개 전부, `--fluidserve-*`)
+## §7 플래그 (33개 전부, `--fluidserve-*`)
 
-**★ = v0.3에서 기본값이 바뀐 것.**
+**★ = v0.3에서 기본값이 바뀐 것. ◆ = v0.4에서 채택됐으나 컴파일 기본값은 아직 안 옮겨진 것.**
 
 | 플래그 | 기본값 | 무엇 |
 |---|---|---|
 | `profile-path` | "" (필수) | §3.3 파일. 없거나 깨지면 기동 거부 |
-| `class-budgets` | "" (배포 `25:e2e:30000`) | tier 예산 형태 재정의 |
+| ◆ `class-budgets` | "" | tier 예산 형태 재정의. v0.3 배포 `25:e2e:30000`, **v0.4 채택 `25:decode:75`** (문법 셋은 §3.1, 형태가 결정에 무엇을 하는지는 §1 ⑧) |
 | `horizon-steps` | 100 | 지평 (≤0이면 기동 거부) |
 | `z-safety` | 1.65 | σ 배수 |
 | `ttft-safety-ms` | 300 | 큐 여유 폴백 |
@@ -1122,6 +1332,9 @@ index가 eviction을 못 봐서 hit을 과대 주장하는 바로 그 실패가 
 | `prefix-calibration` | true | κ 적용 |
 | `prefix-block-tokens` / `prefix-capacity` | 16 / 500,000 | index 크기 |
 | `class-pin` | "" | 정적 고정 (ablation 전용; 파싱 실패 시 기동 거부) |
+| ◆ `class-instance-cap` | **false** (v0.4 채택 **true**) | 클래스가 gate를 정하는 인스턴스 수의 guardrail 상한 — §4.5.5 |
+| `class-instance-cap-window-mult` | 3.0 | 그 수요 추정의 시상수(체류 시간 배수, 15~120 s로 clamp) |
+| ◆ `enable-force` | **true** (v0.4 채택 **false**) | 강제 배치 분기 유지. false면 그 인구가 shed `no_feasible` — §4.6, §9.11 |
 | `enable-flux` | true | 흐름 수지 (끄면 순수 level 제어기) |
 | `class-harm` | true ⚠ | harm의 클래스 항. **모든 실험이 false로 돌았다** — §4.5 |
 | `force-margin` | false | force 판정에도 0.90 |
@@ -1145,20 +1358,27 @@ index가 eviction을 못 봐서 hit을 과대 주장하는 바로 그 실패가 
 컴파일 기본값으로 되돌리기 때문이다. v0.3에서는 드라이버의 `set_arm`이 **v0.2 값을 먼저
 써 놓고** 각 arm이 필요한 것만 덮어쓰게 고쳤다(`run_exp104_v03affinity.sh`).
 
+**⚠ ◆ 셋의 기본값 이동이 아직 안 끝났다.** 그래서 지금 컴파일 기본값 그대로의 배포는
+**v0.3의 결정을 내린다.** 옮기는 절차(먼저 기존 드라이버에 `FS_INSTANCE_CAP=false
+FS_FORCE=true`를 명시로 박고, 그 다음에 `config.go` 두 줄)는
+[fluidserve-v0.4.md](fluidserve-v0.4.md) §2. **swe 형태는 근거가 반복 하나라 기본값으로
+옮기지 않는다**(같은 문서 §5.1).
+
 ---
 
 ## §8 코드량과 통합
 
 | 부분 | 행 수 |
 |---|---|
-| `fluidserve.go` (결정 경로·관측·selector) | 2,964 |
-| `fluidserve_registry.go` (기록·회계·예산·큐 잔차) | 908 |
-| `fluidserve_capacity.go` (지연 모델·보정 둘) | 469 |
+| `fluidserve.go` (결정 경로·관측·selector) | 3,056 |
+| `fluidserve_registry.go` (기록·회계·예산·큐 잔차) | 930 |
+| `fluidserve_capacity.go` (지연 모델·보정 둘·`tierServiceRate`) | 550 |
+| **`fluidserve_instancecap.go`** (v0.4, cap 메커니즘 전체) | **412** |
 | `fluidserve_profile.go` (길이 분포) | 255 |
 | `fluidserve_prefix.go` (prefix index) | 211 |
-| **정책 합계** | **4,807** |
-| 단위 테스트 | 2,572 |
-| 플래그 정의 (config.go) | 약 260 |
+| **정책 합계** | **5,414** |
+| 단위 테스트 | 2,846 |
+| 플래그 정의 (config.go) | 약 290 |
 
 **엔진(vLLM)은 한 줄도 바꾸지 않았다.** 게이트웨이는 기존 Llumnix hold loop
 (`scheduler_client.go:176-235`)를 재사용하고, 더한 것은 같은 429 본문을 두 의미로 가르는
@@ -1290,18 +1510,68 @@ chat 자신의 prefill만으로 요청 안 토큰당 시간의 변동계수 φ >
 시간 배치를 바꿔도 안 된다. **남는 수단은 admission 양뿐이다.** 판정은 평균·누적
 deadline(문헌 관행)으로 하고 분위수는 별도 표로 낸다.
 
-### 9.8 swe의 E2E 실패가 손대지지 않았다
+### 9.8 swe의 E2E 실패 — v0.4가 형태를 바꿔서 풀었고, 대가가 남았다
 
-받아들인 swe의 **약 20~23%가 30초 E2E 예산을 넘긴다.** v0.3의 어느 변경도 이것을 거의
-움직이지 않았다(23.49% → 22.67% / 19.72%). E2E 클래스는 대기·prefill·디코드가 한 계좌라
-다른 성질이고, **이 시스템의 다음 축일 수 있다.**
+**v0.3까지의 상태**: 받아들인 swe의 약 20~23%가 30초 E2E 예산을 넘겼고 v0.3의 어느 변경도
+이것을 거의 안 움직였다(23.49% → 22.67% / 19.72%).
+
+**진단 (EXP-107 §10.2)**: 모델 오류가 아니었다. 승인 하나하나는 검사 시점에 정직한데
+(7초 창 예측 ≤ 69.2 ms) **함께 승인된 파이프라인이 이후 수십 초에 걸쳐 만드는 합동
+작동점이 78~80 ms**가 된다. 만성 초과이지 스파이크가 아니고(met·miss 모두 수명의 72~85%를
+72 ms 초과에서 보냈다), 예측 자체는 네 인스턴스 전부 predicted/observed = 1.00이다.
+**약속이 수명 적분인데 집행이 순간이라 생기는 틈**이다 — §1 ⑧.
+
+**v0.4의 답**: 약속의 형태를 per-token(TTFT 7초 + 75 ms/token)으로 바꿔 **약속과 집행을
+같은 양으로** 만들었다. swe admitted 69~71 → **90.1**, 전체 admitted 96.4 → **98.3**,
+네 구간 전부 admitted ≥ 95.6.
+
+**⚠ 남은 것 둘**:
+1. **대가가 크고 반드시 병기해야 한다.** 새 약속은 벽시계로 더 느슨하다 — admitted swe의
+   유효 e2e가 **중앙값 34.2초, 30초 초과 62.7%**이고, 같은 run을 옛 30초 잣대로 채점하면
+   offered −8.8 / admitted −4.4다. chat offered도 11점 내려간다.
+2. **근거가 반복 하나다.** 같은 규칙으로 채점한 대조군 arm이 없어서 형태 전환의 몫을
+   cap·force와 가를 수 없다. `fsv3`에 SLO 형태만 얹은 arm이 필요하다.
+
+**그리고 §10.2의 직접 증거 한 칸이 비어 있다** — *"승인 시점 ≤69.2 → 이후 78~80"*의 연결이
+간접 증거까지다. 배치 로그 줄에 `meanAfter` 필드를 더하면 닫힌다(EXP-101이 `prefillest`를
+넣은 것과 같은 방식).
 
 ### 9.9 `class-harm` 기본값이 측정된 적 없다
 
 컴파일 기본값이 true인데 **EXP-27 pass 2 이후 모든 조건이 false로 돌았다.** v0.3에서
 옮기지 않기로 했으므로 **모든 arm이 명시로 false를 계속 박아야 한다**(§4.5).
 
-### 9.10 정적 도착률 sweep에서 v0.3이 확인되지 않았다
+### 9.10 정적 도착률 sweep에서 v0.3·v0.4가 확인되지 않았다
 
-v0.3의 근거는 **mix-shift 한 시간 trace뿐**이다. 정적 sweep은 §9.1의 "50~58분 실패가
-용량인가 정책인가"도 같이 답한다.
+v0.3의 네 변경과 v0.4의 세 변경이 **전부 같은 mix-shift 한 시간 trace 하나**에서만
+측정됐다. 그 trace는 무릎(28.0 req/s) 아래 세 구간과 위 한 구간을 섞고 있어서 **전체
+평균이 두 체제를 섞는다**(EXP-104 §4.2 — 선호가 무릎 아래에서는 깨끗이 이기고 무릎 위에서는
+반복 폭이 커진다). 정적 sweep은 §9.1의 "50~58분 실패가 용량인가 정책인가"도 같이 답한다.
+
+**논문 쪽 귀결이 더 크다**: 지금 고정된 evaluation 세트
+(`paper_experiment/static_sweep_2026-08` 등)는 전부 **v0.2(`fspfx`)**이고, design 절이
+기술하는 시스템은 v0.4다. **두 절이 다른 시스템을 말하고 있고**, 그 간극을 메우려면 정적
+sweep을 v0.4로 다시 돌려야 한다.
+
+### 9.11 (v0.4) 강제 배치가 만들던 거절 연쇄 — 끊었고, 그 크기가 예상을 넘었다
+
+**무엇이었나.** 사다리 4단의 force는 *"아무도 안 받고 더 기다릴 수도 없지만 이 요청 자신은
+자기 예산을 지킬 수 있다"*일 때 **feasibility가 거부한 것을 알면서** 최소 피해 인스턴스에
+배치했다. 원안 설계표는 이미 "만료된 latency-sensitive는 REJECT"였고 force는 구현 과정의
+이탈이었다.
+
+**사전 측정 (`force_fate.py`, EXP-104/105 run 재분석)**: 강제 배치된 deepresearch 2,424건의
+**자기 SLO 달성이 72.2%**(route는 99.9%)이고, **그 순간 그 인스턴스에 있던 요청들의 위반율이
+7.3% 대 다른 인스턴스 0.0%**다(swe는 23.1% 대 7.8%). **선택 편향은 축소 방향**이다 — force
+목적지는 `harm` 최소로 골라진, 상주가 더 건강한 인스턴스다.
+
+**결과 (EXP-107 §7, 2반복, 사전 예측을 반대 방향으로 초과)**: offered 76.5/78.3 →
+**81.4/80.3**, 거절률 21.2/19.5 → **15.8/17.4**, goodput +4%. 두 반복 비겹침.
+
+**기제가 산술로 닫힌다**: 옛 force 인구 약 2.6천 건이 명시 거절(`no_feasible`) 약 2.5천
+건이 됐는데 **총 거절은 20.9k/19.2k → 15.5k/17.1k로 4~5천 건 줄었다.** 강제 배치가 동거
+요청을 위반시켜 그 인스턴스의 feasibility를 무너뜨리고, 그것이 **뒤이어 도착하는 요청들의
+거절**을 만들고 있었다. 원인을 끊자 결과가 그보다 큰 폭으로 사라졌다.
+
+**그러므로 이 변경의 서술은 "거절을 늘려 품질을 샀다"가 아니다** — 거절이 줄고 배치가 늘고
+goodput이 늘었다. v0.4의 세 변경 중 유일하게 모든 방향에서 이득이다.
