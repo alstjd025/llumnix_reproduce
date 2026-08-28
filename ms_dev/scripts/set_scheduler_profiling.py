@@ -190,6 +190,17 @@ FLUIDSERVE_ABLATIONS = {
     # Integers, not booleans.
     "FS_PREFIX_BLOCK_TOKENS": "--fluidserve-prefix-block-tokens",
     "FS_PREFIX_CAPACITY": "--fluidserve-prefix-capacity",
+    # EXP-107. The class-instance cap: per class, bound the number of instances
+    # whose pace gate the class sets at a demand-derived limit. Off in the
+    # shipped default, so the control arm needs no environment variable.
+    "FS_INSTANCE_CAP": "--fluidserve-class-instance-cap",
+    # A float (residence-time multiple), not a boolean -- same handling as
+    # FS_GATE_SLACK.
+    "FS_CAP_WINDOW_MULT": "--fluidserve-class-instance-cap-window-mult",
+    # EXP-107. On by default (the shipped behaviour keeps the force branch);
+    # the treatment arm sets FS_FORCE=false, which turns a forced placement
+    # into an explicit early rejection.
+    "FS_FORCE": "--fluidserve-enable-force",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -587,6 +598,13 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-prefix-calibration", "prefixcalib"),
         ("--fluidserve-prefix-block-tokens", "prefixblock"),
         ("--fluidserve-prefix-capacity", "prefixcap"),
+        # EXP-107. The three fields sit at the END of the startup line, after
+        # `budgets "..."` -- nothing may be inserted between classpin and
+        # budgets, and the values here are a bool, a bare float and a bool, all
+        # readable by the generic token regex above.
+        ("--fluidserve-class-instance-cap", "instancecap"),
+        ("--fluidserve-class-instance-cap-window-mult", "capmult"),
+        ("--fluidserve-enable-force", "enableforce"),
     ]
     bad = []
     for flag, key in checks:

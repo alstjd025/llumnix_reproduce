@@ -133,6 +133,75 @@ s2(chat 77%)에서는 두 예산이 거의 같다. **바뀐 것은 균등 믹스
 
 ---
 
+### ▶ 지금 상태 (2026-08-28 09:30 KST) — EXP-107 전부 완료 (8 run + guardrail 2 run), 클러스터 비어 있음
+
+**정본 `experiments/EXP-107_class-instance-cap.md` §7(본 체인 판정)·§8(guardrail 판정).**
+그림 `results/aggregate_analysis/exp107_capforce/` 최종화(대조군·cap 구판·force끔·
+둘다·guardrail·llm-d 전부 한 세트).
+
+- **force→REJECT: 채택 방향 확정** (2반복, offered +2.9~+4.4, 거절률 −4).
+- **guardrail cap(fsv3capg): G1·G3·G4·G5 통과, G2 절반** — 전체 admitted 96.2~96.4,
+  dr 보호 +4~8, chat 비용 +2.5, 총계 −1.2~−3.0(경계 안), 발화 창 57~59%.
+  **swe admitted(69)만 미회복 — 구조적**(평균 유도 nominal이 요청 절반에 부족한
+  클래스는 격리가 해롭다, §8.1). 선택지 셋 §8.1.
+- **미측정 1칸**: guardrail cap + force off (가법 예측 offered ~78.5, 거절 ~17.5) —
+  최종 후보 구성. 2반복 ≈ 2.5시간.
+- 배포 `08f9e9ce`(guardrail 판). 백업 사슬 `pre-exp107g`=`092edd73`, `pre-exp107`=`d867351a`.
+- 커밋 안 함(지시 대기). EXP-106(PolyServe 충실도)은 이 뒤로 — staged 파일 2개 재파생 필요.
+
+---
+
+### ▶ 앞선 상태 (2026-08-28 07:00 KST) — EXP-107 본 체인 6/6 완료, guardrail판 재실험 중
+
+**정본은 `experiments/EXP-107_class-instance-cap.md` §5.5(진단·수정·G 판정 규칙)와
+§7(본 체인 판정).** 그림은 `results/aggregate_analysis/exp107_capforce/`(표준 세트 +
+`class_summary_bars.png` + 진단 그림 둘, 전부 재실행 스크립트 있음).
+
+- **force→REJECT(fsv3nofrc): 채택 방향, 예상 초과.** offered +2.9~+4.4, 거절률
+  −4점(예상은 +2였다 — 강제 배치가 만들던 후속 거절 연쇄가 원인 2.5천 건을 끊자
+  4~6천 건 사라짐), goodput +4%, 두 반복 비겹침.
+- **구판 cap(비례 정규화): 기각 확정** — 상시 정규화가 chat 상한을 1로 고정
+  (한 시간의 3/4), swe는 chat 인스턴스에 얹혀 살던 것을 잃음(admitted 88.8→70.9,
+  miss는 전부 디코드 시간). dr 보호 +8~11은 실재.
+- **guardrail판(fsv3capg, 바이너리 `08f9e9ce`)**: 정규화 삭제 + "다른 클래스가
+  실제로 굶을 때만 차단". 파라미터 0개 추가. smoke 통과(chat 상한이 원시 수요로
+  복원, 40 req/s 평탄 trace에서는 발화 0 = 올바른 무개입). **한 시간 shift 2반복이
+  지금 돌고 있다(~09:25 KST 종료, 체인 PID 1495510, exp107g.log).**
+- 배포 바이너리 `08f9e9ce`. 백업 사슬: `pre-exp107g`=`092edd73`(EXP-107 첫 판),
+  `pre-exp107`=`d867351a`(v0.3).
+
+---
+
+### ▶ 앞선 상태 (2026-08-27 21:50 KST) — EXP-107 구현·smoke 완료, 본 실험 대기
+
+**배포 바이너리 `092edd73` = EXP-107 판** (v0.3 `d867351a` + 두 메커니즘, 기본값은
+cap 꺼짐/force 켜짐이라 플래그를 안 만지면 v0.3과 코드 경로 동일). 백업
+`bin-backup/scheduler-exp07.pre-exp107` = `d867351a`. **클러스터 비어 있음.**
+
+**무엇이 들어갔나** (정본 [class-instance-cap-design.md](class-instance-cap-design.md),
+실험 파일 `experiments/EXP-107_class-instance-cap.md`에 판정 규칙 사전 등록):
+- **class-instance cap** (`--fluidserve-class-instance-cap`): 클래스가 gate를 정하는
+  인스턴스 수를 수요 유도 상한으로 묶고, 초과 상태에서는 그 클래스를 가장 많이 든
+  상위 K대로만 보내 잉여가 한 체류 시간 안에 배수되게 한다.
+- **force → 명시적 거절** (`--fluidserve-enable-force=false`): "자기 예산은 지키지만
+  모든 배치가 돌고 있는 요청들을 위반시키는" 요청을 강제 배치하는 대신 즉시 429.
+  shed 사유가 `cannot_meet`/`no_feasible`로 갈라져 세어진다.
+
+**smoke 둘 다 통과 (9분 ablation trace, rc 0/0)**:
+- A(`fsv3`, 무변경): 새 시리즈 7개 전부 수집, limit sentinel −1, 종결 검산 24,047 정확.
+- B(`fsv3capnofrc`): limit이 chat 2~3 / dr 1~2 / swe 1~2로 정상 범위, **feasible 후보
+  차단 10,551건(cap이 결정을 실제로 바꿈)**, `no_feasible` 거절 871, force 0,
+  empty-fallback 0, 검증 줄 `instancecap=true, capmult=3.0, enableforce=false` 통과.
+
+**다음**: EXP-107 본 실험 (3 arm × 2반복, shift trace, ~8시간, 체인
+`/home/nxclab/tools/exp107_capforce.sh` 준비됨. 대조군은 EXP-104 fsv3 — 재실행 안 함).
+⚠ **staged된 EXP-106(PolyServe 충실도)과 실행 순서를 사용자가 정해야 한다.** EXP-106의
+staged `set_scheduler_profiling.py.new`/`llumnix_metrics.py.new`는 이번 편집 이전의
+사본이라, EXP-106을 나중에 걸면 **그 apply 전에 두 파일을 재파생해야 한다**(BASE_MD5
+검사가 지금 상태에서 실패하는 것이 정상).
+
+---
+
 ### ▶ 앞서 돌던 것 (2026-08-27 14:04 KST) — EXP-105, swe 예산 40초
 
 **mix-shift 한 시간 trace, `fsv3b40` / `fsv3noaffb40` 2반복씩 4조건. 끝나는 시각

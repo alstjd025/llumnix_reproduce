@@ -392,8 +392,14 @@ func (r *requestRegistry) takeChargedPrefill(instanceID string) float64 {
 // policy independent of the gateway's retry setting: whatever cadence the
 // gateway uses, this reports it.
 func (r *requestRegistry) noteArrival(
-	requestID string, promptTokens int, nowMs int64) (int64, float64) {
+	requestID string, promptTokens int, nowMs int64) (
+	arrivedMs int64, recheckMs float64, first bool) {
 
+	// The third return is an explicit first-sighting signal. Callers must not
+	// infer it from arrivedMs == nowMs: a re-entry in the same millisecond as
+	// the arrival returns equal timestamps too, and the per-tier demand
+	// estimate behind the class-instance cap double-counts exactly the held
+	// requests if that happens under load.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if t, ok := r.arrivedMs[requestID]; ok {
@@ -402,7 +408,7 @@ func (r *requestRegistry) noteArrival(
 			gap = float64(nowMs - last)
 		}
 		r.lastSeenMs[requestID] = nowMs
-		return t, gap
+		return t, gap, false
 	}
 	r.arrivedMs[requestID] = nowMs
 	r.lastSeenMs[requestID] = nowMs
@@ -422,7 +428,7 @@ func (r *requestRegistry) noteArrival(
 	r.gcLocked(nowMs)
 	// First sighting: nothing has been waited yet, so no re-decision interval is
 	// needed and none has been observed.
-	return nowMs, 0
+	return nowMs, 0, true
 }
 
 func (r *requestRegistry) gcLocked(nowMs int64) {

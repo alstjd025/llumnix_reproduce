@@ -459,6 +459,87 @@ func (m *capacityModel) maxKvForAllowance(
 	return (allowanceMs - overhead) / cKv
 }
 
+// tierServiceRate is the steady-state completion rate, in requests per second,
+// of one instance serving ONLY the given class at the given per-token
+// allowance -- the mu behind the class-instance cap's demand-to-instances
+// conversion (fluidserve_instancecap.go).
+//
+// It solves the same mixed-step model meanStepMs applies, at the operating
+// point where the mean step time sits exactly at the allowance. Writing d for
+// the marginal step cost of one more resident and s_p for the fraction of
+// steps that carry a prefill chunk:
+//
+//	a = c0 + d*B + s_p*(t_pre - c0),   d = c_kv*kvPerReq + c_n
+//
+// A chunk-carrying step still advances every decoder, so prefill costs only
+// its EXTRA time over a decode step. In steady state the chunk rate is the
+// request rate times chunks per request, and a step takes a ms, which closes
+// the equation without iteration:
+//
+//	s_p = (B/residence) * (prompt/chunk) * (a/1000)
+//	B   = (a - c0) / (d + extraPrefillMsPerReq * a / (1000 * residence))
+//
+// Omitting the prefill term was measured to be not merely biased but
+// physically impossible for the heavy-input classes: it claimed 6.3 req/s for
+// a class whose prompt length alone caps one instance at 3.8.
+//
+// The allowance is divided by the fleet correction factor, as every other
+// consumer of this model divides, and B is clamped by the KV pool when the
+// caller knows it. The result is a class-mean quantity for sizing an integer
+// limit, not a per-placement prediction.
+func (m *capacityModel) tierServiceRate(
+	allowanceMs, meanPrompt, expectedToks, chunk, kvCapTokens float64) float64 {
+
+	if allowanceMs <= 0 || expectedToks < 1 {
+		return 0
+	}
+	m.mu.RLock()
+	c0, cKv, cN, corr := m.c0, m.cKv, m.cN, m.corrLocked("")
+	m.mu.RUnlock()
+	if corr <= 0 {
+		return 0
+	}
+	a := allowanceMs / corr
+	if a <= c0 {
+		return 0
+	}
+	if chunk <= 0 {
+		chunk = 2048
+	}
+	if meanPrompt < 0 {
+		meanPrompt = 0
+	}
+
+	extraPrefill := 0.0 // ms of prefill surcharge per request
+	prefillMsPerReq := 0.0
+	if meanPrompt > 0 {
+		pre := m.prefillStepMs(math.Min(meanPrompt, chunk))
+		if math.IsInf(pre, 0) {
+			return 0
+		}
+		chunks := prefillSteps(meanPrompt, chunk)
+		extraPrefill = chunks * (pre - c0)
+		prefillMsPerReq = chunks * pre
+	}
+	// Residence: the prompt's compute plus the decode phase at the promised
+	// pace. The nominal allowance, not the margined one, because it describes
+	// how long the request LIVES, which is set by the promise it runs under.
+	residenceS := (prefillMsPerReq + expectedToks*allowanceMs) / 1000.0
+	if residenceS <= 0 {
+		return 0
+	}
+	kvPerReq := meanPrompt + expectedToks/2
+	d := cKv*kvPerReq + cN
+	b := (a - c0) / (d + extraPrefill*a/(1000.0*residenceS))
+	if kvCapTokens > 0 && kvPerReq > 0 {
+		b = math.Min(b, kvCapTokens/kvPerReq)
+	}
+	if b <= 0 {
+		return 0
+	}
+	return b / residenceS
+}
+
 // floorStepMs is the cost of an iteration on an otherwise empty instance. An
 // allowance below this cannot be met by any placement decision, which is the
 // test used to identify a request whose SLO is not physically achievable.

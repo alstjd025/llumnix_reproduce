@@ -42,6 +42,9 @@ func fsPolicy(t *testing.T, budgets string, mutate func(*fluidserveConfig)) *flu
 		// which is an ablation rather than the shipped behaviour, so a test that
 		// did not set it would silently measure the ablation.
 		affinityWeight: 1.0,
+		// Same reason again: the zero value disables the force branch, which is
+		// the EXP-107 treatment arm, not the shipped default.
+		enableForce: true,
 	}
 	if mutate != nil {
 		mutate(&cfg)
@@ -53,6 +56,7 @@ func fsPolicy(t *testing.T, budgets string, mutate func(*fluidserveConfig)) *flu
 		lengths:  lengths,
 		registry: newRequestRegistry(lengths, b),
 		shedIDs:  map[string]int64{},
+		tierArr:  map[int]*tierArrivalState{},
 	}
 	p.baseDispatchPolicy = baseDispatchPolicy{
 		consts.InferTypeNeutral: {

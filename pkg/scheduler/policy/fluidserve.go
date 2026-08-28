@@ -122,6 +122,22 @@ type fluidserveConfig struct {
 	affinityWeight float64
 	// affinityMetric is share|count; see sortCandidates.
 	affinityMetric string
+	// classInstanceCap caps, per class, the number of instances whose gate
+	// that class sets, at a demand-derived limit. Mechanism and constants are
+	// in fluidserve_instancecap.go.
+	classInstanceCap bool
+	// capWindowMult is how many residence times the cap's demand estimate
+	// smooths over -- the definition of how long a shift must persist before
+	// it earns fleet share.
+	capWindowMult float64
+	// enableForce keeps the last-resort branch that places a request the
+	// fleet's feasibility refused everywhere, provided the request itself is
+	// still predicted to meet its own budget. With it off, that case becomes
+	// an explicit early rejection (shed reason "no_feasible") -- measured on
+	// the mix-shift hour, the forced placements met their own budgets only
+	// 56-82% of the time and their co-residents violated several times more
+	// often than same-instant residents elsewhere.
+	enableForce bool
 	// perInstanceCorrection keeps the measured-against-predicted correction per
 	// instance instead of one scalar for the fleet. See capacityModel.
 	perInstanceCorrection bool
@@ -293,6 +309,13 @@ type instanceFlux struct {
 	// causes more lateness -- a feedback loop that was measured collapsing the
 	// fleet. The nominal pace is a property of the class, so the gate is stable.
 	gateAllowance float64
+	// gateTier is the tier whose nominal budget IS gateAllowance -- the class
+	// that sets this instance's gate -- and gateTierNominal is that budget.
+	// Computed over exactly the same residents gateAllowance is (achievable,
+	// nominal > 0), so the cap that counts gate holders counts the same gate
+	// the feasibility test enforces. Zero / +Inf when nothing sets a gate.
+	gateTier        int
+	gateTierNominal float64
 	// tightestAllowance is the tightest REMAINING budget on the instance. It
 	// does not gate admission; it is what the damage estimate is measured
 	// against and what the telemetry reports.
@@ -353,6 +376,12 @@ type fluidserveDispatchPolicy struct {
 	// headroom the decision read moved between them.
 	probeMu   sync.Mutex
 	lastProbe map[string]placementProbe
+
+	// capMu guards the per-tier demand estimates behind the class-instance
+	// cap. Fed once per request (first sighting) from calculateMetrics, read
+	// by applyInstanceCap. See fluidserve_instancecap.go.
+	capMu   sync.Mutex
+	tierArr map[int]*tierArrivalState
 }
 
 // cachedFlux is one instance's state as of a particular engine status and a
@@ -462,10 +491,16 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 	}
 
 	now := nowMillis()
-	arrived, recheckMs := p.registry.noteArrival(
+	arrived, recheckMs, firstSighting := p.registry.noteArrival(
 		request.Id, request.PromptNumTokens, now)
 
 	tier := request.TpotSloMs
+	if firstSighting {
+		// Once per request, never per gateway recheck: a held request
+		// re-enters every 500 ms, and counting those would inflate a held
+		// tier's demand estimate exactly when the cap should be binding.
+		p.noteTierArrival(tier, request.PromptNumTokens, now)
+	}
 	nominal, expected, isE2E, budgetMs := p.registry.requestBudget(tier)
 
 	// EXP-64. With the flag on, a request that declares its own output length is
@@ -1119,6 +1154,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	floor := p.capacity.floorStepMs(f.id)
 	f.tightestAllowance = math.Inf(1)
 	f.gateAllowance = math.Inf(1)
+	f.gateTierNominal = math.Inf(1)
 	for i := range f.live {
 		if f.live[i].allowanceMs < floor {
 			// No batch composition can serve this request within its remaining
@@ -1134,6 +1170,8 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 		f.achievable++
 		if f.live[i].nominalMs > 0 && f.live[i].nominalMs < f.gateAllowance {
 			f.gateAllowance = f.live[i].nominalMs
+			f.gateTier = f.live[i].tier
+			f.gateTierNominal = f.live[i].nominalMs
 		}
 		// The protection is against CAUSING a miss. A request whose remaining
 		// budget per token is already below what the instance is delivering is
@@ -1382,6 +1420,13 @@ func (s *fluidserveSelector) selectInstance(
 		return nil
 	}
 	cands = p.applyClassPin(cands, instances, req)
+	cands = p.applyInstanceCap(cands, req)
+	if len(cands) == 0 {
+		// applyClassPin can return an empty slice only through its own
+		// fallback bug surface and applyInstanceCap refuses to empty the list,
+		// but an empty slice panics at cands[0] below, so guard it once here.
+		return nil
+	}
 	// Would the projection have changed what happens to THIS request, as opposed
 	// to what one instance looked like? Two different answers count separately:
 	// whether the request gets placed at all, and if it does, whether it goes
@@ -1456,10 +1501,29 @@ func (s *fluidserveSelector) selectInstance(
 	if p.cfg.shedFleetScale > 0 {
 		shedTest = p.missesOnFleet(req, cands, p.cfg.shedFleetScale)
 	}
-	if p.cfg.enableShed && shedTest {
+	// Two reasons to refuse, counted apart because they are different
+	// statements. "cannot_meet": placing the request now would miss its own
+	// budget -- refusing protects the request's class from a certain
+	// violation occupying a slot. "no_feasible": the request could still meet
+	// its budget, but every permitted placement is predicted to push requests
+	// already running past theirs -- refusing protects the admitted. The
+	// second used to fall through to a forced placement; with
+	// --fluidserve-enable-force=false it is an explicit early rejection
+	// instead, which is what the original design table specified for an
+	// expired latency-sensitive request.
+	shedReason := ""
+	switch {
+	case p.cfg.enableShed && shedTest:
+		shedReason = "cannot_meet"
+	case !p.cfg.enableForce:
+		shedReason = "no_feasible"
+	}
+	if shedReason != "" {
 		p.registry.forget(req.id)
 		metrics.Counter("scheduler_fluidserve_decisions_total",
 			metrics.Labels{{Name: "decision", Value: "shed"}}).Inc()
+		metrics.Counter("scheduler_fluidserve_shed_reason_total",
+			metrics.Labels{{Name: "reason", Value: shedReason}}).Inc()
 		// The same line commit() writes, for a request that is refused instead
 		// of placed. Without it the offline join sees only the placements, and
 		// "the estimate never reaches the budget" cannot be told apart from
@@ -1469,10 +1533,13 @@ func (s *fluidserveSelector) selectInstance(
 		//
 		// There is no dispatch line for a refused request, so the analysis takes
 		// the waited figure from this line rather than from a placement instant.
+		// The reason token goes at the END of the line: the offline scripts
+		// that parse fsplacement lines read the positional fields up to inst=,
+		// and none of their patterns anchor at the line end.
 		klog.Infof("[Schedule] dispatch request %s fsplacement tier=%d waited=%d "+
-			"prefillest=%.1f prefillraw=%.1f prompt=%d decision=%s inst=%s",
+			"prefillest=%.1f prefillraw=%.1f prompt=%d decision=%s inst=%s reason=%s",
 			req.id, req.tier, req.nowMs-req.arrivedMs, best.prefillMs,
-			best.prefillRaw, req.promptTokens, "shed", best.flux.id)
+			best.prefillRaw, req.promptTokens, "shed", best.flux.id, shedReason)
 		p.noteShed(req.id)
 		klog.V(5).Infof("FluidServe sheds request %s (tier %dms, waited %dms): "+
 			"placing it on %s would give %.1fms per token and %.0fms to first "+
@@ -2768,6 +2835,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		prefixCalibrate: p.FluidservePrefixCalibration,
 		prefixBlockToks: p.FluidservePrefixBlockTokens,
 		prefixCapacity:  p.FluidservePrefixCapacity,
+
+		classInstanceCap: p.FluidserveClassInstanceCap,
+		capWindowMult:    p.FluidserveClassInstanceCapWindowMult,
+		enableForce:      p.FluidserveEnableForce,
 	}
 	if cfg.prefixAware && cfg.prefixBlockToks <= 0 {
 		panic("--fluidserve-prefix-block-tokens must be positive")
@@ -2779,6 +2850,21 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		panic("--fluidserve-gate-slack must be at least 1: below 1 the gate " +
 			"would refuse work the tightest resident class was promised")
 	}
+	if !cfg.enableShed && !cfg.enableForce {
+		// A silent auto-enable was considered and rejected: the deployment
+		// script verifies the startup line against the REQUESTED values, so a
+		// flipped effective value either aborts the run anyway or, worse,
+		// passes verification while the binary does the opposite of what the
+		// arm configured. Refusing to start is the same outcome, earlier and
+		// louder.
+		panic("--fluidserve-enable-shed=false and --fluidserve-enable-force=false " +
+			"together leave a request that no instance can take with no exit: the " +
+			"gateway would hold it to its retry ceiling and time it out. Enable " +
+			"one of the two.")
+	}
+	if cfg.classInstanceCap && cfg.capWindowMult <= 0 {
+		panic("--fluidserve-class-instance-cap-window-mult must be positive")
+	}
 
 	policy := &fluidserveDispatchPolicy{
 		cfg:       cfg,
@@ -2788,7 +2874,9 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		lastObs:   map[string]stepObservation{},
 		shedIDs:   map[string]int64{},
 		fluxCache: map[string]cachedFlux{},
+		tierArr:   map[int]*tierArrivalState{},
 	}
+	policy.preRegisterCapMetrics()
 	policy.registry.SetPerInstanceDelay(cfg.perInstanceDelay)
 	if cfg.prefixAware {
 		policy.prefix = newPrefixIndex(cfg.prefixBlockToks, cfg.prefixCapacity)
@@ -2829,7 +2917,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		// to stay adjacent. A field inserted between them is swallowed by that
 		// group and the pin check silently compares the wrong text.
 		"prefix=%v, prefixcalib=%v, prefixblock=%d, prefixcap=%d, "+
-		"classpin=%v, budgets %q",
+		// The three EXP-107 fields go AFTER budgets, at the very end, for the
+		// same reason the prefix fields sit before classpin: nothing may be
+		// inserted between classpin and budgets.
+		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -2841,7 +2932,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		p.FluidserveShedSignal, cfg.oracleLength,
 		cfg.prefixAware, cfg.prefixCalibrate, cfg.prefixBlockToks, cfg.prefixCapacity,
 		formatClassPin(cfg.classPin),
-		p.FluidserveClassBudgets)
+		p.FluidserveClassBudgets,
+		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce)
 
 	go policy.reportLoop()
 	return policy

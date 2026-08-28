@@ -305,6 +305,11 @@ type FullModeSchedulingConfig struct {
 	FluidserveKvSlopeProjection bool
 	FluidserveGateSlack         float64
 
+	// EXP-107
+	FluidserveClassInstanceCap           bool
+	FluidserveClassInstanceCapWindowMult float64
+	FluidserveEnableForce                bool
+
 	// The vLLM router cache_aware baseline. Defaults are that package's, not the
 	// SGLang original's -- see the note on VllmCacheThreshold below.
 	VllmCacheThreshold    float64
@@ -802,6 +807,33 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"begun to miss as costing nothing and therefore keeps sending it more. "+
 			"It is a separate switch from --fluidserve-enable-affinity so that the "+
 			"feasible-set ordering and this can be told apart in an ablation.")
+
+	// EXP-107: the class-instance cap and the force-branch switch. Defaults
+	// reproduce the shipped behaviour exactly -- cap off, force on -- so every
+	// arm that does not set them keeps the meaning of every run measured
+	// before the flags existed. Moving either default is a version event, not
+	// an edit (the v0.3 procedure).
+	flags.BoolVar(&c.FluidserveClassInstanceCap, "fluidserve-class-instance-cap", false,
+		"Cap, per SLO class, the number of instances whose pace gate that class "+
+			"sets, at a demand-derived limit (arrival rate over the per-instance "+
+			"service rate at the class's pace). At the limit, the class may only be "+
+			"placed on its most-loaded gate holders, so surplus gate holders drain "+
+			"within one residence time and their gates release to the next class.")
+	flags.Float64Var(&c.FluidserveClassInstanceCapWindowMult,
+		"fluidserve-class-instance-cap-window-mult", 3.0,
+		"Smoothing horizon of the cap's demand estimate, in residence times of "+
+			"each class (clamped to 15-120 s). It defines how long a demand shift "+
+			"must persist before it moves the class's instance limit: bursts "+
+			"shorter than the window are absorbed by admission instead of by "+
+			"re-gating instances.")
+	flags.BoolVar(&c.FluidserveEnableForce, "fluidserve-enable-force", true,
+		"Keep the last-resort branch that places a request every instance refused, "+
+			"provided the request itself is still predicted to meet its own budget. "+
+			"With false, that case is rejected immediately instead (shed reason "+
+			"no_feasible): the placement was known to push running requests past "+
+			"their budgets, and measured on the mix-shift hour such placements met "+
+			"their own budgets only 56-82% of the time. Requires "+
+			"--fluidserve-enable-shed=true when false.")
 
 	flags.BoolVar(&c.EnableAdaptivePD, "enable-adaptive-pd", consts.DefaultEnableAdaptivePD, "Llumnix enable adaptive pd")
 	flags.Float32Var(&c.TpotMigrateOutFloorThreshold, "tpot-migrate-out-floor-threshold", consts.DefaultTpotMigrateOutFloorThreshold, "Llumnix tpot migrate out floor threshold")
