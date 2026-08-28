@@ -133,7 +133,23 @@ s2(chat 77%)에서는 두 예산이 거의 같다. **바뀐 것은 균등 믹스
 
 ---
 
-### ▶ 지금 상태 (2026-08-28 09:30 KST) — EXP-107 전부 완료 (8 run + guardrail 2 run), 클러스터 비어 있음
+### ▶ 지금 상태 (2026-08-28 12:40 KST) — EXP-107 종결 (12 run), 최종 후보 구성 확정, 클러스터 비어 있음
+
+**정본 `experiments/EXP-107_class-instance-cap.md` §9.** 최종 후보
+**fsv3capgnofrc(guardrail cap + force off, 바이너리 `08f9e9ce`)**: offered
+78.7~78.9(대조군 76.4~78.2 위), admitted 96.6~96.8, 거절 17.9~18.0(대조군 −1.3~−3.2),
+dr +5.7~+9.6, chat 비용 ~0, 가법 예측(78.5) 적중. **남은 결정: swe 구조 문제
+(§8.1 — 40초 예산 재고가 정확한 해독제) + 기본값 이동(v0.4 절차) 승인.**
+그림 전체 `results/aggregate_analysis/exp107_capforce/` (arm별 타임라인 쌍 셋 +
+최종 후보 타임라인 + class_summary). 커밋: 바깥 `feat/exp107-instance-cap`
+`508ee6d`, 실험 저장소 `feat/fluidserve` `a05be38`+`d676ea7`
+(⚠ push 한도 초과 blob 둘을 최근 6커밋 재작성으로 제거 — EXP-105~107 문서 커밋
+해시가 바뀌었다. transcript 두 파일은 디스크·백업에 바이트 동일, md5는
+`workloads/codingagent_request_level_poisson/data/README.md`).
+
+---
+
+### ▶ 앞선 상태 (2026-08-28 09:30 KST) — EXP-107 전부 완료 (8 run + guardrail 2 run), 클러스터 비어 있음
 
 **정본 `experiments/EXP-107_class-instance-cap.md` §7(본 체인 판정)·§8(guardrail 판정).**
 그림 `results/aggregate_analysis/exp107_capforce/` 최종화(대조군·cap 구판·force끔·
