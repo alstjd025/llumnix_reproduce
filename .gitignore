@@ -179,6 +179,17 @@ cython_debug/
 # DS Store
 .DS_Store
 
+# macOS AppleDouble sidecars. A backup copy of this tree on an exFAT volume grows
+# one ._<name> file per real file (38,962 of them on the 2026-08-28 SSD copy), and
+# none of them are ours: a single `git add -A` from such a copy would commit the
+# lot, and git also misreads the ones under .git/ as packs and refs.
+._*
+
+# Stray `go build ./cmd/scheduler` output at the repo root (the default binary
+# name is the package directory). The deployed binary is bin/scheduler-exp07,
+# which `bin` above already covers; this one is 37 MB of build artifact.
+/scheduler
+
 # Results
 *.csv
 
