@@ -96,7 +96,23 @@ func parseClassBudgets(spec string) (*classBudgets, error) {
 			}
 			b.byTier[tier] = budgetSpec{tier: tier, mode: budgetE2E, totalMs: float64(ms)}
 		case "decode":
-			b.byTier[tier] = budgetSpec{tier: tier, mode: budgetDecode, perTokMs: float64(tier)}
+			// An optional third field is an explicit per-token budget in ms.
+			// Without it the tier KEY is the budget, which is right when the
+			// key was chosen as a budget (50, 100) and wrong when it is a
+			// legacy identifier -- the agent tier's key is 25 for historical
+			// reasons, and 25 ms per token is below this hardware's decode
+			// floor, the configuration that once made a baseline reject 98%
+			// of the class. "25:decode:75" states the real budget while the
+			// tier key keeps naming the class everywhere else.
+			perTok := float64(tier)
+			if len(fields) == 3 {
+				ms, err := strconv.Atoi(strings.TrimSpace(fields[2]))
+				if err != nil || ms <= 0 {
+					return nil, fmt.Errorf("malformed decode budget in %q", part)
+				}
+				perTok = float64(ms)
+			}
+			b.byTier[tier] = budgetSpec{tier: tier, mode: budgetDecode, perTokMs: perTok}
 		default:
 			return nil, fmt.Errorf("entry %q: mode must be e2e or decode", part)
 		}

@@ -104,9 +104,20 @@ FLUIDSERVE_FLAGS = {
     # the scoring rule has to move with it or the policy and the analysis judge
     # the same requests against different budgets. The scorer takes
     # FS_SWE_E2E_S (in seconds) for that, and prints a banner when it is not 30.
+    #
+    # EXP-107T. FS_SWE_TBT_MS switches the agent class's budget FORM: instead of
+    # an end-to-end budget it gets an explicit per-token one ("25:decode:75"),
+    # the same form chat and deepresearch use. The tier key stays 25 -- it names
+    # the class in every profile and log -- and the third field carries the real
+    # budget, because in bare decode mode the key IS the budget and 25 ms is
+    # below this hardware's decode floor. Mutually exclusive with FS_SWE_E2E_MS;
+    # scoring must move with it (per-token rule at the same value, stated in the
+    # arm name).
     "--fluidserve-class-budgets":
-        f"25:e2e:{int(float(os.environ.get('FS_SWE_E2E_MS', '30000')))},"
-        "50:decode,100:decode",
+        (f"25:decode:{int(float(os.environ['FS_SWE_TBT_MS']))},"
+         if os.environ.get('FS_SWE_TBT_MS') else
+         f"25:e2e:{int(float(os.environ.get('FS_SWE_E2E_MS', '30000')))},")
+        + "50:decode,100:decode",
     "--fluidserve-horizon-steps": "100",
     "--fluidserve-z-safety": "1.65",
     "--fluidserve-enable-pend": "true",
