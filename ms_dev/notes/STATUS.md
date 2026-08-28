@@ -133,7 +133,32 @@ s2(chat 77%)에서는 두 예산이 거의 같다. **바뀐 것은 균등 믹스
 
 ---
 
-### ▶ 지금 상태 (2026-08-28 12:40 KST) — EXP-107 종결 (12 run), 최종 후보 구성 확정, 클러스터 비어 있음
+### ▶ 재개 앵커 (2026-08-28 17:00 KST 작성) — 3일 점검(홈 초기화) 직전의 최종 상태
+
+**서버는 2026-08-28 18:00 KST부터 3일 점검, `/home/nxclab` 전체 초기화.**
+복원 절차의 정본은 [RESTORE-2026-08-28.md](RESTORE-2026-08-28.md)
+(백업 위치 `/NHNHOME/NXC_ROOT/NXC13/home_backup_2026-08-28/`, 홈·클러스터 복원,
+검증 run). 분석용 사본은 사용자의 맥 SSD `mac_kit_2026-08-28/`(347 run + 소스 +
+traces + shift 계열 토큰 이벤트).
+
+**시스템 최종 상태**: 바이너리 `6dc9f035`(guardrail cap + force 플래그 +
+`tier:decode:<ms>` 문법). 채택 구성 = **cap on(guardrail) + force off + swe SLO
+per-token(TTFT 7s, 75 ms/tok)** — 기본값 이동(v0.4)은 재개 후.
+
+**EXP-107 최종 성과** (정본 `experiments/EXP-107_class-instance-cap.md` §7~§10):
+- force→REJECT: offered +3~4.4, 거절 −4 (연쇄 소멸, 2반복 비겹침).
+- guardrail cap: dr 보호 +4~8을 chat 비용 ~0으로, 발화 창 57~59%.
+- s1 진단 종결(§10.2): E2E 약속(수명 적분) 대 순간 집행의 불일치 — 승인은 개별로
+  정직한데 합동 작동점이 약속을 넘는다. 철회 둘 포함(분위수 유도·침묵 drift).
+- **swe per-token 전환(§10.3~10.4, n=1)**: 전체 admitted 98.4, **s1 admitted
+  95.4** — admitted-우선 원칙이 2배 과부하에서도 성립. 대가는 chat offered −11.
+
+**재개 첫 작업**: ⑴ t75 반복+규칙-대조 arm, ⑵ 배치 meanAfter 계측, ⑶ v0.4
+기본값 이동, ⑷ EXP-106(PolyServe 충실도 — staged 파일 2개를 현 수정 위에 재파생).
+
+---
+
+### ▶ 앞선 상태 (2026-08-28 12:40 KST) — EXP-107 종결 (12 run), 최종 후보 구성 확정, 클러스터 비어 있음
 
 **정본 `experiments/EXP-107_class-instance-cap.md` §9.** 최종 후보
 **fsv3capgnofrc(guardrail cap + force off, 바이너리 `08f9e9ce`)**: offered
