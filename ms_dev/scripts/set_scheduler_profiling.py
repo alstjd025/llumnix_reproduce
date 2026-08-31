@@ -72,7 +72,102 @@ SLO_FLAGS = {
 # It is derived from fluidserve.json now, which is the file both policies read,
 # so the two cannot drift apart again and neither policy holds an accuracy
 # advantage over the other in any comparison between them.
-TIER_BY_CLASS = {"swe": 25, "chat": 50, "deepresearch": 100}
+# Which tier each class lands in.  The tier identity IS the per-token budget the
+# request carries, so this table cannot be written down here: it is whatever the
+# workload configuration puts in `slo.<class>.tbt_ms`, because that is the field
+# the client packs into the request and the scheduler bins on.
+#
+# It was hard-coded as {"swe": 25, ...} until 2026-08-27, and that was wrong in a
+# way no check could see.  The agent class's real objective is end-to-end 30 s;
+# 25 ms is the idle decode step time measured in EXP-16, present in the balanced
+# mix only as a tier label.  FluidServe is told the real budget separately
+# (--fluidserve-class-budgets 25:e2e:30000) and never reads the 25 as a rate.
+# PolyServe has no such restatement and took it literally, so it judged the agent
+# class against a per-token budget seven to nine times tighter than its own
+# objective: at that class's KV footprint of 7,306 tokens the profiling table
+# allows a batch of 23 under 25 ms and 186 under the 55.7 ms that 30 s of
+# end-to-end budget actually buys.  The effect was invisible only because
+# admission was relaxed on the fallback pass and changed no decision at all.
+#
+# Reading the workload file also ties the two together for the next change: if
+# the agent class's end-to-end budget moves from 30 s to 40 s, the restated
+# per-token figure in the slofair configuration moves with it and so does the
+# tier, without anyone having to remember that this line exists.
+# The default stays the balanced configuration, which is what every arm before
+# this change ran, so an invocation that does not name a mix keeps deriving the
+# tiers those runs used.  The PolyServe arm names one, and it names it from the
+# same shell variable that selects the workload the runner loads -- one variable
+# moving both places, because a tier table derived from a different file than the
+# requests were built from is silent: the requests carry one budget, the length
+# table is keyed by another, and every lookup quietly falls back to the default
+# output length.
+DEFAULT_MIX_CONFIG = os.path.join(
+    REPO, "Agent_applications", "agent_motivation_experiment",
+    "workload_configs", "mix_short_m1_balanced.json")
+
+
+def tier_by_class():
+    """Read the per-class tier (TPOT SLO in ms) out of the workload config."""
+    path = os.environ.get("PS_MIX_CONFIG", DEFAULT_MIX_CONFIG)
+    if not os.path.isabs(path):
+        path = os.path.join(
+            REPO, "Agent_applications", "agent_motivation_experiment",
+            "workload_configs", path)
+    try:
+        with open(path) as fh:
+            doc = json.load(fh)
+    except OSError as exc:
+        sys.exit(f"cannot read the workload configuration {path}: {exc}. "
+                 f"The PolyServe tier table is derived from its slo block, so "
+                 f"guessing one here would reintroduce exactly the defect that "
+                 f"derivation replaced.")
+    slo = doc.get("slo") or {}
+    out = {}
+    for name in ("swe", "chat", "deepresearch"):
+        entry = slo.get(name) or {}
+        tbt = entry.get("tbt_ms")
+        if not tbt:
+            sys.exit(f"{path} has no slo.{name}.tbt_ms; without it there is no "
+                     f"tier for that class and PolyServe would bin every one of "
+                     f"its requests as unrestricted")
+        out[name] = int(tbt)
+    return out
+
+
+# The five mechanisms of the paper that the first port left out or inverted, plus
+# the memory predicate it never had.  Each is its own environment variable so a
+# result can be attributed to one of them rather than to "the new PolyServe", and
+# every one defaults to the port's earlier behaviour: an invocation that names
+# none of them configures exactly what every PolyServe condition before
+# 2026-08-27 ran with.
+#
+# Full reasoning in ms_dev/notes/polyserve-fidelity.md section 9.
+POLYSERVE_ABLATIONS = {
+    # Stop Llumnix's second scheduling pass from discarding the admission test
+    # when nothing passes it.  Without this the test is computed, logged, and
+    # then ignored, which is why the arm refused 0.0% of requests at every rate.
+    "PS_ADMISSION_BINDS": "--polyserve-admission-binds",
+    # Section 4.5 keeps prefill out of the steady-state iteration estimate and
+    # handles it through TTFT in 4.7.  Ours charged a whole queued chunk to both
+    # estimates, and a full 8,192-token chunk costs 520-634 ms against tier
+    # budgets of 25-100 ms, so no server passed admission whenever any prefill
+    # was queued.
+    "PS_STEADY_NO_PREFILL": "--polyserve-steady-state-ignores-prefill",
+    # Section 4.4.
+    "PS_PROMOTION": "--polyserve-lazy-promotion",
+    # "demand" (this port's own rate-times-cost allocator) or "elastic" (the idle
+    # pool of section 4.3, where a tier takes a server when its requests start
+    # pending and returns one when its last server runs empty).
+    "PS_PARTITION": "--polyserve-partition",
+    # Section 4.3's greedy rule.  Required by "elastic" rather than optional
+    # alongside it: least-loaded selection keeps every server partly full, the
+    # last server of a tier never runs empty, and nothing is ever released.
+    "PS_PREFER_LOADED": "--polyserve-prefer-loaded",
+    # Compare the batch section 4.5 simulates forward to against the instance's
+    # reported KV capacity.  The port has no memory predicate at all, so the
+    # fleet is driven past capacity and the engine recovers by preempting.
+    "PS_KV_ADMISSION": "--polyserve-kv-admission",
+}
 
 
 def polyserve_flags():
@@ -81,12 +176,13 @@ def polyserve_flags():
     with open(path) as fh:
         doc = json.load(fh)
     by_name = {c["name"]: c for c in doc.get("classes", [])}
-    missing = sorted(n for n in TIER_BY_CLASS if n not in by_name)
+    tiers = tier_by_class()
+    missing = sorted(n for n in tiers if n not in by_name)
     if missing:
         sys.exit(f"{path} has no class {missing}; the PolyServe tier table "
                  f"cannot be derived and a stale hard-coded one is exactly the "
                  f"defect this replaced")
-    pairs = sorted(TIER_BY_CLASS.items(), key=lambda kv: kv[1])
+    pairs = sorted(tiers.items(), key=lambda kv: kv[1])
     return {"--polyserve-tier-decode-tokens":
             ",".join(f"{tier}:{int(round(by_name[name]['mean']))}"
                      for name, tier in pairs)}
@@ -438,12 +534,21 @@ def main():
     # them set across a revert costs nothing and keeps the diff small.
     for k, v in SLO_FLAGS.items():
         args = set_flag(args, k, v)
+    # An ablation this invocation does not set is REMOVED, for the same reason as
+    # the FluidServe ones below: a flag written by one arm otherwise survives
+    # into every condition that follows it.
+    args = drop_flags(args, set(POLYSERVE_ABLATIONS.values()), "--polyserve-")
     for k, v in polyserve_flags().items():
         args = set_flag(args, k, v)
         # Printed on every invocation, not only under --policy polyserve, so
         # that a run whose tier table went stale says so in its own log rather
         # than being reconstructed from the deployment spec months later.
         print(f"  polyserve tier table (from fluidserve.json): {k}={v}")
+    for env_key, flag in POLYSERVE_ABLATIONS.items():
+        val = os.environ.get(env_key)
+        if val:
+            args = set_flag(args, flag, val)
+            print(f"  polyserve mechanism: {flag}={val}")
     # An ablation flag that this invocation does NOT set is REMOVED, so the
     # scheduler falls back to its compiled default. Keeping it instead was a
     # defect: a flag written by one arm survived into every condition that ran

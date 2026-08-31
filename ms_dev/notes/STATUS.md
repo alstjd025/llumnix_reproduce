@@ -133,6 +133,50 @@ s2(chat 77%)에서는 두 예산이 거의 같다. **바뀐 것은 균등 믹스
 
 ---
 
+### ▶ 지금 상태 (2026-08-31 09:02 KST) — 환경 복원 완료, EXP-108이 도는 중
+
+**환경은 2026-08-31에 복원됐다.** 점검으로 컨테이너가 새로 만들어져 k3s·툴체인·저장소가 전부
+사라졌고, `RESTORE-2026-08-28.md`의 절차로 되살렸다. 그 문서는 **실행해 보고 고쳐 두었다** —
+git이 나르지 않아 백업에서만 오는 것 넷(§2.1 신설: 실험 저장소의 `.venv`, 생성된 `*.pb.go`
+넷, `.git/modules/lib/sglang`, `patches/vllm-sched/VLLM_VERSION.txt`)이 빠져 있었고, §5.2의
+기대값이 틀렸으며(`enableforce`는 `false`가 아니라 `true`), §4의 배포 표가 **커밋된 배포
+YAML과 달랐다**(모델·컨텍스트·migration·바이너리 경로 네 곳). 매니페스트는 `8f9602c`에서
+`cluster_state`에 맞췄다.
+
+**복원 검증**: arm `fsv3capg`의 9분 smoke가 점검 전
+`260827_1424`와 도착률 40.1/s 동일, offered 80.8 → 79.4, admitted 97.8 → 97.5, 엔진 4/4.
+차이가 이 워크로드의 반복 간 편차(1.4~3.3점) 아래이므로 **읽을 수 있는 차이가 없다**
+(양쪽 반복 1회이므로 "같다"가 아니라 그렇게 적는다).
+
+**llm-d 스택도 되살렸다** — 복구 문서에 없던 항목이다. `deploy/llmd/`로 재구축, 경로 B
+(InferencePool `llmd-engines` + `sheddable`)라 거절이 가능하고, ConfigMap 넷이 백업과 바이트
+동일하다.
+
+**도는 것: EXP-108** (2026-08-31 09:02 KST 시작, 64조건 약 19시간).
+정본 `experiments/EXP-108_per-token-swe-rebaseline.md`.
+**swe의 약속을 전체 시간 30초에서 per-token(TTFT 7초 + 75 ms/token)으로 바꾼 것을 기준선에도
+적용해 정적 rate sweep을 다시 잰다.** arm 넷은 `fsv3capgnofrct75`(v0.4 채택 구성),
+`llmdslot75`, `polyservept75`(EXP-106의 메커니즘 여섯), `slot75`. 반복이 바깥 루프이고 순서는
+FluidServe → llm-d → PolyServe → Llumnix SLO라, 반복 하나가 끝날 때마다 네 arm의 곡선이 한
+벌씩 완성된다.
+
+⚠ **이 sweep의 어느 열도 `paper_experiment/static_sweep_2026-08`의 같은 이름 열과 한 표에 못
+들어간다** — 그쪽은 swe가 e2e 30초로 판정된 것이다. `retracted.tsv`에 넣는 것은 대체값이 다
+나온 뒤에 한다.
+
+⚠ **아직 안 한 것**: vLLM router와 Llumnix load-balance의 기존 run을 `FS_SWE_TBT_MS=75`로
+재채점하는 것(둘은 SLO를 입력으로 안 받으므로 재실행은 불필요하다). 그리고 **한 시간 동적
+trace의 같은 형태 재측정**.
+
+**EXP-106은 EXP-108에 흡수됐다.** PolyServe 논문 충실판의 smoke는 돌았고(m1f, 35 req/s, 4분)
+유효성 검사 다섯을 전부 통과했다 — 강제 배치 0건, 거절률 11.5%(종전 PolyServe는 여덟 도착률
+전부 0.0%), 새 카운터 넷 저장, 기동 줄 여섯 스위치, tier 표 `52:`. 사전 등록한 H1·H2·H3도
+맞았다(promotion 405 대 scale_up 5, pool 0). **예상에 없던 것 하나**: 거부 21,034건 중
+**memory가 84.6%**이고 논문의 시간 기반 검사 셋은 0.4%뿐이다. m1f 반복 하나짜리이므로
+EXP-108의 t75 조건에서 다시 읽는다.
+
+---
+
 ### ▶ 재개 앵커 (2026-08-28 17:00 KST 작성) — 3일 점검(홈 초기화) 직전의 최종 상태
 
 **서버는 2026-08-28 18:00 KST부터 3일 점검, `/home/nxclab` 전체 초기화.**
