@@ -10,7 +10,7 @@ spec:
       metadata:
         labels:
           llumnix.io/infer-type: "neutral"
-          llumnix.io/model: "Meta-Llama-3-70B-Instruct"
+          llumnix.io/model: "Meta-Llama-3.1-70B-Instruct"
       spec:
         terminationGracePeriodSeconds: 30
         containers:
@@ -67,13 +67,14 @@ spec:
 
                 BLLM_KVTRANS_PORT_BASE=$KVT_PORT_BASE \
                 CUDA_VISIBLE_DEVICES=$GPUS vllm serve \
-                  meta-llama/Meta-Llama-3-70B-Instruct \
+                  meta-llama/Meta-Llama-3.1-70B-Instruct \
                   --port $PORT \
                   --tensor-parallel-size $TP_SIZE \
                   --disable-custom-all-reduce \
-                  --max-model-len 8192 \
+                  --max-model-len 40960 \
                   --gpu-memory-utilization 0.9 \
                   --async-scheduling \
+                  ${SCHED_EXTRA_ARGS} \
                   --kv-transfer-config '{"kv_connector":"HybridConnector","kv_role":"kv_both","kv_connector_extra_config":{"backend":"migration","naming_url":"file:'"$NAMING_DIR"'","kvt_inst_id":"neutral-0-'"$i"'","rpc_port":'"$RPC_PORT"'}}' \
                   &
               done
@@ -93,8 +94,11 @@ spec:
             value: ""
           - name: VLLM_ENABLE_LLUMNIX
             value: "1"
+          # Migration is OFF in every measurement this project reports: the routing
+          # policy under study decides placement at arrival, and live migration would
+          # move a request after that decision, so the two cannot be attributed apart.
           - name: LLUMNIX_ENABLE_MIGRATION
-            value: "1"
+            value: "0"
           - name: LLUMNIX_INSTANCE_TYPE
             value: "neutral"
           # KV transfer over RDMA/InfiniBand (NXC13 full node exposes /dev/infiniband).
@@ -135,6 +139,16 @@ spec:
             value: /var/cache/vllm/vllm
           - name: FLASHINFER_WORKSPACE_BASE
             value: /var/cache/vllm/flashinfer
+          # The QoServe/Niyama engine-scheduler port lives in patches/vllm-sched and is
+          # mounted read-only at /opt/llumnix-sched. PYTHONPATH makes it importable;
+          # SCHED_EXTRA_ARGS is the vllm flag string that turns it on (empty = stock
+          # ordering, which is what every FluidServe run used).
+          - name: PYTHONPATH
+            value: /opt/llumnix-sched
+          - name: SCHED_EXTRA_ARGS
+            value: ""
+          - name: SCHED_STEP_LOG
+            value: ""
 
           ports:
           - containerPort: 8000
@@ -168,6 +182,11 @@ spec:
             readOnly: true
           - name: infiniband-devices
             mountPath: /dev/infiniband
+          - name: llumnix-sched
+            mountPath: /opt/llumnix-sched
+            readOnly: true
+          - name: llumnix-sched-out
+            mountPath: /sched-out
           resources:
             limits:
               ephemeral-storage: 256Gi
@@ -214,4 +233,12 @@ spec:
           hostPath:
             path: /dev/infiniband
             type: Directory
+        - name: llumnix-sched
+          hostPath:
+            path: /home/nxclab/llumnix_reproduce/patches/vllm-sched
+            type: Directory
+        - name: llumnix-sched-out
+          hostPath:
+            path: /opt/llumnix-sched-out
+            type: DirectoryOrCreate
   

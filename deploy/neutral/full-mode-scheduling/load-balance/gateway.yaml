@@ -38,7 +38,9 @@ spec:
       - name: gateway
         image: ${REPOSITORY}/gateway:${GATEWAY_IMAGE_TAG}
         imagePullPolicy: Always
-        command: ["/usr/local/bin/gateway"]
+        # Same arrangement as the scheduler: the host-built binary runs inside the
+        # stock image through the /exp07bin hostPath.
+        command: ["/exp07bin/gateway-exp10"]
         args:
         - "--port"
         - "8089"
@@ -59,10 +61,17 @@ spec:
         - "--scheduling-policy"
         - "load-balance"
         - "--tokenizer-path"
-        - "/hf-cache/hub/models--meta-llama--Meta-Llama-3-70B-Instruct/snapshots/50fd307e57011801c7833c87efa1984ddf2db42f"
+        - "/hf-cache/hub/models--meta-llama--Meta-Llama-3.1-70B-Instruct/snapshots/1605565b47bb9346c5515c34102e054115b4f98b"
         - "--max-model-len"
-        - "8192"
+        - "40960"
         - "--enable-full-mode-scheduling=true"
+        env:
+        - name: GATEWAY_SSE_READ_TIMEOUT
+          value: "24h"
+        - name: GATEWAY_RESPONSE_HEADER_TIMEOUT
+          value: "24h"
+        - name: GOMAXPROCS
+          value: "16"
         ports:
         - containerPort: 8089
           name: http
@@ -74,10 +83,10 @@ spec:
           # cores so the control plane is not the bottleneck. See
           # Agent_applications/.../experiments/EXP-02.
           requests:
-            memory: "1Gi"
+            memory: "4Gi"
             cpu: "2"
           limits:
-            memory: "4Gi"
+            memory: "64Gi"
             cpu: "8"
         livenessProbe:
           httpGet:
@@ -92,10 +101,17 @@ spec:
           initialDelaySeconds: 5
           periodSeconds: 5
         volumeMounts:
+        - name: exp07bin
+          mountPath: /exp07bin
+          readOnly: true
         - name: hf-cache
           mountPath: /hf-cache
           readOnly: true
       volumes:
+      - name: exp07bin
+        hostPath:
+          path: /home/nxclab/llumnix_reproduce/bin
+          type: Directory
       - name: hf-cache
         hostPath:
           path: /NHNHOME/huggingface

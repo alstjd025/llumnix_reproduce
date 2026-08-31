@@ -38,7 +38,10 @@ spec:
         - name: scheduler
           image: ${REPOSITORY}/scheduler:${SCHEDULER_IMAGE_TAG}
           imagePullPolicy: Always
-          command: ["/usr/local/bin/scheduler"]
+          # The policy under study is compiled into bin/scheduler-exp07 on the host and
+          # run inside the stock image through the /exp07bin hostPath, so a policy change
+          # needs a binary swap and a rollout, not an image build and push.
+          command: ["/exp07bin/scheduler-exp07"]
           args:
             - "--port"
             - "8088"
@@ -103,3 +106,12 @@ spec:
               port: 8088
             initialDelaySeconds: 5
             periodSeconds: 5
+          volumeMounts:
+            - name: exp07bin
+              mountPath: /exp07bin
+              readOnly: true
+      volumes:
+        - name: exp07bin
+          hostPath:
+            path: /home/nxclab/llumnix_reproduce/bin
+            type: Directory
