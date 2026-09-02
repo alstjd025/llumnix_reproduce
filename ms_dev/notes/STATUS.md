@@ -133,7 +133,44 @@ s2(chat 77%)에서는 두 예산이 거의 같다. **바뀐 것은 균등 믹스
 
 ---
 
-### ▶ 지금 상태 (2026-09-01 11:26 KST) — EXP-108 끝남 (64/64), 채점 규칙이 하나 늘었다
+### ▶ 지금 상태 (2026-09-02 15:00 KST) — EXP-109 끝남 (10/10). 정적과 한 시간이 같은 답을 낸다
+
+**EXP-109 완료.** 정본 `experiments/EXP-109_per-token-swe-hour-trace.md`.
+다섯 arm(`fsv3capgnofrct75` / `llmdslot75` / `polyservept75` / `slot75` / `vllmcachet75`)
+× 2반복, 한 시간 mix-shift trace, swe를 per-token(TTFT 7초 + 75 ms/token) 형태로 통일.
+EXP-108이 정적 sweep에서 한 것의 동적 판이다.
+
+**결과 넷**:
+- **FluidServe가 두 채점 모두 1위이고 격차가 편차보다 훨씬 크다.** 반복 간 차이가 offered
+  0.7점, admitted 0.0점인데 2위와의 격차가 23~31점이다. **정적 sweep의 25 req/s 이상
+  구간과 같은 순서다.**
+- **누적 규칙에서 FluidServe의 admitted가 99.9 / 100.0이고 마감을 지킨 토큰이 100.0%다.**
+- **채점 규칙이 2·3위를 바꾼다** — 기존 규칙에서 llm-d > PolyServe인데 누적 규칙에서는
+  둘이 겹친다(llm-d의 반복 간 편차 6.4점 안). 정적에서와 같은 방향이다.
+- **실패 방식이 다섯으로 갈린다**: PolyServe는 완전히 분리하고 chat 두 대를 터뜨린다
+  (불균형 118.8배, preemption 0), Llumnix SLO는 완벽히 고르게 나눠 네 엔진이 똑같이
+  예산을 넘긴다(1.26배, preemption 6,056), FluidServe는 분리하되 경계가 안 고정이라
+  chat 토큰당 시간이 네 엔진 전부 예산 안이다.
+
+⚠ **vLLM router의 수치는 미완료를 빼고 읽을 수 없다.** 거절률 0.0%인데 도착의 **52%가
+한 시간 안에 안 끝났고**, 점수는 끝난 절반으로만 매겨졌다. 엔진 큐 깊이가 2,942~4,381로
+다른 arm(0.2~21)과 자릿수가 다르고, 고치기 전 run에서는 함대 생성 속도가 1,441 tok/s로
+FluidServe의 8분의 1까지 떨어졌다. **"admission control이 없으면 부하가 용량을 넘는 순간
+함대 처리량이 무너진다"가 엔진 지표로 직접 측정된 것이다.**
+
+**측정 인프라 결함 넷을 고쳤다** (EXP-109 §7): ⑴ `--post-duration-grace`가 trace 경로에서
+무시되던 것(`with ThreadPoolExecutor` 종료가 grace가 버린 스레드를 다시 기다림) → 293분이
+71분으로, ⑵ `wait_job`이 포기할 때 Job을 안 지워 다음 arm이 겹쳐 시작하던 것, ⑶ 완료
+판정이 행 수라 안 끝난 run을 완료로 세던 것 → `run_span_min.py`, ⑷ 그림 스크립트가
+`ls | head -1`로 가장 오래된(못 쓰는) run을 고르던 것 → `pick_usable_run.sh`.
+
+⚠ **아직 안 한 것**: ⑴ vLLM router와 Llumnix load-balance의 **정적** 기존 run을
+`FS_SWE_TBT_MS=75`로 재채점, ⑵ `retracted.tsv` 정리(대체값이 다 나왔으므로 이제 할 수
+있다), ⑶ v0.4 기본값 이동, ⑷ EXP-108/109 수치를 `numbers.tsv`에 반영.
+
+---
+
+### ▶ 앞선 상태 (2026-09-01 11:26 KST) — EXP-108 끝남 (64/64), 채점 규칙이 하나 늘었다
 
 **EXP-108 완료.** 정본 `experiments/EXP-108_per-token-swe-rebaseline.md` §8.
 네 arm(`fsv3capgnofrct75` / `llmdslot75` / `polyservept75` / `slot75`) × 여덟 도착률 ×
