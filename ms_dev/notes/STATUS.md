@@ -133,7 +133,50 @@ s2(chat 77%)에서는 두 예산이 거의 같다. **바뀐 것은 균등 믹스
 
 ---
 
-### ▶ 지금 상태 (2026-09-02 19:30 KST) — EXP-110 끝남. llm-d 의 10 req/s 는 두 갈래가 아니라 outlier 하나였다
+### ▶ 지금 상태 (2026-09-04 02:30 KST) — 두 번째 모델(Qwen2.5-72B). 한 시간 반복 1 끝, 반복 2 도는 중
+
+**함대가 Qwen2.5-72B-Instruct 다.** `ms_dev/scripts/switch_model.py --verify` 로 확인한다.
+`max_model_len=32768`(모델의 상한, 우리 선택이 아니다), 4 인스턴스 × TP=2 그대로.
+**Llama 로 되돌리려면 `switch_model.py --to llama31-70b-b200-tp2`.**
+
+**프로파일은 `deploy/profiling/qwen25-72b-b200-tp2/`** (EXP-111 에서 실측). 정책이 이것을
+읽게 하려면 **`FS_PROFILE_DIR=qwen25-72b-b200-tp2`** 를 준다 — 기본값은 Llama 라 기존
+드라이버는 뜻이 안 바뀐다. 기동 줄이 어느 디렉토리를 읽었는지 찍는다.
+
+| 실험 | 무엇 | 정본 |
+|---|---|---|
+| EXP-111 | Qwen 프로파일 재측정 | `experiments/EXP-111_qwen25-72b-profile.md` |
+| EXP-112 | Qwen 에서 FluidServe 무릎 실측 | `experiments/EXP-112_qwen-knee.md` |
+| EXP-113 | 다섯 arm 한 시간 (반복 1 완료, 반복 2 진행) | `experiments/EXP-113_qwen-hour-five-arms.md` |
+
+**엔진 물리는 거의 같고 출력 길이가 다르다** — prefill step 비용은 전 구간 4.5% 이내,
+decode step law 계수는 셀별 비 p50 1.04. 그런데 출력이 chat ×1.21 / deepresearch ×1.85 /
+swe ×2.04, 믹스 가중 ×1.46. 그래서 **용량이 0.64 배**(FluidServe 90% 무릎 28.4 → **18.3**,
+EXP-112 실측, 예측은 18.4 였다).
+
+**한 시간 trace 는 0.644 배로 낮춘 `_q064` 를 쓴다.** 원본을 그대로 쓰면 평균 1.50 배·78%
+과부하가 되어 다른 실험이 된다. 낮추면 0.95 배·44% 로 Llama 에서의 원본과 같은 자리다.
+
+**반복 1 결과 (기존 채점 / 누적 마감 규칙, offered)**: FluidServe **78.6 / 81.3**,
+vLLM router 53.0 / 55.2, PolyServe 50.6 / 60.3, llm-d 50.4 / 54.3, Llumnix SLO 19.5 / 29.6.
+**FluidServe 가 두 채점 모두 1 위이고 Llama 에서의 순위가 유지된다.**
+
+⚠ **인용 전에 반드시 읽을 것 셋** (전부 EXP-113 §3):
+1. **vLLM router 의 분모는 다른 arm 과 같은 도착 스트림이 아니다** — 거절을 안 해 부하
+   생성기가 밀렸고 분 51~54 에 다른 arm 의 40% 만 내보냈다. 창도 149 초 길다.
+2. **두 채점이 2 위를 다르게 지목한다.** 1 위는 안 바뀐다.
+3. **PolyServe(+19.8)와 vLLM router(+15.7)만 Llama 대비 크게 올랐다.** 원인 미확정, 반복 2
+   가 필요하다.
+
+**도는 것**: EXP-113 반복 2, 다섯 arm, 2026-09-04 02:30 시작, 약 6 시간.
+세션 밖 supervisor(`exp113_supervisor.log`)가 체인을 지키고 체인은 재개 가능하다.
+
+**아직 안 한 것**: 반복 2 채점·그림, `separation_measures.py` 다섯 arm 재실행,
+`numbers.tsv` 반영, Qwen 정적 sweep(사용자 결정으로 하지 않음).
+
+---
+
+### ▶ 앞선 상태 (2026-09-02 19:30 KST) — EXP-110 끝남. llm-d 의 10 req/s 는 두 갈래가 아니라 outlier 하나였다
 
 **EXP-110 완료.** 정본 `experiments/EXP-110_llmd-lowrate-split.md` §6.
 

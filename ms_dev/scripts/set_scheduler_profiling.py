@@ -38,7 +38,14 @@ CM = "llumnix-profiling"
 MOUNT = "/profiling"
 VOL = "profiling-data"
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-TABLE_DIR = os.path.join(REPO, "deploy", "profiling", "llama31-70b-b200-tp2")
+# The offline tables are a property of the model AND the hardware, so they live
+# one directory per fleet configuration. The default stays the Llama fleet so
+# that every existing driver keeps loading exactly the tables its results were
+# produced with; a run on another model sets FS_PROFILE_DIR, and the name of
+# the directory actually loaded is printed below so a mismatch is visible in
+# the driver log rather than only in the scheduler's behaviour.
+TABLE_DIR = os.path.join(REPO, "deploy", "profiling",
+                         os.environ.get("FS_PROFILE_DIR", "llama31-70b-b200-tp2"))
 
 # Flags the SLO-aware policies need beyond the profiling paths.  --ttft-slo and
 # --tpot-slo are only the fallback for requests that carry no SLO of their own;
@@ -476,6 +483,12 @@ def show():
 
 
 def install_configmap():
+    # Name the directory, not just the files. The tables are per model and per
+    # hardware, and loading the wrong model's tables is silent: the policy starts,
+    # every number it computes is wrong, and the only symptom is a result that
+    # looks like a bad policy.
+    print(f"  profile tables from {os.path.relpath(TABLE_DIR, REPO)}"
+          + ("" if "FS_PROFILE_DIR" in os.environ else "  (default; set FS_PROFILE_DIR to change)"))
     files = [os.path.join(TABLE_DIR, n) for n in ("ttft.json", "tpot.json")]
     fs = os.path.join(TABLE_DIR, "fluidserve.json")
     if os.path.exists(fs):

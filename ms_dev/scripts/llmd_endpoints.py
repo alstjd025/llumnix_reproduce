@@ -33,7 +33,27 @@ ENGINE_POD = "neutral-0"
 ENGINE_PORTS = (8000, 8001, 8002, 8003)
 LLMD_NS = "llmd"
 CONFIGMAP = "llmd-endpoints"
-MODEL_LABEL = "meta-llama/Meta-Llama-3.1-70B-Instruct"
+# The label llm-d routes on has to name the model the engines actually serve.
+# It used to be a literal here, which made it the eighth place a model switch had
+# to be remembered, and the failure is silent in the worst way: llm-d would route
+# to endpoints labelled with a model none of them serve. It now comes from the
+# same ConfigMap the runner templates read, written by
+# ms_dev/scripts/switch_model.py, with the historical value as the fallback for
+# a cluster where that ConfigMap does not exist yet.
+def _model_label(default="meta-llama/Meta-Llama-3.1-70B-Instruct"):
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["kubectl", "-n", "llumnix", "get", "cm", "llumnix-model",
+             "-o", "jsonpath={.data.MODEL_ID}"],
+            capture_output=True, text=True, timeout=20)
+        v = out.stdout.strip()
+        return v or default
+    except Exception:
+        return default
+
+
+MODEL_LABEL = _model_label()
 
 
 def kubectl(args, check=True):
