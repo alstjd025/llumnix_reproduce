@@ -134,6 +134,18 @@ def current():
             out["engine_max_len"] = s.split()[-1]
     env = {e["name"]: e.get("value", "") for e in c.get("env", [])}
     out["tp"], out["dp"] = env.get("TP_SIZE"), env.get("DP_SIZE_LOCAL")
+    # The pod's second container tracks the instances by port and needs the same
+    # count. It is a SEPARATE place the fleet size is written down, inside the
+    # deployment spec rather than in any script, which is why the eight-instance
+    # switch left it at four: discovery watched 8000-8003 and never saw the other
+    # four engines exist.
+    for dc in wt["spec"]["containers"]:
+        if dc["name"] != "discovery":
+            continue
+        argv = " ".join(dc.get("command", []) + dc.get("args", [])).split()
+        for i, a in enumerate(argv):
+            if a == "--dp_size_local" and i + 1 < len(argv):
+                out["discovery_dp"] = argv[i + 1]
     gw = json.loads(kubectl(["get", "deploy", "gateway", "-o", "json"]))
     gc = gw["spec"]["template"]["spec"]["containers"][0]
     argv = gc.get("command", []) + gc.get("args", [])
@@ -193,9 +205,35 @@ def switch(key):
             e["value"] = str(m["tp"])
         if e["name"] == "DP_SIZE_LOCAL":
             e["value"] = str(m["dp"])
+    # The discovery sidecar enumerates instance ports as
+    # [entrypoint_port + i for i in range(dp_size_local)], so a stale value here
+    # hides the engines above that range from it entirely.
+    dhits = 0
+    for dc in wt["spec"]["containers"]:
+        if dc["name"] != "discovery":
+            continue
+        for field in ("command", "args"):
+            if not dc.get(field):
+                continue
+            new = []
+            for part in dc[field]:
+                lines = []
+                for line in part.split("\n"):
+                    if "--dp_size_local" in line:
+                        pre = line[: line.index("--dp_size_local")]
+                        tail = " \\" if line.rstrip().endswith("\\") else ""
+                        line = f"{pre}--dp_size_local {m['dp']}{tail}"
+                        dhits += 1
+                    lines.append(line)
+                new.append("\n".join(lines))
+            dc[field] = new
+    if dhits != 1:
+        sys.exit(f"ABORT: expected exactly one --dp_size_local in the discovery "
+                 f"container, found {dhits}")
+
     kubectl(["apply", "-f", "-"], inp=json.dumps(strip_server_fields(lws)))
     print(f"  LWS patched: {m['model']}, max_model_len={m['max_model_len']}, "
-          f"TP={m['tp']} x DP={m['dp']}")
+          f"TP={m['tp']} x DP={m['dp']}, discovery dp_size_local={m['dp']}")
 
     gw = json.loads(kubectl(["get", "deploy", "gateway", "-o", "json"]))
     gc = gw["spec"]["template"]["spec"]["containers"][0]
@@ -242,8 +280,8 @@ def switch(key):
 def verify(expect=None):
     cur = current()
     print("  as configured:")
-    for k in ("label", "serve_model", "engine_max_len", "tp", "dp", "tokenizer",
-              "gw_max_len", "runner_model"):
+    for k in ("label", "serve_model", "engine_max_len", "tp", "dp", "discovery_dp",
+              "tokenizer", "gw_max_len", "runner_model"):
         print(f"    {k:<15} {cur.get(k)}")
     ip = kubectl(["get", "pod", "neutral-0", "-o", "jsonpath={.status.podIP}"], check=False).strip()
     # Ask EVERY instance, not just the first. The instances are separate vllm
@@ -284,6 +322,10 @@ def verify(expect=None):
         if cur.get("runner_model") != m["model"]:
             print(f"  MISMATCH configmap/llumnix-model says {cur.get('runner_model')} "
                   f"-- the load generator would name that model in every request"); ok = False
+        if str(cur.get("discovery_dp")) != str(m["dp"]):
+            print(f"  MISMATCH discovery --dp_size_local {cur.get('discovery_dp')} "
+                  f"!= {m['dp']}: the sidecar watches ports "
+                  f"8000..{8000 + int(cur.get('discovery_dp') or 0) - 1} only"); ok = False
         if str(cur.get("tp")) != str(m["tp"]) or str(cur.get("dp")) != str(m["dp"]):
             print(f"  MISMATCH fleet shape: TP={cur.get('tp')} x DP={cur.get('dp')} "
                   f"!= TP={m['tp']} x DP={m['dp']}"); ok = False
