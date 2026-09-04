@@ -90,6 +90,30 @@ def ensure_port_env(parts):
     return out, True
 
 
+
+# The llumlet indexes itself with a constant, and that constant is only right at
+# --api-server-count 1. Applying the fix from the launch script (rather than
+# baking it into the image) means every recreated pod re-applies it, and the
+# script itself aborts loudly if the image's llumnix ever stops matching.
+CLIENT_INDEX_FIX = "python3 /opt/llumnix-sched/llumnix_client_index_fix.py || exit 1"
+
+
+def ensure_client_index_fix(parts):
+    """Idempotently run the client-index fix before any engine is started.
+
+    Prepended to the whole script rather than anchored on a line: it has to run
+    before the first `vllm serve`, and `|| exit 1` ends the container -- a
+    CrashLoopBackOff is the right outcome if the patch no longer applies, since
+    the alternative is an engine whose llumlet routes its replies to the wrong
+    process."""
+    if any(CLIENT_INDEX_FIX in part for part in parts):
+        return parts, False
+    head = ("# EXP-114: the llumlet's socket index is the number of API server\n"
+            "# processes, not the constant 1 that Llumnix hardcodes. Fix it before\n"
+            "# any engine core -- and therefore any llumlet -- exists.\n"
+            + CLIENT_INDEX_FIX + "\n")
+    return [head + parts[0]] + list(parts[1:]), True
+
 def kubectl(args, inp=None, check=True):
     r = subprocess.run(["kubectl", "-n", NS] + args, input=inp,
                        capture_output=True, text=True)
@@ -202,6 +226,10 @@ def main():
     if added:
         print(f"  LWS patched: exported {PORT_ENV} so the engine core and its "
               f"Llumlet inherit it")
+    new_parts, added = ensure_client_index_fix(new_parts)
+    if added:
+        print("  LWS patched: the launch script now applies the llumlet "
+              "client-index fix before starting any engine")
     c[field] = new_parts
 
     if a.liveness_failures is not None:

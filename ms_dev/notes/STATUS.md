@@ -185,7 +185,76 @@ FluidServe chat 1.50 / dr 3.3, PolyServe 1.00 / 2.00(설계값 그대로), Llumn
 
 **도는 것: 없다.** 클러스터가 비어 있고 함대는 **Qwen2.5-72B, 4 인스턴스 × TP=2** 다.
 
-### ▶ 지금 상태 (2026-09-04 19:00 KST) — 8 인스턴스 × TP=1, Llama-3.1-8B. **정책을 아직 못 쟀다**
+### ▶ 지금 상태 (2026-09-04 21:30 KST) — 8 인스턴스에서 프런트엔드 병목이 풀렸다. **모든 정책을 다시 재야 한다**
+
+**정본은 `experiments/EXP-114_llama8b-8instances.md` §12.** 함대는
+**Llama-3.1-8B-Instruct × 8, TP=1, `--max-num-seqs 4096`, `--api-server-count 4`**이고
+클러스터는 비어 있다. 되돌리려면 `switch_model.py --to llama31-70b-b200-tp2` 또는
+`--to qwen25-72b-b200-tp2`. 프로파일은 `deploy/profiling/llama31-8b-b200-tp1/`이고 정책이
+그것을 읽게 하려면 **`FS_PROFILE_DIR=llama31-8b-b200-tp1`**.
+
+**막혔던 것이 풀렸다.** `--api-server-count 4`는 llumlet이 **자기 소켓 번호를 상수 1로 박고
+있어서** 못 쓰고 있었다. `addresses.outputs`가 API 서버 프로세스 수만큼 만들어지고
+(`v1/engine/utils.py:795`) llumlet이 자기 주소를 그 뒤에 **append**하므로
+(`llumnix/engine_client/utils.py:75`) llumlet의 인덱스는 **API 서버 개수 N**인데,
+`VLLMEngineClient`의 기본값이 1이고 `llumlet.py:126`이 그 인자를 안 넘긴다. N=1이면 우연히
+맞고 N=4면 llumlet의 응답이 `ApiServer_1`로 가서 그 프로세스가 `KeyError`로 죽는다.
+
+**고친 것은 llumnix의 대입 한 줄**이다 — `vllm_config.parallel_config._api_process_count`를
+쓴다. **vLLM은 한 줄도 안 건드렸고**, count=1에서는 새 식이 1로 평가되어 기존 상수와 같은
+값이므로 **지금까지 잰 어떤 조건의 뜻도 바뀌지 않는다.** 넣는 방식은
+`patches/vllm-sched/llumnix_client_index_fix.py`를 기동 스크립트가 부르는 것이고
+(`set_api_server_count.py`의 `ensure_client_index_fix`가 주입한다), 앵커가 정확히 한 번
+나오지 않으면 `|| exit 1`로 컨테이너를 죽인다.
+
+⚠ **§11에 적었던 기전(`client_count`가 llumlet 주소를 덧붙이기 전에 세어진다)은 철회한다** —
+`self.client_count`는 `core.py`에서 한 번 대입되고 아무 데서도 읽히지 않는다.
+
+**측정 결과 (100 req/s, `fsv3capgnofrct75`, 8분, 조건마다 반복 하나)**:
+
+| | offered | admitted | all_arrivals | 거절 | goodput | 도착 수 |
+|---|---|---|---|---|---|---|
+| count=1, 수정 전 | 56.1 | 56.4 | 52.9 | 0.7% | 33,793 | 46,174 |
+| count=1, 수정 후 (회귀 검사) | 57.5 | 57.8 | 53.8 | 0.5% | 34,166 | 46,038 |
+| **count=4** | **99.3** | **100.0** | **98.1** | 0.6% | **54,263** | 46,095 |
+
+**거절률과 도착 수가 사실상 같은데 달성률이 41.8점 오른다** — 정책의 결정이 달라진 것이
+아니라 받아들인 요청을 지킬 수 있게 된 것이다. 첫토큰 시간을 세 구간으로 나누면
+(`analysis_scripts/request_level/exp114_frontend_segment.py`) **API 서버 구간의 최댓값이
+17,266 ms → 20 ms로 860배 줄었고**, 몰린 엔진의 TTFT가 11.7·17.4초에서 131·39 ms가 된다.
+**집중 자체는 그대로다**(count=4에서도 요청의 79%가 두 엔진에 간다).
+
+**⚠ 이 함대에서 count=1로 잰 정책 수치는 전부 정책이 아니라 프런트엔드 한계를 잰 것이다.**
+아래 표는 그 상태의 기록으로만 남긴다 — **`load-balance`가 부하를 여덟 프런트엔드에 나눠서
+덜 걸렸으므로 두 정책의 비교는 특히 오도한다.**
+
+| 잰 것 (count=1, 인용 금지) | 값 |
+|---|---|
+| 프로파일 (EXP-114 4단계, **유효**) | prefill step이 70B의 0.20~0.23배, decode 법칙 `t = 4.291 + 6.775e-6·M + 0.03117·n` (R² 0.979), 출력 길이는 70B와 사실상 같다(믹스 가중 518.8 → 514.0) |
+| 부하 생성기 천장 (**유효**) | 200 req/s까지 연결 오류 0건, 300에서 처음 깨진다(16.3%) |
+| `load-balance` 사다리 | offered 100 / 100 / 99.8 / 24.7 / 3.8 @ 20·60·120·200·300 req/s |
+| FluidServe v0.4 (캡 켬) | offered 55.5 / 26.0 / 13.1 / 10.9 / 7.7 @ 100·130·150·170·200 |
+| 캡 끔 / 첫토큰 마감 / 좌석 4096 | 셋 다 원인이 아니었다 — 원인은 프런트엔드였다 |
+
+**▶ 다음에 할 것**: ⑴ **`load-balance`를 count=4에서 다시 재서** 두 정책의 비교를 복구한다
+(지금 표의 `load-balance`는 count=1에서 잰 것이고 그 정책은 이 병목에 덜 걸린다).
+⑵ 무릎을 다시 잰다 — FluidServe가 100 req/s에서 99.3이므로 **무릎이 그보다 위에 있고 어디인지
+모른다.** ⑶ 그 다음에 다섯 arm과 한 시간 trace.
+
+⚠ **가설 하나는 반증됐다** — liveness probe를 30(900초)으로 올려도 재생성 주기가 그대로였다.
+probe 경로가 아니다. 그 값은 3으로 원복해 두었다.
+
+**고친 것 둘 (배포, 앞선 세션)**: ⑴ 인스턴스 수가 `configmap/llumnix-model`의
+`ENGINE_PORTS`/`DP`로 이동해 러너·수집기·분석 스크립트가 전부 거기서 읽는다.
+⑵ `discovery` 사이드카의 `--dp_size_local`이 4로 남아 있던 것을 `switch_model.py`가 모델
+표에서 유도하도록 고쳤고 `--verify`가 검사한다.
+
+**증거 파일**: `/home/nxclab/tools/vllm_terminated.log`(수정 전 종료된 컨테이너 로그),
+`/home/nxclab/tools/exp114_count4_state.log`(5초 간격 파드 상태).
+
+---
+
+### ▶ 앞선 상태 (2026-09-04 19:00 KST) — 프런트엔드 병목을 찾던 중
 
 **정본은 `experiments/EXP-114_llama8b-8instances.md`.** 함대는
 **Llama-3.1-8B-Instruct × 8, TP=1, `--max-num-seqs 4096`**이고 클러스터는 비어 있다.
@@ -210,7 +279,9 @@ HTTP 프런트엔드) **프로세스가 하나**인데, FluidServe가 chat을 �
 | 첫토큰 마감을 feasibility에 (`FS_DEADLINE_FEASIBLE=true`) | +3.8 / −2.8 (100 / 130 req/s), 부호가 뒤집히고 편차 안. **채택 안 함** |
 | 좌석 상한 4096 | 좌석 대기가 356 → 21 ms인데 엔진 TTFT는 17초. **좌석 상한도 원인이 아니다** |
 
-**막힌 곳 — 다음 세션의 첫 작업.** `--api-server-count 4`(프런트엔드를 넷으로)는 이 빌드에
+**⚠ 아래는 2026-09-04 21:30에 해결된 문제의 기록이다. 지금 상태는 위 절이다.**
+
+**막혔던 곳.** `--api-server-count 4`(프런트엔드를 넷으로)는 이 빌드에
 구현돼 있고 구조도 우리 쪽에 안전한데(포트 하나, 출력이 `client_index`로 되돌아감, Llumlet은
 엔진 코어당 하나), **켜면 파드가 2분 45초마다 통째로 재생성되어 `instance_status`가 끝내
 0이고 스케줄러가 인스턴스를 못 본다.** 원인 연쇄를 끝까지 잡았다(정본은 EXP-114 문서):
