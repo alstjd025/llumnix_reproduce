@@ -174,10 +174,34 @@ vLLM router 55.2/58.1, llm-d 54.3/56.4, Llumnix SLO 29.6/29.7.
 4. **llm-d 가 이 세트에서 가장 불안정하다**(offered 2.5 점, goodput 268 tok/s). 인용할 때는
    반복 두 개를 다 적는다.
 
-**도는 것: 없다.** 클러스터가 비어 있고 함대는 Qwen 이다.
+**클래스 분리 지표**(EXP-113 §9): `N_eff` = 클래스가 실제로 도는 인스턴스 수(창별 중앙값).
+FluidServe chat 1.50 / dr 3.3, PolyServe 1.00 / 2.00(설계값 그대로), Llumnix SLO 3.8(거의
+안 나눔). **두 반복이 소수 둘째 자리까지 맞는다.** ⚠ llm-d 는 Envoy 로 라우팅해 이 지표에
+안 들어가고, 이 스크립트는 `FS_SWE_TBT_MS=75` 를 안 주면 swe 를 30 초로 채점한다.
 
-**아직 안 한 것**: `separation_measures.py` 열 run 재실행, `numbers.tsv` 반영, PolyServe·vLLM
-router 가 오른 이유의 ablation, Qwen 정적 sweep(사용자 결정으로 하지 않음).
+**`numbers.tsv` 는 이제 run 마다 그 run 이 약속한 규칙으로 채점된다** — `collect_numbers.py`
+가 두 패스로 돌고 arm 이름의 `t75` 로 나눈다. 고치기 전에는 t75 run 이 전부 e2e 30 초로
+채점돼 EXP-113 FluidServe 가 78.6 대신 72.05 로 들어가 있었다.
+
+**도는 것: 없다.** 클러스터가 비어 있고 함대는 **Qwen2.5-72B, 4 인스턴스 × TP=2** 다.
+
+### ▶ 다음 (2026-09-04 사용자 지시) — 8 인스턴스 × TP=1
+
+**계획서가 정본: `experiments/EXP-114_llama8b-8instances-PLAN.md`.** 순서·판정 규칙·고쳐야
+하는 파일 목록이 거기 있다. 요약만:
+
+1. **Llama-3.1-8B-Instruct 를 먼저**, 그 다음 **Qwen2.5-14B-Instruct**. 둘 다 8 인스턴스 ×
+   TP=1(한 장에 한 인스턴스).
+2. ⚠ **측정 전에 "인스턴스 4 대" 가정을 고친다.** 가장 위험한 것은
+   `run_experiment.py --engine-ports` 기본값 `8000,8001,8002,8003` — 안 고치면 **여덟 중
+   넷의 지표가 조용히 유실된다.** llm-d 드라이버 5 개, `llmd_endpoints.py`, 분석·그림
+   스크립트 6 개도 같다.
+3. **2 분짜리 조건으로 engine_8000~8007 여덟 개가 다 생기는지 먼저 확인한 뒤** 본 측정.
+4. **예산 결정은 프로파일 실측 뒤에 한다** — 지금 예산은 70B 의 유휴 ITL 에서 유도한 값이라
+   8B 에서는 거저 지켜져 정책 구별력이 사라질 수 있다. 숫자 없이 미리 고르지 않는다.
+
+**아직 안 한 것(Qwen 쪽)**: PolyServe·vLLM router 가 Llama 대비 오른 이유의 ablation(옛 표를
+그대로 둔 arm). 사용자가 "괜찮다"고 해서 보류했다.
 
 ---
 
