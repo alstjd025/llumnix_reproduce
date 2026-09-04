@@ -135,6 +135,16 @@ def main():
     # loaded engines pin at exactly that, so it has to be separable from the
     # front-end bottleneck before either is acted on.
     ap.add_argument("--max-num-seqs", type=int, dest="max_num_seqs")
+    # The vllm container's liveness probe hits /health, and with several front
+    # ends behind one socket the probe lands on whichever process the kernel
+    # picks. Three consecutive failures restart the container, and the LWS runs
+    # RecreateGroupOnPodRestart, so one flapping probe recreates the whole pod --
+    # measured at --api-server-count 4 as a pod rebuilt every 2m50s, which is why
+    # the CMS keys appeared and vanished and no instance status ever accumulated.
+    # RAISING THIS DELAYS REAL FAILURE DETECTION: at the default 3 x 30 s a dead
+    # engine is restarted in 90 s, at 30 it takes 15 minutes. Put it back.
+    ap.add_argument("--liveness-failure-threshold", type=int,
+                    dest="liveness_failures")
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--restart", action="store_true")
     a = ap.parse_args()
@@ -144,9 +154,15 @@ def main():
     field = "args" if c.get("args") else "command"
     script = c[field][0] if len(c[field]) == 1 else "\n".join(c[field])
 
-    if a.show or (a.count is None and a.max_num_seqs is None):
+    if a.show or (a.count is None and a.max_num_seqs is None
+                  and a.liveness_failures is None):
         print(f"  --api-server-count: {current(script, '--api-server-count') or '(unset -> 1)'}")
         print(f"  --max-num-seqs:     {current(script, '--max-num-seqs') or '(unset -> engine default)'}")
+        lp = vllm_container(lws).get("livenessProbe", {})
+        print(f"  liveness failureThreshold: {lp.get('failureThreshold')} "
+              f"x periodSeconds {lp.get('periodSeconds')} "
+              f"= {int(lp.get('failureThreshold', 0)) * int(lp.get('periodSeconds', 0))}s "
+              f"before the container is restarted")
         return 0
 
     # Rewrite in place. The flag is written on its own line just above
@@ -187,6 +203,15 @@ def main():
         print(f"  LWS patched: exported {PORT_ENV} so the engine core and its "
               f"Llumlet inherit it")
     c[field] = new_parts
+
+    if a.liveness_failures is not None:
+        lp = c.setdefault("livenessProbe", {})
+        old = lp.get("failureThreshold")
+        lp["failureThreshold"] = a.liveness_failures
+        print(f"  LWS patched: livenessProbe failureThreshold {old} -> "
+              f"{a.liveness_failures} "
+              f"({a.liveness_failures * int(lp.get('periodSeconds', 30))}s before a "
+              f"restart). REMEMBER TO PUT IT BACK.")
 
     kubectl(["apply", "-f", "-"], inp=json.dumps(strip_server_fields(lws)))
     for f, v in want.items():

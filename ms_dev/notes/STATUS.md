@@ -210,11 +210,33 @@ HTTP 프런트엔드) **프로세스가 하나**인데, FluidServe가 chat을 �
 | 첫토큰 마감을 feasibility에 (`FS_DEADLINE_FEASIBLE=true`) | +3.8 / −2.8 (100 / 130 req/s), 부호가 뒤집히고 편차 안. **채택 안 함** |
 | 좌석 상한 4096 | 좌석 대기가 356 → 21 ms인데 엔진 TTFT는 17초. **좌석 상한도 원인이 아니다** |
 
-**막힌 곳**: `--api-server-count 4`(프런트엔드를 넷으로)는 이 빌드에 구현돼 있고 구조도 우리
-쪽에 안전한데(포트 하나, 출력이 `client_index`로 되돌아감, Llumlet은 엔진 코어당 하나),
-**켜면 Llumlet이 안 뜨고 스케줄러가 인스턴스를 0개 본다.** 원인 하나는 찾아 고쳤고
-(`LLUMNIX_VLLM_API_SERVER_PORT`가 API 서버 프로세스에서만 설정돼 count>1에서 엔진 코어가
-상속받지 못한다 — 시작 스크립트 셸에서 export하도록 고침) **아직 하나 더 남았다.**
+**막힌 곳 — 다음 세션의 첫 작업.** `--api-server-count 4`(프런트엔드를 넷으로)는 이 빌드에
+구현돼 있고 구조도 우리 쪽에 안전한데(포트 하나, 출력이 `client_index`로 되돌아감, Llumlet은
+엔진 코어당 하나), **켜면 파드가 2분 45초마다 통째로 재생성되어 `instance_status`가 끝내
+0이고 스케줄러가 인스턴스를 못 본다.** 원인 연쇄를 끝까지 잡았다(정본은 EXP-114 문서):
+
+프런트엔드 하나(`ApiServer_1`)가 **자기가 보낸 적 없는 `call_id`의 utility 응답**을 받아
+`core_client.py:630 _process_utility_output`에서 `KeyError`로 죽고 → 런처의
+`wait_for_completion_or_failure`가 `RuntimeError` → `vllm serve`가 **exit 0**으로 끝나고 →
+kubelet 재시작 → LWS의 `RecreateGroupOnPodRestart`가 **그룹째 재생성**
+(컨트롤러 이벤트: *"Worker pod neutral-0 failed, deleted leader pod"*).
+
+**유력한 기전(유도, 미확정)**: `core.py`의 `self.client_count = len(addresses.outputs)`가
+Llumnix hook의 `add_llumlet_address`가 llumlet 주소를 **덧붙이기 전에** 세어진다. 프런트엔드가
+하나면 안 드러나고 넷이면 인덱스가 밀린다.
+
+**다음 작업(2026-09-04 사용자 결정)**: 오버레이로 `vllm/v1/engine/core.py`의 인덱스 회계를
+고친다. ⚠ **엔진 코어의 출력 라우팅(`core.py:1253-1269`)에 걸리는 변경이라 지금까지 중 위험이
+가장 크다** — 잘못되면 응답이 엉뚱한 프런트엔드로 가고 조용히 틀린 결과가 나온다.
+**반드시 count=1에서 회귀 검사를 먼저** 하고(스케줄러가 8개를 보고 짧은 조건이 정상 수치를
+내는지), count=1의 동작이 바뀌면 그 오버레이는 버린다. 절차는 EXP-114 문서의
+"▶ 다음에 할 것" 절.
+
+**증거 파일**: `/home/nxclab/tools/vllm_terminated.log`(종료된 컨테이너 로그 5,966줄),
+`/home/nxclab/tools/podwatch.log`(5초 간격 파드 상태).
+
+⚠ **가설 하나는 반증됐다** — liveness probe(`failureThreshold 3 × 30초`)를 30(900초)으로 올려도
+재생성 주기가 그대로였다. probe 경로가 아니다. 그 값은 3으로 원복해 두었다.
 
 **고친 것 둘 (배포)**: ⑴ 인스턴스 수가 `configmap/llumnix-model`의 `ENGINE_PORTS`/`DP`로
 이동해 러너·수집기·분석 스크립트가 전부 거기서 읽는다. ⑵ **`discovery` 사이드카의
