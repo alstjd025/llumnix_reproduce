@@ -67,6 +67,27 @@ MODELS = {
         tp=2, dp=4,
         profile_dir="qwen25-72b-b200-tp2",
     ),
+    "llama31-8b-b200-tp1": dict(
+        model="meta-llama/Llama-3.1-8B-Instruct",
+        repo="models--meta-llama--Llama-3.1-8B-Instruct",
+        snapshot="0e9e39f249a16976918f6564b8830bc894c89659",
+        label="Llama-3.1-8B-Instruct",
+        # The model allows 131072. 40960 is the same ceiling the 70B fleet used,
+        # kept so that a request rejected for length is rejected in every fleet
+        # or in none; the workload's longest request is 17,588 tokens.
+        max_model_len=40960,
+        tp=1, dp=8,
+        profile_dir="llama31-8b-b200-tp1",
+    ),
+    "qwen25-14b-b200-tp1": dict(
+        model="Qwen/Qwen2.5-14B-Instruct",
+        repo="models--Qwen--Qwen2.5-14B-Instruct",
+        snapshot="cf98f3b3bbb457ad9e2bb7baf9a0125b6b88caa8",
+        label="Qwen2.5-14B-Instruct",
+        max_model_len=32768,   # the model's own max_position_embeddings
+        tp=1, dp=8,
+        profile_dir="qwen25-14b-b200-tp1",
+    ),
 }
 
 
@@ -198,7 +219,17 @@ def switch(key):
     cm = {"apiVersion": "v1", "kind": "ConfigMap",
           "metadata": {"name": "llumnix-model", "namespace": NS},
           "data": {"MODEL_ID": m["model"], "MAX_MODEL_LEN": str(m["max_model_len"]),
-                   "PROFILE_DIR": m["profile_dir"]}}
+                   "PROFILE_DIR": m["profile_dir"],
+                   # How many engine instances the fleet has, and on which ports.
+                   # The engine start script derives ports from DP_SIZE_LOCAL
+                   # (instance i listens on 8000+i), but everything that READS
+                   # the fleet -- the load generator's metrics collector, its
+                   # readiness wait, the llm-d endpoint list, the analysis
+                   # scripts -- used to carry its own copy of "8000..8003". A
+                   # fleet of eight would have been scraped as four with nothing
+                   # reporting the loss, so the count now travels with the model.
+                   "DP": str(m["dp"]),
+                   "ENGINE_PORTS": ",".join(str(8000 + i) for i in range(m["dp"]))}}
     kubectl(["apply", "-f", "-"], inp=json.dumps(cm))
     print(f"  configmap/llumnix-model set: MODEL_ID={m['model']}")
 
@@ -215,19 +246,34 @@ def verify(expect=None):
               "gw_max_len", "runner_model"):
         print(f"    {k:<15} {cur.get(k)}")
     ip = kubectl(["get", "pod", "neutral-0", "-o", "jsonpath={.status.podIP}"], check=False).strip()
-    served = None
+    # Ask EVERY instance, not just the first. The instances are separate vllm
+    # processes started by one loop, and a fleet where only some came up answers
+    # on 8000 exactly like a healthy one; a partly-started fleet that is measured
+    # produces numbers for a fleet size nobody wrote down.
+    nports = int(cur.get("dp") or 4)
+    served, per_port = None, {}
     if ip:
-        r = subprocess.run(["curl", "-sf", "-m", "5", f"http://{ip}:8000/v1/models"],
-                           capture_output=True, text=True)
-        if r.returncode == 0:
+        for i in range(nports):
+            port = 8000 + i
+            r = subprocess.run(["curl", "-sf", "-m", "5", f"http://{ip}:{port}/v1/models"],
+                               capture_output=True, text=True)
+            if r.returncode != 0:
+                per_port[port] = None
+                continue
             try:
                 d = json.loads(r.stdout)["data"][0]
+                per_port[port] = d["id"]
                 served = d["id"]
-                print(f"  engine reports:  {served}  max_model_len={d.get('max_model_len')}")
+                maxlen = d.get("max_model_len")
             except Exception:
-                pass
-    if served is None:
-        print("  engine reports:  (not serving yet)")
+                per_port[port] = None
+    answered = [p for p, v in per_port.items() if v]
+    if answered:
+        names = sorted(set(per_port[p] for p in answered))
+        print(f"  engine reports:  {len(answered)}/{nports} ports serving "
+              f"{names}  max_model_len={maxlen}")
+    else:
+        print(f"  engine reports:  (0/{nports} serving yet)")
     ok = True
     if expect:
         m = MODELS[expect]
@@ -238,8 +284,15 @@ def verify(expect=None):
         if cur.get("runner_model") != m["model"]:
             print(f"  MISMATCH configmap/llumnix-model says {cur.get('runner_model')} "
                   f"-- the load generator would name that model in every request"); ok = False
+        if str(cur.get("tp")) != str(m["tp"]) or str(cur.get("dp")) != str(m["dp"]):
+            print(f"  MISMATCH fleet shape: TP={cur.get('tp')} x DP={cur.get('dp')} "
+                  f"!= TP={m['tp']} x DP={m['dp']}"); ok = False
         if served is not None and served != m["model"]:
             print(f"  MISMATCH engine serves {served}"); ok = False
+        bad = [p for p, v in per_port.items() if v != m["model"]]
+        if bad:
+            print(f"  MISMATCH {len(bad)}/{m['dp']} ports do not serve {m['model']}: "
+                  f"{sorted(bad)}"); ok = False
     return 0 if ok else 1
 
 

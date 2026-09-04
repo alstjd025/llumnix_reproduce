@@ -30,7 +30,23 @@ import sys
 
 ENGINE_NS = "llumnix"
 ENGINE_POD = "neutral-0"
-ENGINE_PORTS = (8000, 8001, 8002, 8003)
+# Which ports the fleet actually listens on. Like MODEL_LABEL below, this used
+# to be a literal, which made it another place a fleet-shape change had to be
+# remembered -- and the failure is silent: llm-d would register four endpoints
+# for an eight-instance fleet, route to half of it, and report that as a result.
+def _engine_ports(default=(8000, 8001, 8002, 8003)):
+    try:
+        out = subprocess.run(
+            ["kubectl", "-n", "llumnix", "get", "cm", "llumnix-model",
+             "-o", "jsonpath={.data.ENGINE_PORTS}"],
+            capture_output=True, text=True, timeout=20)
+        v = out.stdout.strip()
+        return tuple(int(x) for x in v.split(",") if x.strip()) if v else default
+    except Exception:
+        return default
+
+
+ENGINE_PORTS = _engine_ports()
 LLMD_NS = "llmd"
 CONFIGMAP = "llmd-endpoints"
 # The label llm-d routes on has to name the model the engines actually serve.
