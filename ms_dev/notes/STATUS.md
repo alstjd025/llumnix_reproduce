@@ -157,22 +157,27 @@ EXP-112 실측, 예측은 18.4 였다).
 **한 시간 trace 는 0.644 배로 낮춘 `_q064` 를 쓴다.** 원본을 그대로 쓰면 평균 1.50 배·78%
 과부하가 되어 다른 실험이 된다. 낮추면 0.95 배·44% 로 Llama 에서의 원본과 같은 자리다.
 
-**반복 1 결과 (기존 채점 / 누적 마감 규칙, offered)**: FluidServe **78.6 / 81.3**,
-vLLM router 53.0 / 55.2, PolyServe 50.6 / 60.3, llm-d 50.4 / 54.3, Llumnix SLO 19.5 / 29.6.
-**FluidServe 가 두 채점 모두 1 위이고 Llama 에서의 순위가 유지된다.**
+**두 반복 완료 (2026-09-04 08:41). 기존 채점 offered, r1/r2**: FluidServe **78.6/78.7**,
+vLLM router 53.0/54.1, PolyServe 50.6/50.0, llm-d 50.4/52.9, Llumnix SLO 19.5/19.7.
+**누적 규칙 offered, r1/r2**: FluidServe 81.3/81.2, PolyServe 60.3/60.6,
+vLLM router 55.2/58.1, llm-d 54.3/56.4, Llumnix SLO 29.6/29.7.
+**FluidServe 가 두 채점·두 반복 모두 1 위**이고 2 위와 20.6~25.6 점 차이인데, **반복 간
+편차는 최대 2.5 점(llm-d)** 이다 — 격차가 편차의 열 배다. Llama 에서의 순위가 유지된다.
 
 ⚠ **인용 전에 반드시 읽을 것 셋** (전부 EXP-113 §3):
 1. **vLLM router 의 분모는 다른 arm 과 같은 도착 스트림이 아니다** — 거절을 안 해 부하
    생성기가 밀렸고 분 51~54 에 다른 arm 의 40% 만 내보냈다. 창도 149 초 길다.
 2. **두 채점이 2 위를 다르게 지목한다.** 1 위는 안 바뀐다.
-3. **PolyServe(+19.8)와 vLLM router(+15.7)만 Llama 대비 크게 올랐다.** 원인 미확정, 반복 2
-   가 필요하다.
+3. **PolyServe(+19.8)와 vLLM router(+15.7)만 Llama 대비 크게 올랐다.** 두 반복이 각각
+   0.6·1.1 점 안에서 재현되므로 **우연한 run 은 아니다.** 다만 **왜 올랐는지는 미검증** —
+   확인하려면 옛 표를 그대로 둔 ablation 이 필요하다.
+4. **llm-d 가 이 세트에서 가장 불안정하다**(offered 2.5 점, goodput 268 tok/s). 인용할 때는
+   반복 두 개를 다 적는다.
 
-**도는 것**: EXP-113 반복 2, 다섯 arm, 2026-09-04 02:30 시작, 약 6 시간.
-세션 밖 supervisor(`exp113_supervisor.log`)가 체인을 지키고 체인은 재개 가능하다.
+**도는 것: 없다.** 클러스터가 비어 있고 함대는 Qwen 이다.
 
-**아직 안 한 것**: 반복 2 채점·그림, `separation_measures.py` 다섯 arm 재실행,
-`numbers.tsv` 반영, Qwen 정적 sweep(사용자 결정으로 하지 않음).
+**아직 안 한 것**: `separation_measures.py` 열 run 재실행, `numbers.tsv` 반영, PolyServe·vLLM
+router 가 오른 이유의 ablation, Qwen 정적 sweep(사용자 결정으로 하지 않음).
 
 ---
 
