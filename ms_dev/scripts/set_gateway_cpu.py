@@ -59,6 +59,20 @@ def main():
     # Left settable rather than derived, because "equal to the limit" is a
     # decision about CFS behaviour and not an arithmetic identity.
     ap.add_argument("--gomaxprocs", type=int)
+    # klog verbosity. At -v 3 the gateway writes three or four lines PER TOKEN on
+    # the streaming path (pkg/gateway/handler/openai_handler.go:212,246,343 and
+    # pkg/gateway/processor/response_chunk_processor.go:293), two of them
+    # formatting the whole chunk JSON. klog serialises every line on one
+    # process-global mutex and performs a blocking write to stderr while holding
+    # it, so at tens of thousands of tokens per second it is the only global
+    # serialisation point on the relay path. Tokens then pile into the three
+    # capacity-100 channels on that path (sse_reader.go:87,
+    # neutral_forwarder.go:32, gateway_service.go:670) and are drained in one
+    # burst -- which is what a measured clump quantum of exactly 101 chunks, with
+    # maxima at 202-204, says is happening.
+    ap.add_argument("--verbosity", type=int,
+                    help="klog -v for the gateway. 3 is the historical value; "
+                         "0 removes the per-token log lines.")
     ap.add_argument("--show", action="store_true")
     ap.add_argument("--restart", action="store_true")
     a = ap.parse_args()
@@ -74,11 +88,20 @@ def main():
                 return e.get("value")
         return None
 
-    if a.show or (a.limit is None and a.request is None and a.gomaxprocs is None):
+    def current_v(c):
+        args = c.get("args") or []
+        for i, x in enumerate(args):
+            if x == "-v" and i + 1 < len(args):
+                return args[i + 1]
+        return None
+
+    if a.show or (a.limit is None and a.request is None and a.gomaxprocs is None
+                  and a.verbosity is None):
         print(f"  replicas:        {d['spec'].get('replicas')}")
         print(f"  requests.cpu:    {res.get('requests', {}).get('cpu')}")
         print(f"  limits.cpu:      {res.get('limits', {}).get('cpu')}")
         print(f"  GOMAXPROCS:      {gomax()}")
+        print(f"  klog -v:         {current_v(c)}")
         return 0
 
     if a.limit is not None:
@@ -101,13 +124,24 @@ def main():
     if rq > lm:
         sys.exit(f"ABORT: requests.cpu {rq} exceeds limits.cpu {lm}")
 
+    if a.verbosity is not None:
+        args = list(c.get("args") or [])
+        for i, x in enumerate(args):
+            if x == "-v" and i + 1 < len(args):
+                args[i + 1] = str(a.verbosity)
+                break
+        else:
+            args += ["-v", str(a.verbosity)]
+        c["args"] = args
+
     for k in ("resourceVersion", "uid", "creationTimestamp", "generation",
               "managedFields", "selfLink"):
         d["metadata"].pop(k, None)
     d.pop("status", None)
     kubectl(["apply", "-f", "-"], inp=json.dumps(d))
     print(f"  gateway -> requests.cpu={res['requests']['cpu']} "
-          f"limits.cpu={res['limits']['cpu']} GOMAXPROCS={gomax()}")
+          f"limits.cpu={res['limits']['cpu']} GOMAXPROCS={gomax()} "
+          f"-v {current_v(c)}")
 
     if a.restart:
         r = subprocess.run(["kubectl", "-n", NS, "rollout", "status",
