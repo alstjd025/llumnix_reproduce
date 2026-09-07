@@ -47,6 +47,54 @@ def _engine_ports(default=(8000, 8001, 8002, 8003)):
 
 
 ENGINE_PORTS = _engine_ports()
+
+# ⚠ THE CONFIGMAP BELOW IS NOT WHAT THIS DEPLOYMENT ROUTES ON.
+#
+# There are two llm-d endpoint paths and this cluster uses the second:
+#   file discovery   the EPP reads endpoints.yaml, the ConfigMap written below
+#   InferencePool    the EPP resolves endpoints from an InferencePool object,
+#                    which is what `--pool-name=llmd-engines --pool-namespace=
+#                    llumnix` on the EPP container selects
+#
+# The InferencePool carries its own `targetPorts` list. It was created on
+# 2026-08-31 with the four ports of the then-current fleet and nothing updated it
+# when the fleet went to eight, so llm-d served its entire EXP-114 hour on ports
+# 8000-8003 while 8004-8007 recorded zero requests. The driver reported
+# "verified: llmd-endpoints has 8 endpoints" throughout, because it was checking
+# the file the EPP does not use.
+#
+# So the port list has to be written to BOTH places from the same source. This
+# function does the InferencePool half; a failure here is loud, because the
+# silent version of it cost an hour-long run.
+def sync_inference_pool(ports, name="llmd-engines", ns="llumnix"):
+    import json as _json
+    cur = subprocess.run(["kubectl", "-n", ns, "get", "inferencepool", name,
+                          "-o", "jsonpath={.spec.targetPorts}"],
+                         capture_output=True, text=True, timeout=20)
+    if cur.returncode != 0:
+        print(f"  InferencePool {ns}/{name}: not present, skipping "
+              f"(this cluster may be on the file-discovery path)")
+        return True
+    have = [d["number"] for d in _json.loads(cur.stdout or "[]")]
+    if have == list(ports):
+        print(f"  InferencePool {ns}/{name}: targetPorts already {have}")
+        return True
+    patch = _json.dumps({"spec": {"targetPorts": [{"number": p} for p in ports]}})
+    r = subprocess.run(["kubectl", "-n", ns, "patch", "inferencepool", name,
+                        "--type", "merge", "-p", patch],
+                       capture_output=True, text=True, timeout=30)
+    if r.returncode != 0:
+        print(f"  InferencePool {ns}/{name}: PATCH FAILED: {r.stderr.strip()}")
+        return False
+    back = subprocess.run(["kubectl", "-n", ns, "get", "inferencepool", name,
+                           "-o", "jsonpath={.spec.targetPorts}"],
+                          capture_output=True, text=True, timeout=20)
+    now = [d["number"] for d in _json.loads(back.stdout or "[]")]
+    ok = now == list(ports)
+    print(f"  InferencePool {ns}/{name}: targetPorts {have} -> {now}"
+          f"{'' if ok else '  MISMATCH AFTER PATCH'}")
+    return ok
+
 LLMD_NS = "llmd"
 CONFIGMAP = "llmd-endpoints"
 # The label llm-d routes on has to name the model the engines actually serve.
@@ -145,6 +193,11 @@ def main() -> int:
         sys.exit(f"ABORT: wrote {n} endpoints, wanted {len(ENGINE_PORTS)}")
     print(f"verified: {CONFIGMAP} has {n} endpoints at {ip}:"
           f"{','.join(str(p) for p in ENGINE_PORTS)}")
+    # And the path this deployment actually routes on. A failure here has to
+    # fail the caller: the alternative is the run that produced this comment,
+    # where half the fleet took no traffic and every check said fine.
+    if not sync_inference_pool(ENGINE_PORTS):
+        return 1
     return 0
 
 
