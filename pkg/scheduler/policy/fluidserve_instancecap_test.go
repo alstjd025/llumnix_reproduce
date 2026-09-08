@@ -268,3 +268,99 @@ func TestForceOffRejectsWhatForceWouldPlace(t *testing.T) {
 	assert.True(t, p.admissionRejected("chat-new"),
 		"with force off, the same request is an explicit early rejection")
 }
+
+// ---------------------------------------------------------------------------
+// gateTighteningCost: what a class costs an instance by gating it
+// ---------------------------------------------------------------------------
+
+// The fixture's cKv is 1e-5 ms per token and its correction is 1.0, so one ms of
+// allowance is worth 100,000 tokens of pace ceiling. Tightening 90 ms -> 45 ms
+// therefore lowers capKv by 4,500,000.
+const testGateStep = 45.0 / 1e-5 // tokens of capKv per 45 ms of allowance
+
+func TestGateCostIsZeroWhileMemoryBinds(t *testing.T) {
+	m := testCapacity(t)
+	// capKv is 6M now and 1.5M after; capMem is 1M, below both. The instance
+	// admits 1M either way, so the class costs it nothing by gating it. This is
+	// the eight-instance case: measured capKv 9.6-10.3M against capMem 1.3M.
+	cost, ok := m.gateTighteningCost("i", 6_000_000, 1_000_000, 90, 45)
+	require.True(t, ok)
+	assert.Zero(t, cost, "a tighter gate on a ceiling that does not bind costs nothing")
+}
+
+func TestGateCostIsTheLostCapacityWhenPaceBinds(t *testing.T) {
+	m := testCapacity(t)
+	// capKv 600k now, 600k-4.5M after, so negative; capMem 6M, above both. The
+	// instance goes from admitting 600k to admitting nothing. This is the
+	// four-instance case: measured capKv 397k-618k with the physical pool well
+	// above it.
+	cost, ok := m.gateTighteningCost("i", 600_000, 6_000_000, 90, 45)
+	require.True(t, ok)
+	assert.InDelta(t, 600_000+(testGateStep-600_000), cost, 1,
+		"the whole pace ceiling is lost, and then some")
+	assert.Greater(t, cost, 600_000.0)
+}
+
+func TestGateCostCrossesFromOneCeilingToTheOther(t *testing.T) {
+	m := testCapacity(t)
+	// capKv 2M now, capMem 1M: memory binds. After tightening capKv is
+	// 2M-4.5M < 0, so the pace ceiling takes over and the instance loses the
+	// whole 1M it could admit. The cost is the DIFFERENCE OF THE MINIMA, not of
+	// the pace ceilings, which is the reason the test is written on min().
+	cost, ok := m.gateTighteningCost("i", 2_000_000, 1_000_000, 90, 45)
+	require.True(t, ok)
+	assert.InDelta(t, 1_000_000-(2_000_000-testGateStep), cost, 1)
+}
+
+func TestGateCostRefusesToAnswerForAnInfiniteCeiling(t *testing.T) {
+	m := testCapacity(t)
+	// An instance with no live request has gateAllowance +Inf and therefore
+	// capKv +Inf. Subtracting a finite step from +Inf is still +Inf, so the
+	// linear form would report "costs nothing" for the one placement the cap
+	// most wants to reason about. Refuse instead, and let the caller decide.
+	_, ok := m.gateTighteningCost("i", math.Inf(1), 1_000_000, math.Inf(1), 45)
+	assert.False(t, ok, "an infinite ceiling must not be extrapolated")
+	_, ok = m.gateTighteningCost("i", math.Inf(-1), 1_000_000, 90, 45)
+	assert.False(t, ok, "the unpredictable-prefill sentinel must not be extrapolated")
+}
+
+func TestGateCostIsZeroForALooserClass(t *testing.T) {
+	m := testCapacity(t)
+	// deepresearch landing on a chat-gated instance does not move the gate, so
+	// there is nothing to charge. The cap already keeps these as "riding"; the
+	// helper must agree rather than return something.
+	cost, ok := m.gateTighteningCost("i", 600_000, 6_000_000, 45, 90)
+	require.True(t, ok)
+	assert.Zero(t, cost)
+}
+
+func TestGateCostNeverReportsCreatedCapacity(t *testing.T) {
+	m := testCapacity(t)
+	for _, tc := range []struct{ capKv, capMem float64 }{
+		{6_000_000, 1_000_000}, {600_000, 6_000_000}, {2_000_000, 1_000_000},
+		{1_000_000, 1_000_000}, {0, 1_000_000},
+	} {
+		cost, ok := m.gateTighteningCost("i", tc.capKv, tc.capMem, 90, 45)
+		require.True(t, ok)
+		assert.GreaterOrEqual(t, cost, 0.0,
+			"capKv=%v capMem=%v", tc.capKv, tc.capMem)
+	}
+}
+
+func TestGateCostUsesThePerInstanceCorrection(t *testing.T) {
+	m := testCapacity(t)
+	m.perInstance = true
+	m.corrections["slow"] = 2.0 // this instance runs at twice the modelled time
+	fleet, ok := m.gateTighteningCost("fleet", 600_000, 6_000_000, 90, 45)
+	require.True(t, ok)
+	slow, ok := m.gateTighteningCost("slow", 600_000, 6_000_000, 90, 45)
+	require.True(t, ok)
+	// A correction of 2 halves the tokens each ms of allowance is worth, because
+	// maxKvForAllowance divides the allowance by the correction before inverting.
+	// So the same tightening costs exactly half as much: 4,500,000 against
+	// 2,250,000. tierServiceRate reads the fleet value and cannot make this
+	// distinction; maxKvForAllowance already reads the per-instance one, and this
+	// helper must match it.
+	assert.InDelta(t, 4_500_000.0, fleet, 1)
+	assert.InDelta(t, fleet/2, slow, 1)
+}

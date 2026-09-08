@@ -459,6 +459,58 @@ func (m *capacityModel) maxKvForAllowance(
 	return (allowanceMs - overhead) / cKv
 }
 
+// gateTighteningCost is the admissible KV an instance would lose by having its
+// gate tightened from allowanceNow to allowanceAfter, in logical tokens.
+//
+// Admission takes min(capKv, capMem) (fluidserve.go, the overMemory test).
+// capKv is the pace ceiling and falls with the gate; capMem is the physical pool
+// and does not. So the loss is the difference of those two minima, and it is
+// ZERO for as long as capMem is the smaller ceiling on both sides -- the case
+// where a tighter gate lowers a ceiling that was not the binding one. Measured
+// at 185 req/s on the eight-instance fleet, that is every instance for
+// deepresearch, 98.9% of loaded scrapes for swe and 77.0% for chat, while on the
+// four-instance 70B fleet the pace ceiling refused 38 placements per one the
+// physical pool refused.
+//
+// capKvNow is passed in rather than recomputed because the caller already holds
+// it as f.capKv. The value at the other allowance follows by arithmetic:
+// maxKvForAllowance returns (allowance/corr - overhead)/cKv and the overhead
+// term carries no allowance, so the inversion is linear in it and a second call
+// would return the same number for more work.
+//
+// It returns (cost, ok). ok is false when capKvNow is not finite, which is what
+// an instance with no live request has -- there the linear step does not apply
+// and the caller must decide without this test rather than read a wrong zero.
+func (m *capacityModel) gateTighteningCost(
+	instance string, capKvNow, capMem, allowanceNow, allowanceAfter float64,
+) (float64, bool) {
+
+	if math.IsInf(capKvNow, 0) || math.IsNaN(capKvNow) {
+		return 0, false
+	}
+	if allowanceAfter >= allowanceNow {
+		// Not a tightening. A class whose promise is looser than the gate rides
+		// on it without changing it, which is the branch the cap already has.
+		return 0, true
+	}
+	m.mu.RLock()
+	cKv, corr := m.cKv, m.corrLocked(instance)
+	m.mu.RUnlock()
+	if cKv <= 0 || corr <= 0 {
+		return 0, false
+	}
+	capKvAfter := capKvNow + (allowanceAfter-allowanceNow)/(corr*cKv)
+	cost := math.Min(capKvNow, capMem) - math.Min(capKvAfter, capMem)
+	if cost < 0 {
+		// Unreachable while allowanceAfter < allowanceNow, since capKvAfter is
+		// then below capKvNow and min is monotone. Guarded rather than trusted:
+		// a negative cost would read as "this placement CREATES capacity" at
+		// every call site.
+		cost = 0
+	}
+	return cost, true
+}
+
 // tierServiceRate is the steady-state completion rate, in requests per second,
 // of one instance serving ONLY the given class at the given per-token
 // allowance -- the mu behind the class-instance cap's demand-to-instances
