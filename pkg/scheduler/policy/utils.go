@@ -2,6 +2,8 @@ package policy
 
 import (
 	"fmt"
+	"math"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog/v2"
@@ -232,4 +234,70 @@ func logSelectedInstance(
 	klog.V(3).Infof("[Schedule] dispatch request %s to %s instance %s for %s, %s: %.4f",
 		requestId, instance.GetInferType(), instance.GetInstanceId(), requestInferType,
 		loadMetric.GetName(), loadMetric.GetValue())
+	logPredictionForRequest(instance, requestId)
+}
+
+// predictionMetrics are the scheduling metrics that are a POLICY'S OWN FORECAST
+// of what a placement will cost, as opposed to a reading of the instance's
+// current state. Llumnix SLO computes the first two and admits on them;
+// PolyServe computes the last two, iter_now being the per-token time it expects
+// at the batch as it stands and iter_max the same at the largest KV the batch
+// reaches. A policy that does not compute one simply has no entry.
+var predictionMetrics = []string{
+	consts.SchedulingMetricPredictedTtft,
+	consts.SchedulingMetricPredictedTpot,
+	consts.SchedulingMetricPolyserveIterNow,
+	consts.SchedulingMetricPolyserveIterMax,
+}
+
+// logPredictionForRequest records, per request, the value the policy predicted
+// for the instance it chose.
+//
+// WHY THIS LINE EXISTS. Every policy here that can express a latency budget
+// decides by forecasting one and comparing it against that budget, and the
+// forecast is the thing under test: how far is it from what the request then
+// experiences? recordSelectedInstanceSchedulingMetrics already observes the same
+// two values into histograms, but a histogram cannot be joined to a request, and
+// the comparison has to be per request because the error is class dependent --
+// FluidServe's own first-token estimate was measured 1.68x high for chat and
+// 0.74x low for deepresearch over the same eight minutes.
+//
+// It must be joined against the CLIENT's first_token_latency, not against
+// anything the scheduler reports. The scheduler cannot observe when a request
+// produced its first token: reconcile infers it from the engine's global step
+// counter, which advances on every engine step and not on that request's, so it
+// reported a mean of 314 ms with nothing over 10 s while the client recorded
+// 22.8% of deepresearch over 10 s in the same run. Comparing a forecast against
+// that would compare a model with a model.
+//
+// FORMAT. The prefix matches what llumnix_metrics.py already greps at the
+// source, so the line reaches server_metrics/scheduler_dispatch.log with no
+// change to the collector. It deliberately does NOT match
+// build_request_engine_map.py's pattern, which requires "to <x> instance
+// <digits>" after the uuid: the engine attribution join must keep reading the
+// line above, not this one. At Infof rather than V(3) so that a run made with a
+// lower verbosity still carries it -- the line above is V(3) and only survives
+// because this scheduler happens to run at -v 4.
+func logPredictionForRequest(instance *instanceViewScheduling, requestId string) {
+	var b strings.Builder
+	for _, name := range predictionMetrics {
+		m, ok := instance.schedulingCtx.metrics[name]
+		if !ok {
+			continue
+		}
+		v := m.GetValue()
+		if math.IsInf(float64(v), 0) || math.IsNaN(float64(v)) {
+			// An infinite forecast is the policy saying "not feasible here", and
+			// it is information: it must reach the log as a sentinel rather than
+			// as a formatted +Inf that the offline parser reads as a number.
+			fmt.Fprintf(&b, " %s=inf", name)
+			continue
+		}
+		fmt.Fprintf(&b, " %s=%.3f", name, v)
+	}
+	if b.Len() == 0 {
+		return
+	}
+	klog.Infof("[Schedule] dispatch request %s prediction%s inst=%s",
+		requestId, b.String(), instance.GetInstanceId())
 }
