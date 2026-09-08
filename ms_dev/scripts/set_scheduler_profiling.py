@@ -315,6 +315,12 @@ FLUIDSERVE_ABLATIONS = {
     # the treatment arm sets FS_FORCE=false, which turns a forced placement
     # into an explicit early rejection.
     "FS_FORCE": "--fluidserve-enable-force",
+    # EXP-114. Make the cap keep a candidate it would otherwise remove when the
+    # gate that placement opens would cost the instance no admissible capacity.
+    # Separate from FS_INSTANCE_CAP on purpose: that flag names the mechanism
+    # EXP-107 and EXP-114 were measured with, and the run directories carry its
+    # token, so it must keep meaning what those results say it means.
+    "FS_CAP_COST": "--fluidserve-cap-costs-capacity",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -734,6 +740,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-class-instance-cap", "instancecap"),
         ("--fluidserve-class-instance-cap-window-mult", "capmult"),
         ("--fluidserve-enable-force", "enableforce"),
+        ("--fluidserve-cap-costs-capacity", "capcost"),
     ]
     bad = []
     for flag, key in checks:
