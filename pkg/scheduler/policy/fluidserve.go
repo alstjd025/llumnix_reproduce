@@ -584,6 +584,18 @@ func (p *fluidserveDispatchPolicy) calculateMetrics(
 				// a real constraint that is no longer there.
 				metrics.Gauge("scheduler_fluidserve_cap_kv_tokens", lbl).
 					Set(finiteOrMinusOne(f.capKv))
+				// The physical ceiling, beside the pace one. Admission takes the
+				// smaller of the two, so which is smaller decides whether
+				// tightening this instance's gate costs it anything: while capMem
+				// is the smaller, a tighter gate lowers capKv without lowering
+				// min(capKv, capMem), and the class-instance cap is then refusing a
+				// placement to protect capacity that was never at risk. Measured,
+				// the pace ceiling refused 38 placements per one the physical pool
+				// refused on the four-instance 70B fleet, and 0.43 on the
+				// eight-instance 8B one. Without this series that comparison can
+				// only be inferred from the infeasibility counters.
+				metrics.Gauge("scheduler_fluidserve_cap_mem_tokens", lbl).
+					Set(finiteOrMinusOne(f.capMem))
 				metrics.Gauge("scheduler_fluidserve_projected_kv_tokens", lbl).Set(f.proj)
 				metrics.Gauge("scheduler_fluidserve_outflow_tokens", lbl).Set(f.outflow)
 				metrics.Gauge("scheduler_fluidserve_live_requests", lbl).Set(float64(len(f.live)))
