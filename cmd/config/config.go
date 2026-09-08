@@ -308,6 +308,7 @@ type FullModeSchedulingConfig struct {
 	// EXP-107
 	FluidserveClassInstanceCap           bool
 	FluidserveClassInstanceCapWindowMult float64
+	FluidserveCapCostsCapacity           bool
 	FluidserveEnableForce                bool
 
 	// The vLLM router cache_aware baseline. Defaults are that package's, not the
@@ -819,6 +820,18 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"service rate at the class's pace). At the limit, the class may only be "+
 			"placed on its most-loaded gate holders, so surplus gate holders drain "+
 			"within one residence time and their gates release to the next class.")
+	flags.BoolVar(&c.FluidserveCapCostsCapacity, "fluidserve-cap-costs-capacity", false,
+		"Make the class-instance cap keep a candidate it would otherwise remove "+
+			"when placing this class there would not actually cost that instance "+
+			"any admissible capacity. Admission takes min(capKv, capMem); a "+
+			"tighter gate lowers capKv only, so while capMem is the smaller "+
+			"ceiling the cap is refusing a placement to protect capacity that was "+
+			"never at risk. Measured at 185 req/s on eight Llama-3.1-8B instances "+
+			"that is 100% of loaded scrapes for deepresearch, 98.9% for swe and "+
+			"77.0% for chat, while on four 70B instances the pace ceiling refused "+
+			"38 placements per one the physical pool refused. Separate from "+
+			"--fluidserve-class-instance-cap so that flag keeps naming the "+
+			"mechanism every earlier run was measured with.")
 	flags.Float64Var(&c.FluidserveClassInstanceCapWindowMult,
 		"fluidserve-class-instance-cap-window-mult", 3.0,
 		"Smoothing horizon of the cap's demand estimate, in residence times of "+

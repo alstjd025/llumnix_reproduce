@@ -122,6 +122,7 @@ func (p *fluidserveDispatchPolicy) preRegisterCapMetrics() {
 		metrics.Counter("scheduler_fluidserve_instcap_excluded_total", l).Add(0)
 		metrics.Counter("scheduler_fluidserve_instcap_blocked_feasible_total", l).Add(0)
 		metrics.Counter("scheduler_fluidserve_instcap_empty_fallback_total", l).Add(0)
+		metrics.Counter("scheduler_fluidserve_instcap_free_gate_total", l).Add(0)
 	}
 	for _, r := range []string{"cannot_meet", "no_feasible"} {
 		metrics.Counter("scheduler_fluidserve_shed_reason_total",
@@ -187,6 +188,28 @@ func (p *fluidserveDispatchPolicy) capAlphaLocked(tier int, bucketS float64) flo
 		alpha = 1
 	}
 	return alpha
+}
+
+// gateIsFree reports whether letting this request's class set the gate on this
+// instance would cost the instance no admissible capacity.
+//
+// It answers false when the cost cannot be computed -- an instance with no live
+// request has an infinite capKv, and extrapolating from infinity would report
+// "free" for the one placement the riding comment above calls the new gate the
+// cap exists to refuse. False there means the cap decides as it did before.
+func (p *fluidserveDispatchPolicy) gateIsFree(f *instanceFlux, req *fluidserveRequest) bool {
+	if f == nil || req.nominalMs <= 0 {
+		return false
+	}
+	now := f.gateAllowance
+	if math.IsInf(now, 0) {
+		return false
+	}
+	after := math.Min(now, req.nominalMs)
+	cost, ok := p.capacity.gateTighteningCost(
+		f.id, f.capKv, f.capMem,
+		now*fsAllowanceUtilisation, after*fsAllowanceUtilisation)
+	return ok && cost <= 0
 }
 
 // capLimitFor turns a demand in instances into the integer limit, with
@@ -388,6 +411,27 @@ func (p *fluidserveDispatchPolicy) applyInstanceCap(
 			// instance has an infinite gateTierNominal and lands in the
 			// removal branch below, which is the point -- gating an empty
 			// instance is exactly the new gate the cap exists to refuse.
+			keep = append(keep, cands[i])
+		case p.cfg.capCostsCapacity && f.gateTier != req.tier && p.gateIsFree(f, req):
+			// The gate this placement would OPEN costs the instance no
+			// admissible capacity, so there is nothing for the cap to protect
+			// by refusing it. Restricted to instances this class does not
+			// already gate: on one it does, the tightening is a no-op and the
+			// cost is trivially zero, so without that guard this branch would
+			// keep every surplus gate holder and the drain -- the only thing
+			// that contracts a class's footprint -- would never run, on any
+			// fleet. Admission takes min(capKv, capMem) and only capKv
+			// moves with the gate, so this is the case where capMem is the
+			// smaller ceiling on both sides. It is not a corner: measured at
+			// 185 req/s on eight Llama-3.1-8B instances it holds for every
+			// loaded scrape for deepresearch, 98.9% for swe and 77.0% for chat,
+			// and chat's figure splits by how loaded the instance is -- 11.7%
+			// and 37.7% on the two whose capKv had been pushed down, 84.5% to
+			// 95.3% on the idler ones. On four 70B instances the pace ceiling
+			// refused 38 placements per one the physical pool refused, so there
+			// this branch is expected to fire rarely and the cap to behave as
+			// it does today.
+			metrics.Counter("scheduler_fluidserve_instcap_free_gate_total", lbl).Inc()
 			keep = append(keep, cands[i])
 		default:
 			metrics.Counter("scheduler_fluidserve_instcap_excluded_total", lbl).Inc()

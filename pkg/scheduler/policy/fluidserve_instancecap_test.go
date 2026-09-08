@@ -364,3 +364,130 @@ func TestGateCostUsesThePerInstanceCorrection(t *testing.T) {
 	assert.InDelta(t, 4_500_000.0, fleet, 1)
 	assert.InDelta(t, fleet/2, slow, 1)
 }
+
+// ---------------------------------------------------------------------------
+// capCostsCapacity: keep a candidate whose gate would cost the instance nothing
+// ---------------------------------------------------------------------------
+
+// capFluxCeilings is capFlux with the two admission ceilings and the gate
+// allowance filled in, which capFlux leaves at their zero values because no test
+// before this one read them.
+func capFluxCeilings(id string, gateTier int, gateNominal float64, residents int,
+	capKv, capMem float64) *instanceFlux {
+	f := capFlux(id, gateTier, gateNominal, residents)
+	f.capKv, f.capMem = capKv, capMem
+	f.gateAllowance = gateNominal
+	if gateTier == 0 {
+		f.gateAllowance = math.Inf(1)
+	}
+	return f
+}
+
+func capCostPolicy(t *testing.T) *fluidserveDispatchPolicy {
+	t.Helper()
+	p := capPolicy(t)
+	p.cfg.capCostsCapacity = true
+	return p
+}
+
+// The eight-instance case. The physical pool is the smaller ceiling before and
+// after, so opening the gate costs nothing and the class may take the instance.
+func TestCapKeepsAGateThatCostsNothing(t *testing.T) {
+	p := capCostPolicy(t)
+	p.tierArr[50] = &tierArrivalState{lambda: 25, meanPrompt: 674, ready: true}
+	p.tierArr[100] = &tierArrivalState{lambda: 2, meanPrompt: 4055, ready: true}
+	// A third class with arrivals and no gate holder, so the guardrail is armed.
+	// Without it the tier-100 instance under test satisfies tier 100's own
+	// demand, nothing is starved, and applyInstanceCap returns unfiltered --
+	// which makes the assertion below pass for a reason that has nothing to do
+	// with what it is testing.
+	p.tierArr[25] = &tierArrivalState{lambda: 2, meanPrompt: 4055, ready: true}
+
+	cands := candsOf(
+		capFluxCeilings("a", 50, 50, 10, 6_000_000, 1_000_000),
+		capFluxCeilings("b", 50, 50, 5, 6_000_000, 1_000_000),
+		// Gated by the loose class. Tightening it to 50 ms drops capKv from 6M
+		// to 1.5M, still above the 1M physical pool, so the instance admits the
+		// same 1M either way.
+		capFluxCeilings("e", 100, 100, 3, 6_000_000, 1_000_000),
+	)
+	got := p.applyInstanceCap(cands, &fluidserveRequest{tier: 50, nominalMs: 50})
+	assert.Contains(t, idsOf(got), "e",
+		"an instance whose admissible capacity does not move may be gated")
+}
+
+// The four-instance case, and the guarantee that this change does not touch it.
+// The pace ceiling is the smaller one, so the same tightening takes the instance
+// from admitting 600k to admitting nothing.
+func TestCapStillRemovesAGateThatCostsCapacity(t *testing.T) {
+	p := capCostPolicy(t)
+	p.tierArr[50] = &tierArrivalState{lambda: 25, meanPrompt: 674, ready: true}
+	p.tierArr[100] = &tierArrivalState{lambda: 2, meanPrompt: 4055, ready: true}
+	p.tierArr[25] = &tierArrivalState{lambda: 2, meanPrompt: 4055, ready: true}
+
+	cands := candsOf(
+		capFluxCeilings("a", 50, 50, 10, 600_000, 6_000_000),
+		capFluxCeilings("b", 50, 50, 5, 600_000, 6_000_000),
+		capFluxCeilings("e", 100, 100, 3, 600_000, 6_000_000),
+	)
+	got := p.applyInstanceCap(cands, &fluidserveRequest{tier: 50, nominalMs: 50})
+	assert.NotContains(t, idsOf(got), "e",
+		"where the pace ceiling binds, opening a gate still costs the instance "+
+			"its capacity and the cap must still refuse it")
+}
+
+// The defect this branch had on its first writing. An instance the class ALREADY
+// gates is not being tightened at all, so its cost is trivially zero; without
+// the gateTier guard the branch would keep every surplus gate holder and the
+// drain, which is the only thing that contracts a class's footprint, would never
+// run -- on the four-instance fleet as much as on the eight.
+func TestCapCostDoesNotDisableTheDrain(t *testing.T) {
+	p := capCostPolicy(t)
+	p.tierArr[50] = &tierArrivalState{lambda: 25, meanPrompt: 674, ready: true}
+	p.tierArr[100] = &tierArrivalState{lambda: 2, meanPrompt: 4055, ready: true}
+
+	cands := candsOf(
+		capFluxCeilings("a", 50, 50, 10, 6_000_000, 1_000_000),
+		capFluxCeilings("b", 50, 50, 5, 6_000_000, 1_000_000),
+		capFluxCeilings("c", 50, 50, 1, 6_000_000, 1_000_000), // surplus holder
+	)
+	got := p.applyInstanceCap(cands, &fluidserveRequest{tier: 50, nominalMs: 50})
+	assert.NotContains(t, idsOf(got), "c",
+		"a surplus gate holder must still drain even where a new gate is free")
+}
+
+// An empty instance has an infinite gate allowance, so the linear step cannot be
+// taken and gateIsFree must answer false. Gating an empty instance is the new
+// gate the riding comment says the cap exists to refuse, and it must stay
+// refused.
+func TestCapCostRefusesAnEmptyInstance(t *testing.T) {
+	p := capCostPolicy(t)
+	p.tierArr[50] = &tierArrivalState{lambda: 25, meanPrompt: 674, ready: true}
+	p.tierArr[100] = &tierArrivalState{lambda: 2, meanPrompt: 4055, ready: true}
+
+	cands := candsOf(
+		capFluxCeilings("a", 50, 50, 10, 6_000_000, 1_000_000),
+		capFluxCeilings("b", 50, 50, 5, 6_000_000, 1_000_000),
+		capFluxCeilings("d", 0, 0, 0, math.Inf(1), 1_000_000), // empty
+	)
+	got := p.applyInstanceCap(cands, &fluidserveRequest{tier: 50, nominalMs: 50})
+	assert.NotContains(t, idsOf(got), "d",
+		"an infinite ceiling cannot be extrapolated, so the cap decides as before")
+}
+
+// With the flag off nothing may move, whatever the ceilings say. This is the
+// arm every earlier measurement was made with.
+func TestCapCostFlagOffKeepsTheOldDecision(t *testing.T) {
+	p := capPolicy(t) // flag left at its default
+	p.tierArr[50] = &tierArrivalState{lambda: 25, meanPrompt: 674, ready: true}
+	p.tierArr[100] = &tierArrivalState{lambda: 2, meanPrompt: 4055, ready: true}
+	p.tierArr[25] = &tierArrivalState{lambda: 2, meanPrompt: 4055, ready: true}
+
+	cands := candsOf(
+		capFluxCeilings("a", 50, 50, 10, 6_000_000, 1_000_000),
+		capFluxCeilings("b", 50, 50, 5, 6_000_000, 1_000_000),
+		capFluxCeilings("e", 100, 100, 3, 6_000_000, 1_000_000),
+	)
+	got := p.applyInstanceCap(cands, &fluidserveRequest{tier: 50, nominalMs: 50})
+	assert.Equal(t, []string{"a", "b"}, idsOf(got))
+}

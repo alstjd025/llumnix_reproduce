@@ -126,6 +126,10 @@ type fluidserveConfig struct {
 	// that class sets, at a demand-derived limit. Mechanism and constants are
 	// in fluidserve_instancecap.go.
 	classInstanceCap bool
+	// capCostsCapacity makes the cap ask, before removing a candidate, whether
+	// placing this class there would cost that instance any admissible capacity
+	// at all. Off reproduces every measurement before 2026-09-08.
+	capCostsCapacity bool
 	// capWindowMult is how many residence times the cap's demand estimate
 	// smooths over -- the definition of how long a shift must persist before
 	// it earns fleet share.
@@ -2850,6 +2854,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 		classInstanceCap: p.FluidserveClassInstanceCap,
 		capWindowMult:    p.FluidserveClassInstanceCapWindowMult,
+		capCostsCapacity: p.FluidserveCapCostsCapacity,
 		enableForce:      p.FluidserveEnableForce,
 	}
 	if cfg.prefixAware && cfg.prefixBlockToks <= 0 {
@@ -2932,7 +2937,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		// The three EXP-107 fields go AFTER budgets, at the very end, for the
 		// same reason the prefix fields sit before classpin: nothing may be
 		// inserted between classpin and budgets.
-		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v",
+		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
+		"capcost=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -2945,7 +2951,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.prefixAware, cfg.prefixCalibrate, cfg.prefixBlockToks, cfg.prefixCapacity,
 		formatClassPin(cfg.classPin),
 		p.FluidserveClassBudgets,
-		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce)
+		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
+		cfg.capCostsCapacity)
 
 	go policy.reportLoop()
 	return policy
