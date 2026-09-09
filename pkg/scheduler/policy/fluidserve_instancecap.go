@@ -123,6 +123,7 @@ func (p *fluidserveDispatchPolicy) preRegisterCapMetrics() {
 		metrics.Counter("scheduler_fluidserve_instcap_blocked_feasible_total", l).Add(0)
 		metrics.Counter("scheduler_fluidserve_instcap_empty_fallback_total", l).Add(0)
 		metrics.Counter("scheduler_fluidserve_instcap_free_gate_total", l).Add(0)
+		metrics.Counter("scheduler_fluidserve_instcap_sole_block_total", l).Add(0)
 	}
 	for _, r := range []string{"cannot_meet", "no_feasible"} {
 		metrics.Counter("scheduler_fluidserve_shed_reason_total",

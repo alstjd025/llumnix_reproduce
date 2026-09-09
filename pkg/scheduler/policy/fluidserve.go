@@ -1366,6 +1366,16 @@ type candidate struct {
 	// still miss the budget the request itself is judged by.
 	missesOwnBudget bool
 	prefillMs       float64
+	// The two terms prefillMs is the sum of, kept apart for the dispatch line.
+	// The offline analysis of the eight-instance hour could not separate them:
+	// the pendingPrefill and arrivingPrefill gauges are written on every
+	// candidate evaluation and scraped at 1 Hz, so at roughly 1,600 evaluations
+	// per second the stored value is one arbitrary sample and reconstructing the
+	// queue term from it had a median absolute error of 438 ms. Which of the two
+	// terms carries the error is the open question about the forecast, so the
+	// split is recorded rather than inferred.
+	prefillOwnMs   float64
+	prefillQueueMs float64
 	// prefillCharge is the prompt tokens this placement was priced at on THIS
 	// instance: the whole prompt scaled by the fleet factor when the prefix
 	// index is off, and the prompt minus the blocks the instance is believed to
@@ -1436,7 +1446,38 @@ func (s *fluidserveSelector) selectInstance(
 		return nil
 	}
 	cands = p.applyClassPin(cands, instances, req)
+	// Whether the instance cap ALONE left this request with nowhere to go.
+	//
+	// instcap_blocked_feasible_total counts feasible instances the cap removed,
+	// which is an upper bound on cap-caused non-placement and not a measurement
+	// of it: a cycle that loses one feasible instance to the cap still routes if
+	// another feasible one survives. On the eight-instance hour two windows
+	// recorded 25,045 and 13,514 blocked-feasible chat candidates with zero
+	// non-placing chat cycles, so the counter could not be converted into
+	// refusals at all. This is the same `sole` construction the feasibility
+	// conjunction already uses: it fires only when the permitted set has no
+	// feasible member and the excluded set had one.
+	feasibleBeforeCap := false
+	for i := range cands {
+		if cands[i].feasible {
+			feasibleBeforeCap = true
+			break
+		}
+	}
 	cands = p.applyInstanceCap(cands, req)
+	if feasibleBeforeCap {
+		feasibleAfterCap := false
+		for i := range cands {
+			if cands[i].feasible {
+				feasibleAfterCap = true
+				break
+			}
+		}
+		if !feasibleAfterCap {
+			metrics.Counter("scheduler_fluidserve_instcap_sole_block_total",
+				capTierLabel(req.tier)).Inc()
+		}
+	}
 	if len(cands) == 0 {
 		// applyClassPin can return an empty slice only through its own
 		// fallback bug surface and applyInstanceCap refuses to empty the list,
@@ -1553,9 +1594,11 @@ func (s *fluidserveSelector) selectInstance(
 		// that parse fsplacement lines read the positional fields up to inst=,
 		// and none of their patterns anchor at the line end.
 		klog.Infof("[Schedule] dispatch request %s fsplacement tier=%d waited=%d "+
-			"prefillest=%.1f prefillraw=%.1f prompt=%d decision=%s inst=%s reason=%s",
+			"prefillest=%.1f prefillraw=%.1f prompt=%d decision=%s inst=%s reason=%s "+
+			"prefillown=%.1f prefillqueue=%.1f",
 			req.id, req.tier, req.nowMs-req.arrivedMs, best.prefillMs,
-			best.prefillRaw, req.promptTokens, "shed", best.flux.id, shedReason)
+			best.prefillRaw, req.promptTokens, "shed", best.flux.id, shedReason,
+			best.prefillOwnMs, best.prefillQueueMs)
 		p.noteShed(req.id)
 		klog.V(5).Infof("FluidServe sheds request %s (tier %dms, waited %dms): "+
 			"placing it on %s would give %.1fms per token and %.0fms to first "+
@@ -1866,7 +1909,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	c.meanBefore = f.meanStep
 	c.meanAfter = p.capacity.meanStepMs(f.id, newKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
 	c.headroomAfter = math.Min(f.capKv, f.capMem) - newKv
-	c.prefillMs = p.prefillEstimateMs(req, f)
+	c.prefillMs, c.prefillOwnMs, c.prefillQueueMs = p.prefillEstimateParts(req, f)
 
 	// Two separate conditions, because they protect two different things.
 	//
@@ -2012,10 +2055,21 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	// to whichever the code happens to test first.
 	if !c.feasible {
 		var failed []string
+		// The tier label was added after the eight-instance hour run, where the
+		// analysis of which condition refused each class could not be done: the
+		// counters carried only `reason`, so one counter equation per window had
+		// to serve three class unknowns and the decomposition was not identified.
+		// The instance-cap counters have carried a tier label since they were
+		// written and that is the only condition whose per-class behaviour could
+		// be read. Cardinality is three tiers by six reasons.
+		tier := strconv.Itoa(req.tier)
 		reason := func(v string) {
 			failed = append(failed, v)
 			metrics.Counter("scheduler_fluidserve_infeasible_total",
-				metrics.Labels{{Name: "reason", Value: v}}).Inc()
+				metrics.Labels{
+					{Name: "reason", Value: v},
+					{Name: "tier", Value: tier},
+				}).Inc()
 		}
 		if unpredictable {
 			reason("unpredictable")
@@ -2052,7 +2106,10 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		// already empty (63.9% against 61.9%). Counted here directly.
 		if len(failed) == 1 {
 			metrics.Counter("scheduler_fluidserve_infeasible_sole_total",
-				metrics.Labels{{Name: "reason", Value: failed[0]}}).Inc()
+				metrics.Labels{
+					{Name: "reason", Value: failed[0]},
+					{Name: "tier", Value: tier},
+				}).Inc()
 		}
 	}
 
@@ -2577,8 +2634,19 @@ func (p *fluidserveDispatchPolicy) canWait(best candidate, req *fluidserveReques
 	return waited < deadline
 }
 
+// prefillEstimateMs is the sum the decision uses. prefillEstimateParts returns
+// the same number together with the two terms it is made of, so the dispatch
+// line can record which one produced it.
 func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 	req *fluidserveRequest, f *instanceFlux) float64 {
+	total, _, _ := p.prefillEstimateParts(req, f)
+	return total
+}
+
+// prefillEstimateParts returns (total, own, queued). own is this request's own
+// prefill, never stretched by the duty cycle; queued is the instance-level term.
+func (p *fluidserveDispatchPolicy) prefillEstimateParts(
+	req *fluidserveRequest, f *instanceFlux) (float64, float64, float64) {
 
 	chunk := 8192.0
 	if f != nil && f.chunk > 0 {
@@ -2596,11 +2664,19 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 	charge, _ := p.prefillChargeFor(req, id)
 	steps := prefillSteps(charge, chunk)
 	if steps <= 0 {
-		return 0
+		// ⚠ This returns before the queue term is added, so a prompt believed
+		// wholly prefix-resident is forecast at exactly 0 ms no matter what is
+		// queued on the instance. Measured on the eight-instance hour: 7,380
+		// placements (1.55%), of which 1,875 swe requests took a median of
+		// 8,236 ms to a first token against a 7,000 ms budget, on instances
+		// whose queued prefill was 213,643 tokens at p90. Left as it is here
+		// because changing it changes the decision, which is a separate
+		// question from recording what the decision was.
+		return 0, 0, 0
 	}
 	per := p.capacity.prefillStepMs(math.Min(float64(req.promptTokens), chunk))
 	if math.IsInf(per, 0) {
-		return 0
+		return 0, 0, 0
 	}
 	// The work already ahead of this request is priced at ITS OWN chunk size, not
 	// at this request's. The two are different quantities and mixing them is
@@ -2646,12 +2722,19 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 	// the two are priced separately and the larger is taken, which is the same
 	// max the queue and the duty cycle were already combined by, one step later.
 	//
-	// This request's own prefill is deliberately NOT stretched. Measured on
-	// EXP-101b, chat -- whose estimate is almost entirely its own prefill,
-	// because it rarely lands on a queued instance -- already reads 754 ms at the
-	// median against a realised 370 ms, so it over-predicts twofold before any
-	// correction and stretching it would double an error that already has the
-	// wrong sign.
+	// This request's own prefill is deliberately NOT stretched, because
+	// stretching it would enlarge an error that already has the wrong sign: the
+	// estimate over-predicts chat's first token roughly twofold.
+	//
+	// ⚠ The reason recorded here until 2026-09-09 -- that chat's estimate "is
+	// almost entirely its own prefill", 754 ms at the median -- does not hold at
+	// the deployed 8,192-token chunk. Measured on the eight-instance hour,
+	// chat's own term is 10.8 ms at the median and 0.8% of its forecast (49.1 ms
+	// / 2.2% for deepresearch, 83.3 ms / 1.4% for swe). The forecast is 99% the
+	// instance-level term below, and its error is largest where that term should
+	// be smallest: 3.06-3.63x on instances whose queue reads zero, against
+	// 1.17-1.24x above 50,000 queued tokens. The conclusion above survives, the
+	// stated reason for it does not.
 	if p.cfg.prefillInterleaveAware && f != nil {
 		duty := p.prefillDutyOf(f.id)
 		// Below this the multiplier exceeds twenty and the estimate stops being
@@ -2675,7 +2758,7 @@ func (p *fluidserveDispatchPolicy) prefillEstimateMs(
 			}
 		}
 	}
-	return steps*per + queued
+	return steps*per + queued, steps * per, queued
 }
 
 // placementProbe is the previous placement on one instance: which engine step it
@@ -2757,9 +2840,10 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 	// line, which is correct: the attribution join must keep reading the
 	// generic dispatch line, not this one.
 	klog.Infof("[Schedule] dispatch request %s fsplacement tier=%d waited=%d "+
-		"prefillest=%.1f prefillraw=%.1f prompt=%d decision=%s inst=%s",
+		"prefillest=%.1f prefillraw=%.1f prompt=%d decision=%s inst=%s "+
+		"prefillown=%.1f prefillqueue=%.1f",
 		req.id, req.tier, req.nowMs-req.arrivedMs, c.prefillMs, c.prefillRaw,
-		req.promptTokens, kind, c.flux.id)
+		req.promptTokens, kind, c.flux.id, c.prefillOwnMs, c.prefillQueueMs)
 	metrics.Histogram("scheduler_fluidserve_headroom_at_dispatch",
 		metrics.Labels{}).Observe(c.headroomAfter)
 	metrics.Histogram("scheduler_fluidserve_harm", metrics.Labels{}).Observe(c.harm)
