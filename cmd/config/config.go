@@ -300,6 +300,8 @@ type FullModeSchedulingConfig struct {
 	FluidserveDeadlineFeasible  bool
 	FluidserveMemLevelTest           bool
 	FluidserveMemorySafety           float64
+	FluidservePrefillFullIteration   bool
+	FluidservePrefillResidentQueue   bool
 	FluidservePrefixAware       bool
 	FluidservePrefixCalibration bool
 	FluidservePrefixBlockTokens int
@@ -753,6 +755,24 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"eight-instance fleet is 0.973-0.998, so 0.95 is 2.3-4.8 occupancy "+
 			"points conservative; lowering this trades admissions for distance "+
 			"from that onset. EXP-114.")
+	flags.BoolVar(&c.FluidservePrefillFullIteration, "fluidserve-prefill-full-iteration", false,
+		"Price the observed prefill queue's drain at the full cost of a "+
+			"chunk-carrying iteration, t_pre + t_dec - c0, which is the "+
+			"composition the capacity model already uses, instead of dividing the "+
+			"prefill-only cost by the instance's unconditional prefill duty and "+
+			"taking the larger of that and the planning horizon's arriving work. "+
+			"Measured over six one-hour runs on two fleet shapes, one millisecond "+
+			"of prefill-only queue cost is worth 0.35-1.03 ms of wall clock where "+
+			"1/duty asserts 3.0-3.6, and the floor under the divisor makes the "+
+			"estimate jump 5.4x-7.9x across a continuous input while the measured "+
+			"first token moves 11-27%. Off by default. EXP-117.")
+	flags.BoolVar(&c.FluidservePrefillResidentQueue, "fluidserve-prefill-resident-queue", false,
+		"Let a prompt believed wholly resident in the prefix index still carry the "+
+			"instance-level queue term in the first-token estimate. A prefix hit "+
+			"removes this request's own prefill compute; it does not move the "+
+			"request forward in the engine's queue, and the estimate currently "+
+			"returns exactly zero for 1.50-1.95% of placements regardless of what "+
+			"is queued. Off by default. EXP-117.")
 	flags.BoolVar(&c.FluidserveDeadlineFeasible, "fluidserve-deadline-feasible", false,
 		"Make the first-token deadline part of the feasibility test, not only of "+
 			"the refusal test. Feasibility is otherwise four conditions about "+

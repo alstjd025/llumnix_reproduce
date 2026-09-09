@@ -1342,3 +1342,112 @@ func TestTheMemorySafetyFactorIsSettableAndDefaultsToTheCompiledValue(t *testing
 		"zero means the compiled default, not a safety factor of zero")
 	assert.InDelta(t, 0.85, effectiveMemorySafety(low.cfg), 1e-9)
 }
+
+func TestTheQueueDrainIsPricedAtAFullIterationInsteadOfBeingDividedByTheDuty(t *testing.T) {
+	// The deployed estimate converts prefill-only compute time into wall clock
+	// by dividing by the instance's UNCONDITIONAL prefill duty, and takes the
+	// larger of that and the prefill work expected to arrive over the whole
+	// planning horizon. Measured over six one-hour runs, one millisecond of
+	// prefill-only queue cost is worth 0.35-1.03 ms of wall clock while 1/duty
+	// asserts 3.0-3.6, and the floor under the divisor makes the estimate jump
+	// 5.4x-7.9x across a continuous input while the measurement moves 11-27%.
+	//
+	// This pins three things: the corrected form equals what the capacity model
+	// says a chunk-carrying iteration costs, it is continuous across the floor
+	// where the deployed form is not, and the arriving term no longer enters the
+	// first-token estimate at all.
+	req := &fluidserveRequest{
+		id: "r", tier: 50, ttftSloMs: 5000, promptTokens: 600,
+		expectedToks: 400, nominalMs: 50,
+	}
+	// One chunk of queued work, and an arriving term large enough that the
+	// deployed max() would take it.
+	mk := func(pending float64) *instanceFlux {
+		return &instanceFlux{
+			id: "i1", chunk: 8192, meanStep: 30.0,
+			gateAllowance: 100.0, tightestAllowance: 100.0,
+			capKv: 4e6, capMem: 4e6,
+			kvLogical: 400_000, nDecode: 300,
+			pendingPrefill: pending, arrivingPrefill: 200_000,
+			effectivePrefill: math.Max(pending, 200_000),
+		}
+	}
+	base := func(c *fluidserveConfig) { c.prefillInterleaveAware = true }
+	old := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", base)
+	new := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		base(c)
+		c.prefillFullIteration = true
+	})
+
+	f := mk(8192)
+	_, _, qNew := new.prefillEstimateParts(req, f)
+	chunkCost := new.capacity.prefillStepMs(8192)
+	iter := chunkCost + new.capacity.decodeStepMs(f.kvLogical, f.nDecode) -
+		new.capacity.decodeStepMs(0, 0)
+	assert.InDelta(t, iter, qNew, 1e-6,
+		"one queued chunk costs one chunk-carrying iteration, which is "+
+			"t_pre + t_dec - c0, the composition meanStepMs already uses")
+
+	// Continuity across the duty floor. prefillDutyOf returns the compiled
+	// default for an instance with no observation, so the two policies are
+	// compared at the same duty; what is pinned here is that the corrected form
+	// does not read the duty at all, so no value of it can move the estimate.
+	_, _, qNewSmall := new.prefillEstimateParts(req, mk(4096))
+	assert.Less(t, qNewSmall, qNew,
+		"half the queue costs less, monotonically, with no step in it")
+
+	// The arriving term is 200,000 tokens and would dominate any max() taken
+	// against a single queued chunk. It must not appear.
+	arrivingCost := prefillSteps(200_000, 8192) *
+		new.capacity.prefillStepMs(8192)
+	assert.Less(t, qNew, arrivingCost,
+		"the horizon's arriving work is a throughput over a forward window, "+
+			"not work standing between this request and its first token")
+
+	// And the deployed form is left exactly as it was.
+	_, _, qOld := old.prefillEstimateParts(req, mk(8192))
+	assert.Greater(t, math.Abs(qOld-qNew), 1e-6,
+		"the flag has to change something, or the arm is the control")
+}
+
+func TestAWhollyResidentPromptStillWaitsBehindWhatIsQueued(t *testing.T) {
+	// A prompt believed wholly resident in the prefix index costs this instance
+	// no prefill compute, so `own` is zero -- but a prefix hit does not move the
+	// request forward in the engine's queue. The deployed estimate returns
+	// exactly 0 ms for the SUM, on 1.50-1.95% of placements, regardless of what
+	// is queued: measured, the swe subset of those rows waited a median of
+	// 7,190-8,921 ms against a 7,000 ms budget on instances whose queue read
+	// 238,674-470,852 tokens at p90.
+	//
+	// The zero-charge state is produced here with a zero-token prompt rather
+	// than through the prefix index, because the branch under test is
+	// `steps <= 0` and every route to it is the same branch. Using the index
+	// would make the test depend on its internal accounting as well.
+	req := &fluidserveRequest{
+		id: "r", tier: 25, ttftSloMs: 7000, promptTokens: 0,
+		expectedToks: 500, nominalMs: 75,
+	}
+	f := &instanceFlux{
+		id: "i1", chunk: 8192, meanStep: 30.0,
+		gateAllowance: 100.0, tightestAllowance: 100.0,
+		capKv: 4e6, capMem: 4e6,
+		kvLogical: 400_000, nDecode: 300,
+		pendingPrefill: 200_000, effectivePrefill: 200_000,
+	}
+	off := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {})
+	on := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.prefillResidentQueue = true
+	})
+
+	totOff, ownOff, _ := off.prefillEstimateParts(req, f)
+	totOn, ownOn, qOn := on.prefillEstimateParts(req, f)
+
+	assert.InDelta(t, 0.0, ownOff, 1e-9, "no prefill compute is owed either way")
+	assert.InDelta(t, 0.0, ownOn, 1e-9)
+	assert.InDelta(t, 0.0, totOff, 1e-9,
+		"the deployed form forecasts zero no matter what is queued")
+	assert.Greater(t, totOn, 0.0,
+		"with the flag on the request still waits for the queue ahead of it")
+	assert.InDelta(t, qOn, totOn, 1e-9,
+		"and the whole forecast is that queue term, because own is zero")
+}

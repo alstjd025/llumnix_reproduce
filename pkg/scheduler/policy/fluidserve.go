@@ -224,6 +224,19 @@ type fluidserveConfig struct {
 	// 0.95 is 2.3-4.8 occupancy points conservative and lowering it trades
 	// admissions for distance from that onset. EXP-114.
 	memorySafety float64
+	// prefillFullIteration prices the observed prefill queue's drain at the
+	// full cost of a chunk-carrying iteration, t_pre + t_dec - c0, instead of
+	// dividing the prefill-only cost by the instance's unconditional prefill
+	// duty and taking the larger of that and the horizon's arriving work. The
+	// derivation and the six-run measurement behind it are at queuedDrainMs.
+	// Default false, which is the deployed behaviour.
+	prefillFullIteration bool
+	// prefillResidentQueue makes a prompt believed wholly resident in the
+	// prefix index still carry the instance-level queue term. A prefix hit
+	// removes this request's own prefill compute; it does not move the request
+	// forward in the engine's queue. Default false, which is the deployed
+	// behaviour.
+	prefillResidentQueue bool
 	// deadlineFeasible makes the first-token deadline part of feasibility rather
 	// than only of the shed test. Off reproduces every measurement before EXP-87.
 	deadlineFeasible bool
@@ -2704,20 +2717,35 @@ func (p *fluidserveDispatchPolicy) prefillEstimateParts(
 	}
 	charge, _ := p.prefillChargeFor(req, id)
 	steps := prefillSteps(charge, chunk)
-	if steps <= 0 {
+	if steps <= 0 && !p.cfg.prefillResidentQueue {
 		// ⚠ This returns before the queue term is added, so a prompt believed
 		// wholly prefix-resident is forecast at exactly 0 ms no matter what is
-		// queued on the instance. Measured on the eight-instance hour: 7,380
-		// placements (1.55%), of which 1,875 swe requests took a median of
-		// 8,236 ms to a first token against a 7,000 ms budget, on instances
-		// whose queued prefill was 213,643 tokens at p90. Left as it is here
-		// because changing it changes the decision, which is a separate
-		// question from recording what the decision was.
+		// queued on the instance. Measured across four eight-instance hours,
+		// 1.50-1.95% of placements take this path; their swe subset is
+		// 1,470-2,038 placements whose measured first token has a median of
+		// 7,190-8,921 ms against a 7,000 ms budget, 52.0-73.6% of them past
+		// budget, on instances whose queued prefill reads 238,674-470,852
+		// tokens at p90. On the four-instance 70B fleet the same rows are
+		// harmless: 276-303 swe placements, median 1,245-1,283 ms, 0.0% past
+		// budget, instance queue 291-1,449 tokens at p90.
+		//
+		// The two terms answer different questions. `own` is how much prefill
+		// compute this prompt costs on this instance, and the prefix index can
+		// drive it to zero. `queued` is how long the engine takes to REACH this
+		// request, and a prefix hit does not move a request forward in the
+		// queue. Returning zero for the sum because one addend is zero is an
+		// arithmetic error rather than a modelling choice, and
+		// --fluidserve-prefill-resident-queue corrects it by falling through
+		// to the instance term computed below and returning that alone.
 		return 0, 0, 0
 	}
-	per := p.capacity.prefillStepMs(math.Min(float64(req.promptTokens), chunk))
-	if math.IsInf(per, 0) {
-		return 0, 0, 0
+	own := 0.0
+	if steps > 0 {
+		per := p.capacity.prefillStepMs(math.Min(float64(req.promptTokens), chunk))
+		if math.IsInf(per, 0) {
+			return 0, 0, 0
+		}
+		own = steps * per
 	}
 	// The work already ahead of this request is priced at ITS OWN chunk size, not
 	// at this request's. The two are different quantities and mixing them is
@@ -2777,29 +2805,106 @@ func (p *fluidserveDispatchPolicy) prefillEstimateParts(
 	// 1.17-1.24x above 50,000 queued tokens. The conclusion above survives, the
 	// stated reason for it does not.
 	if p.cfg.prefillInterleaveAware && f != nil {
-		duty := p.prefillDutyOf(f.id)
-		// Below this the multiplier exceeds twenty and the estimate stops being
-		// a prediction. Measured, an instance carrying a prefill queue over
-		// 10,000 tokens runs at 0.43 to 0.46 and an idle one at 0.16 to 0.29, so
-		// this floor is reached only where there is no queue to stretch and the
-		// term it multiplies is near zero anyway.
-		if duty > fsMinPrefillDuty && f.pendingPrefill > 0 {
-			perPend := p.capacity.prefillStepMs(math.Min(f.pendingPrefill, chunk))
-			if !math.IsInf(perPend, 0) {
-				pend := prefillSteps(f.pendingPrefill, chunk) * perPend / duty
-				arriving := 0.0
-				if f.arrivingPrefill > 0 {
-					perArr := p.capacity.prefillStepMs(
-						math.Min(f.arrivingPrefill, chunk))
-					if !math.IsInf(perArr, 0) {
-						arriving = prefillSteps(f.arrivingPrefill, chunk) * perArr
-					}
-				}
-				queued = math.Max(pend, arriving)
-			}
+		queued = p.queuedDrainMs(f, chunk, queued)
+	}
+	return own + queued, own, queued
+}
+
+// queuedDrainMs is the wall-clock time the engine needs to reach this request,
+// given what is already queued on the instance. `fallback` is the unstretched
+// prefill-only cost the caller computed, which is returned unchanged wherever
+// this function has nothing better.
+//
+// TWO FORMS. The deployed one divides the prefill-only cost of the observed
+// queue by the instance's measured prefill duty, and takes the larger of that
+// and the prefill work expected to ARRIVE over the planning horizon. Both halves
+// were measured wrong in 2026-09-10, on six one-hour runs across two fleet
+// shapes and two arrival bands.
+//
+//  1. The divisor is the UNCONDITIONAL share of engine time spent on prefill,
+//     measured over a window that includes intervals carrying no prefill at all.
+//     What the conversion needs is the share while prefill work exists, and with
+//     chunked prefill that share is close to one, because an iteration that
+//     carries a chunk still carries the decode batch and nothing else. Measured
+//     inside (5-minute window x instance) cells with at least 100 placements,
+//     one millisecond of prefill-only queue cost is worth 0.35 to 1.03 ms of
+//     wall clock at the median across five runs, while 1/duty asserts 3.0 to
+//     3.6. The floor below the divisor also makes the estimate discontinuous in
+//     a continuous input: with the prompt matched to within 9 tokens and the
+//     recovered queue SMALLER on the high side, crossing fsMinPrefillDuty raises
+//     the forecast by 5.4x to 7.9x in every one of five runs while the measured
+//     first token moves 11 to 27%.
+//
+//  2. arrivingPrefill is duty x horizon converted back to tokens: the total
+//     prefill time the engine will spend over the whole planning horizon. That
+//     is a throughput over a forward window, not work standing between this
+//     request and its first token, and the case its comment invokes -- the
+//     engine absorbing a stream between status pulls so the queue reads zero --
+//     is already inside pendingPrefill, whose third addend is the prompts this
+//     scheduler has dispatched and the engine has not yet reported. The blind
+//     window is one status interval, not one horizon. On placements whose queue
+//     gauge read zero on both surrounding scrapes (29.6-46.2% of placements) the
+//     deployed forecast is 1,619-2,275 ms of mean against 399-574 ms measured.
+//
+// The corrected form prices each chunk-carrying iteration at what the capacity
+// model already says such an iteration costs, t_pre(chunk) + t_dec - c0 (the
+// composition documented at the head of fluidserve_capacity.go and used by
+// meanStepMs). It introduces no constant, has no floor, does not read the duty,
+// and is continuous in every input. Measured, it takes the ratio of summed
+// forecast to summed measurement from 1.85 to 0.50 on eight instances and from
+// 3.34 to 0.84 on four, narrows the spread of the per-request ratio by about
+// five, and IMPROVES the between-moment ordering (cell-median Spearman 0.88 to
+// 0.94 and 0.95 to 0.98) rather than degrading it.
+//
+// ⚠ THE TWO CORRECTIONS ARE ONE FLAG ON PURPOSE. Removing the arriving term
+// while keeping the 1/duty stretch collapses the ordering on the four-instance
+// fleet, where the observed queue almost never binds: Spearman falls from 0.95
+// to 0.29 and 0.55 on the two repeats, because the stretched pend term is then
+// near zero and nothing tracks the moment.
+func (p *fluidserveDispatchPolicy) queuedDrainMs(
+	f *instanceFlux, chunk, fallback float64) float64 {
+
+	if f.pendingPrefill <= 0 {
+		return fallback
+	}
+	perPend := p.capacity.prefillStepMs(math.Min(f.pendingPrefill, chunk))
+	if math.IsInf(perPend, 0) {
+		return fallback
+	}
+	if p.cfg.prefillFullIteration {
+		// decodeStepMs(0, 0) is c0 by construction, so this needs no new
+		// accessor and cannot drift from the law the rest of the model uses.
+		iter := perPend + p.capacity.decodeStepMs(f.kvLogical, f.nDecode) -
+			p.capacity.decodeStepMs(0, 0)
+		if iter < perPend {
+			// A negative decode contribution is not physical; fall back to the
+			// prefill cost itself rather than under-charging the drain.
+			iter = perPend
+		}
+		return prefillSteps(f.pendingPrefill, chunk) * iter
+	}
+	duty := p.prefillDutyOf(f.id)
+	// Below this the multiplier exceeds twenty and the estimate stops being
+	// a prediction. Measured, an instance carrying a prefill queue over
+	// 10,000 tokens runs at 0.43 to 0.46 and an idle one at 0.16 to 0.29, so
+	// this floor is reached only where there is no queue to stretch and the
+	// term it multiplies is near zero anyway.
+	//
+	// ⚠ That last clause is false at the deployed chunk: 7,928 placements in the
+	// 0.05-0.06 band received a median forecast of 2.4 s. See the two numbered
+	// findings above.
+	if duty <= fsMinPrefillDuty {
+		return fallback
+	}
+	pend := prefillSteps(f.pendingPrefill, chunk) * perPend / duty
+	arriving := 0.0
+	if f.arrivingPrefill > 0 {
+		perArr := p.capacity.prefillStepMs(math.Min(f.arrivingPrefill, chunk))
+		if !math.IsInf(perArr, 0) {
+			arriving = prefillSteps(f.arrivingPrefill, chunk) * perArr
 		}
 	}
-	return steps*per + queued, steps * per, queued
+	return math.Max(pend, arriving)
 }
 
 // placementProbe is the previous placement on one instance: which engine step it
@@ -2965,6 +3070,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		deadlineFeasible: p.FluidserveDeadlineFeasible,
 		memLevelTest:          p.FluidserveMemLevelTest,
 		memorySafety:          p.FluidserveMemorySafety,
+		prefillFullIteration:  p.FluidservePrefillFullIteration,
+		prefillResidentQueue:  p.FluidservePrefillResidentQueue,
 
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 		gateSlack:         p.FluidserveGateSlack,
@@ -3065,7 +3172,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		// same reason the prefix fields sit before classpin: nothing may be
 		// inserted between classpin and budgets.
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
-		"capcost=%v, memlevel=%v, memsafety=%.3f",
+		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3079,7 +3186,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		formatClassPin(cfg.classPin),
 		p.FluidserveClassBudgets,
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
-		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg))
+		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
+		cfg.prefillFullIteration, cfg.prefillResidentQueue)
 
 	go policy.reportLoop()
 	return policy
