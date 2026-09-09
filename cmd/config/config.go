@@ -298,6 +298,8 @@ type FullModeSchedulingConfig struct {
 	FluidserveForceMargin       bool
 	FluidserveOwnBudgetGate     bool
 	FluidserveDeadlineFeasible  bool
+	FluidserveMemLevelTest           bool
+	FluidserveMemorySafety           float64
 	FluidservePrefixAware       bool
 	FluidservePrefixCalibration bool
 	FluidservePrefixBlockTokens int
@@ -737,6 +739,20 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"becomes chat's 50 ms on every instance within seconds, so a deep "+
 			"research request with a 100 ms budget cannot route onto a fleet "+
 			"running at 55.6 ms. Off by default until EXP-46 judges it.")
+	flags.BoolVar(&c.FluidserveMemLevelTest, "fluidserve-mem-level-test", false,
+		"Compare kvLogical + cost against capMem instead of proj + cost, making "+
+			"the memory predicate a level test. The projection prices departures "+
+			"and not arrivals: measured over one horizon an instance moves by "+
+			"generated 46,087 + admitted 158,216 - released 204,988 = -686, while "+
+			"the model predicts 49,321 - 153,968 = -104,647, so it forecasts a "+
+			"drain the arrivals then fill. That optimism is 5.3% where the safety "+
+			"factor is 5%, and the two cancel. Off by default. EXP-114.")
+	flags.Float64Var(&c.FluidserveMemorySafety, "fluidserve-memory-safety", 0,
+		"Fraction of the physical KV pool capMem admits up to. Zero keeps the "+
+			"compiled 0.95. The engine's measured preemption onset on the "+
+			"eight-instance fleet is 0.973-0.998, so 0.95 is 2.3-4.8 occupancy "+
+			"points conservative; lowering this trades admissions for distance "+
+			"from that onset. EXP-114.")
 	flags.BoolVar(&c.FluidserveDeadlineFeasible, "fluidserve-deadline-feasible", false,
 		"Make the first-token deadline part of the feasibility test, not only of "+
 			"the refusal test. Feasibility is otherwise four conditions about "+

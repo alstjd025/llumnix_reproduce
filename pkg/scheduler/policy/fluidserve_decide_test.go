@@ -1274,3 +1274,71 @@ func TestOracleReplacesTheClassDistributionForResidentRequests(t *testing.T) {
 	require.Len(t, live2, 1)
 	assert.GreaterOrEqual(t, live2[0].remaining, 1.0)
 }
+
+func TestTheMemoryTestCanBeALevelTestWithoutMovingThePaceCeiling(t *testing.T) {
+	// EXP-114. The memory predicate `proj + cost <= capMem` is the binding one
+	// on the eight-instance fleet (78.8% of sole infeasibilities, against 1.1%
+	// on the four-instance one), and proj is optimistic there by almost exactly
+	// the safety factor: proj/obs_kv 0.943 where capMem/obs_kv is 0.950.
+	//
+	// The optimism is a missing term, not a wrong one. Over a horizon the
+	// instance moves by generated + prompt tokens routed in - footprint of
+	// requests that left; measured that is 46,087 + 158,216 - 204,988 = -686,
+	// while the model carries only the first and third and predicts -104,647.
+	//
+	// The state below is that shape: an instance holding 1,000,000 logical
+	// tokens whose projection says it will drain to 900,000, against a memory
+	// ceiling of 950,000. A 40,000-token placement fits the projection and does
+	// not fit the level.
+	f := &instanceFlux{
+		id: "i1", chunk: 8192, meanStep: 30.0,
+		gateAllowance: 100.0, tightestAllowance: 100.0,
+		capKv: 4e6, capMem: 950_000,
+		kvLogical: 1_000_000, proj: 900_000, nDecode: 200,
+	}
+	req := &fluidserveRequest{
+		id: "r", tier: 100, ttftSloMs: 10000, promptTokens: 512,
+		expectedToks: 400, nominalMs: 100,
+	}
+
+	off := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.memLevelTest = false
+	})
+	on := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.memLevelTest = true
+	})
+
+	co, cn := off.evaluate(f, nil, req), on.evaluate(f, nil, req)
+	assert.True(t, co.feasible,
+		"against the projection the placement fits, which is the behaviour every "+
+			"measurement before EXP-114 was taken under")
+	assert.False(t, cn.feasible,
+		"against the level it does not: the instance is already above the ceiling "+
+			"and the projected drain is what was making room")
+
+	// The pace model and the sort are deliberately NOT moved. Both read newKv,
+	// which still comes from proj, because the pace ceiling answers a different
+	// question and binds on a different fleet -- 98.8% of refusals on the
+	// four-instance 70B fleet. A change that moved both would be two changes.
+	assert.InDelta(t, co.meanAfter, cn.meanAfter, 1e-9,
+		"the predicted step time is unchanged")
+	assert.InDelta(t, co.headroomAfter, cn.headroomAfter, 1e-9,
+		"the sort key is unchanged")
+}
+
+func TestTheMemorySafetyFactorIsSettableAndDefaultsToTheCompiledValue(t *testing.T) {
+	// The engine's measured preemption onset on the eight-instance fleet is
+	// 0.973-0.998 and capMem is a 0.95-of-pool test, so the shipped factor is
+	// 2.3-4.8 occupancy points conservative. Sweeping it is how the exchange
+	// rate between occupancy and rejection gets measured, so it has to be a
+	// value rather than a constant -- and an unset flag has to keep meaning the
+	// compiled default, or every existing arm changes silently.
+	def := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {})
+	low := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.memorySafety = 0.85
+	})
+
+	assert.InDelta(t, fsMemorySafety, effectiveMemorySafety(def.cfg), 1e-9,
+		"zero means the compiled default, not a safety factor of zero")
+	assert.InDelta(t, 0.85, effectiveMemorySafety(low.cfg), 1e-9)
+}

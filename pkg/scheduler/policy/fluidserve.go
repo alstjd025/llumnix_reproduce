@@ -215,6 +215,15 @@ type fluidserveConfig struct {
 	classHarm      bool
 	forceMargin    bool
 	ownBudgetGate  bool
+	// memLevelTest makes the memory predicate compare kvLogical + cost against
+	// capMem instead of proj + cost. See where memKv is computed. EXP-114.
+	memLevelTest bool
+	// memorySafety is the fraction of the physical pool capMem admits up to.
+	// Zero means the compiled default, fsMemorySafety = 0.95. The engine's
+	// measured preemption onset on the eight-instance fleet is 0.973-0.998, so
+	// 0.95 is 2.3-4.8 occupancy points conservative and lowering it trades
+	// admissions for distance from that onset. EXP-114.
+	memorySafety float64
 	// deadlineFeasible makes the first-token deadline part of feasibility rather
 	// than only of the shed test. Off reproduces every measurement before EXP-87.
 	deadlineFeasible bool
@@ -1281,7 +1290,11 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	if ratio > 1 {
 		ratio = 1
 	}
-	f.capMem = f.kvCapacity * fsMemorySafety / ratio
+	safety := p.cfg.memorySafety
+	if safety <= 0 {
+		safety = fsMemorySafety
+	}
+	f.capMem = f.kvCapacity * safety / ratio
 	f.sharing = ratio
 
 	limit := math.Min(f.capKv, f.capMem)
@@ -1906,6 +1919,34 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	newPending := f.effectivePrefill + c.prefillCharge
 	newN := f.nDecode + 1
 	newKv := f.proj + cost
+	// The quantity the MEMORY test compares against capMem, which is not
+	// necessarily the one the pace model and the sort use.
+	//
+	// EXP-114 measured proj against what the same instance actually held one
+	// horizon later: median -81,240 tokens, -5.3% of the resident set, with the
+	// sign wrong on 86-98% of samples, and proj/obs_kv = 0.943 where
+	// capMem/obs_kv = 0.950. The 5% safety factor and the optimism are the same
+	// size and cancel, and 40.6% of all routes landed on an instance already past
+	// the engine's measured preemption onset of 0.973.
+	//
+	// The optimism is one missing term rather than an error in a term present.
+	// Over a horizon the instance moves by generated + prompt tokens of requests
+	// routed in - footprint of requests that left; measured per instance that is
+	// 46,087 + 158,216 - 204,988 = -686, essentially flat, while the model
+	// predicts 49,321 - 153,968 = -104,647. It prices departures and not
+	// arrivals, so it forecasts a drain that the arrivals then fill.
+	//
+	// With arrivals and departures both absent the forecast is unbiased on this
+	// workload: kvLogical alone scores +1,272 mean error against the shipped
+	// projection's -85,599. So this makes the memory test a level test and leaves
+	// memorySafety as the only margin. proj is untouched everywhere else, because
+	// the pace ceiling is a different question and binds on a different fleet.
+	//
+	// Off by default, which reproduces the previous behaviour exactly.
+	memKv := newKv
+	if p.cfg.memLevelTest {
+		memKv = f.kvLogical + cost
+	}
 	c.meanBefore = f.meanStep
 	c.meanAfter = p.capacity.meanStepMs(f.id, newKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
 	c.headroomAfter = math.Min(f.capKv, f.capMem) - newKv
@@ -2027,7 +2068,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	if p.cfg.memoryUsesPaceCap {
 		memLimit = math.Min(f.capKv, f.capMem)
 	}
-	overMemory := newKv > memLimit
+	overMemory := memKv > memLimit
 	// The four conditions above are all about per-token pace and KV. None of them
 	// asks when THIS request would see its own first token, and a pace inside the
 	// gate is compatible with a long prefill queue ahead of it -- measured, an
@@ -2085,10 +2126,10 @@ func (p *fluidserveDispatchPolicy) evaluate(
 			// indistinguishable from the shipped one in the counters, and the
 			// experiment cannot show that the condition fired at all. Both are
 			// counted when both bind, for the reason the block above gives.
-			if newKv > f.capMem {
+			if memKv > f.capMem {
 				reason("memory")
 			}
-			if p.cfg.memoryUsesPaceCap && newKv > f.capKv {
+			if p.cfg.memoryUsesPaceCap && memKv > f.capKv {
 				reason("pace_kv")
 			}
 		}
@@ -2922,6 +2963,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		forceMargin:    p.FluidserveForceMargin,
 		ownBudgetGate:  p.FluidserveOwnBudgetGate,
 		deadlineFeasible: p.FluidserveDeadlineFeasible,
+		memLevelTest:          p.FluidserveMemLevelTest,
+		memorySafety:          p.FluidserveMemorySafety,
 
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 		gateSlack:         p.FluidserveGateSlack,
@@ -3022,7 +3065,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		// same reason the prefix fields sit before classpin: nothing may be
 		// inserted between classpin and budgets.
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
-		"capcost=%v",
+		"capcost=%v, memlevel=%v, memsafety=%.3f",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3036,7 +3079,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		formatClassPin(cfg.classPin),
 		p.FluidserveClassBudgets,
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
-		cfg.capCostsCapacity)
+		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg))
 
 	go policy.reportLoop()
 	return policy
@@ -3156,4 +3199,16 @@ func formatClassPin(m map[int][]int) string {
 		parts = append(parts, fmt.Sprintf("%d:%s", t, strings.Join(s, ",")))
 	}
 	return strings.Join(parts, ";")
+}
+
+// effectiveMemorySafety is what capMem will actually be built with, so the
+// start-up line reports the value in force rather than the flag as given. The
+// start-up line is the only authority on what a run was configured with, and a
+// zero printed there would read as "the safety factor is off" rather than "the
+// compiled default applies".
+func effectiveMemorySafety(cfg fluidserveConfig) float64 {
+	if cfg.memorySafety > 0 {
+		return cfg.memorySafety
+	}
+	return fsMemorySafety
 }

@@ -321,6 +321,17 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-107 and EXP-114 were measured with, and the run directories carry its
     # token, so it must keep meaning what those results say it means.
     "FS_CAP_COST": "--fluidserve-cap-costs-capacity",
+    # EXP-114. Compare kvLogical + cost against capMem instead of proj + cost,
+    # which makes the memory predicate a level test. The projection prices
+    # departures and not arrivals, so it forecasts a drain the arrivals fill;
+    # measured that optimism is 5.3% against a 5% safety factor and the two
+    # cancel, and 40.6% of routes landed past the engine's 0.973 preemption
+    # onset.
+    "FS_MEM_LEVEL": "--fluidserve-mem-level-test",
+    # The fraction of the physical KV pool the memory test admits up to.  Unset
+    # keeps the compiled 0.95.  Sweeping it is how the occupancy/rejection
+    # exchange rate is measured, so it is a value flag rather than a bool.
+    "FS_MEM_SAFETY": "--fluidserve-memory-safety",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -741,6 +752,8 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-class-instance-cap-window-mult", "capmult"),
         ("--fluidserve-enable-force", "enableforce"),
         ("--fluidserve-cap-costs-capacity", "capcost"),
+        ("--fluidserve-mem-level-test", "memlevel"),
+        ("--fluidserve-memory-safety", "memsafety"),
     ]
     bad = []
     for flag, key in checks:
