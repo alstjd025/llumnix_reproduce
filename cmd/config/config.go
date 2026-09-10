@@ -302,6 +302,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveMemorySafety           float64
 	FluidservePrefillFullIteration   bool
 	FluidservePrefillResidentQueue   bool
+	FluidserveArrivalHorizons        int
 	FluidservePrefixAware       bool
 	FluidservePrefixCalibration bool
 	FluidservePrefixBlockTokens int
@@ -773,6 +774,19 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"request forward in the engine's queue, and the estimate currently "+
 			"returns exactly zero for 1.50-1.95% of placements regardless of what "+
 			"is queued. Off by default. EXP-117.")
+	flags.IntVar(&c.FluidserveArrivalHorizons, "fluidserve-arrival-horizons", 0,
+		"Average the prompt mass this instance received over the last N horizons "+
+			"and add it to the KV projection. Zero disables the term, which is the "+
+			"deployed behaviour. The projection has no term for prompts routed in "+
+			"DURING the horizon: measured per instance per horizon, the realised "+
+			"change is generation +41,508 plus prompts routed in +133,565 minus "+
+			"released -173,317 = -971, while the model says +41,508 - 129,219 = "+
+			"-87,735, so the omitted term is 1.5 times the drain that is modelled. "+
+			"N is a window and not a gain -- the term is the MEAN per horizon, so N "+
+			"changes how much noise is averaged away and not how much is charged. "+
+			"The per-instance correlation between one horizon's arrival mass and "+
+			"the next is +0.76 at N=1, +0.83 at N=10 and falls again at N=20. "+
+			"EXP-124.")
 	flags.BoolVar(&c.FluidserveDeadlineFeasible, "fluidserve-deadline-feasible", false,
 		"Make the first-token deadline part of the feasibility test, not only of "+
 			"the refusal test. Feasibility is otherwise four conditions about "+

@@ -237,6 +237,19 @@ type fluidserveConfig struct {
 	// forward in the engine's queue. Default false, which is the deployed
 	// behaviour.
 	prefillResidentQueue bool
+	// arrivalHorizons is how many past horizons the arrivals term averages over.
+	// Zero disables the term, which is the deployed behaviour.
+	//
+	// The projection has no term for the prompts routed in DURING the horizon.
+	// Measured per instance per horizon on the eight-instance fleet, the realised
+	// change is generation +41,508 plus prompts routed in +133,565 minus released
+	// -173,317 = -971, while the model says +41,508 - 129,219 = -87,735: the
+	// omitted term is 1.5 times the size of the drain that is modelled. Arrivals
+	// are predictable from the instance's own recent arrivals -- the per-instance
+	// median correlation between one horizon's arrival mass and the next is +0.76
+	// at one horizon of averaging, rising to +0.83 at ten and falling again at
+	// twenty -- so this term needs no new measurement, only a window.
+	arrivalHorizons int
 	// deadlineFeasible makes the first-token deadline part of feasibility rather
 	// than only of the shed test. Off reproduces every measurement before EXP-87.
 	deadlineFeasible bool
@@ -351,6 +364,9 @@ type instanceFlux struct {
 
 	inflow   float64
 	outflow  float64
+	// arrivals is the mean prompt mass this instance received per horizon over
+	// the last arrivalHorizons horizons. Zero when the term is off.
+	arrivals float64
 	proj     float64
 	capKv    float64
 	capMem   float64
@@ -402,6 +418,15 @@ type fluidserveDispatchPolicy struct {
 	// headroom the decision read moved between them.
 	probeMu   sync.Mutex
 	lastProbe map[string]placementProbe
+	// arrivalMu guards the per-instance record of prompt tokens this scheduler
+	// has dispatched, which is what the arrivals term averages. It records
+	// PLACEMENTS rather than arrivals at the gateway, so it is this policy's own
+	// output and the loop it closes is negative: an instance that has been
+	// receiving a lot is charged more and therefore receives less. The measured
+	// loop delay is 5 to 25 s and the averaging window is deliberately of that
+	// order, which is the gain-and-delay condition to watch.
+	arrivalMu  sync.Mutex
+	arrivalLog map[string][]arrivalRec
 
 	// capMu guards the per-tier demand estimates behind the class-instance
 	// cap. Fed once per request (first sighting) from calculateMetrics, read
@@ -1273,7 +1298,12 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 		// alone, which is what a level-based controller does.
 		f.inflow, f.outflow = 0, 0
 	}
-	f.proj = f.kvLogical + f.inflow - f.outflow
+	// The fourth term. inflow is what the requests ALREADY DECODING will produce
+	// and this is the prompt mass of requests that will START during the horizon;
+	// the two count different requests and neither contains the other, so this is
+	// added rather than substituted. Off by default.
+	f.arrivals = p.arrivalsPerHorizon(f.id, horizonMs, nowMs)
+	f.proj = f.kvLogical + f.inflow + f.arrivals - f.outflow
 	if f.proj < 0 {
 		f.proj = 0
 	}
@@ -2907,6 +2937,59 @@ func (p *fluidserveDispatchPolicy) queuedDrainMs(
 	return math.Max(pend, arriving)
 }
 
+// arrivalRec is one placement: when it was made and how many prompt tokens it
+// committed to that instance.
+type arrivalRec struct {
+	ms     int64
+	tokens float64
+}
+
+// noteArrival records a placement so that the arrivals term can average it.
+func (p *fluidserveDispatchPolicy) noteArrival(id string, nowMs int64, tokens float64) {
+	if p.cfg.arrivalHorizons <= 0 || tokens <= 0 {
+		return
+	}
+	p.arrivalMu.Lock()
+	if p.arrivalLog == nil {
+		p.arrivalLog = map[string][]arrivalRec{}
+	}
+	p.arrivalLog[id] = append(p.arrivalLog[id], arrivalRec{ms: nowMs, tokens: tokens})
+	p.arrivalMu.Unlock()
+}
+
+// arrivalsPerHorizon is the mean prompt tokens this instance received per horizon
+// over the last arrivalHorizons horizons. Entries older than the window are
+// dropped here rather than on a timer, so the log cannot grow without bound while
+// an instance keeps receiving work; an instance that stops receiving keeps at most
+// one window of entries.
+//
+// It returns the MEAN per horizon rather than the sum, so that the window length
+// changes how much noise is averaged away and not how much is charged. That is
+// what makes arrivalHorizons a window rather than a gain.
+func (p *fluidserveDispatchPolicy) arrivalsPerHorizon(id string, horizonMs float64, nowMs int64) float64 {
+	k := p.cfg.arrivalHorizons
+	if k <= 0 || horizonMs <= 0 || math.IsInf(horizonMs, 0) {
+		return 0
+	}
+	cut := nowMs - int64(float64(k)*horizonMs)
+	p.arrivalMu.Lock()
+	defer p.arrivalMu.Unlock()
+	rec := p.arrivalLog[id]
+	i := 0
+	for i < len(rec) && rec[i].ms < cut {
+		i++
+	}
+	if i > 0 {
+		rec = append(rec[:0], rec[i:]...)
+		p.arrivalLog[id] = rec
+	}
+	sum := 0.0
+	for j := range rec {
+		sum += rec[j].tokens
+	}
+	return sum / float64(k)
+}
+
 // placementProbe is the previous placement on one instance: which engine step it
 // was judged against, how many placements that step has now carried, and the
 // headroom the decision read.
@@ -2945,6 +3028,7 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 	metrics.Histogram("scheduler_fluidserve_dispatch_ordinal_in_step",
 		metrics.Labels{}).Observe(float64(ord))
 
+	p.noteArrival(c.flux.id, req.nowMs, float64(req.promptTokens))
 	p.registry.onDispatch(c.flux.id, req.id, req.tier, req.promptTokens,
 		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs, c.prefillRaw,
 		req.oracleTokens)
@@ -3072,6 +3156,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		memorySafety:          p.FluidserveMemorySafety,
 		prefillFullIteration:  p.FluidservePrefillFullIteration,
 		prefillResidentQueue:  p.FluidservePrefillResidentQueue,
+		arrivalHorizons:       p.FluidserveArrivalHorizons,
 
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 		gateSlack:         p.FluidserveGateSlack,
@@ -3172,7 +3257,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		// same reason the prefix fields sit before classpin: nothing may be
 		// inserted between classpin and budgets.
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
-		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v",
+		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3187,7 +3272,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		p.FluidserveClassBudgets,
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
-		cfg.prefillFullIteration, cfg.prefillResidentQueue)
+		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons)
 
 	go policy.reportLoop()
 	return policy

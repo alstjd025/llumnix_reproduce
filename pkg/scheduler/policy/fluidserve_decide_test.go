@@ -1451,3 +1451,54 @@ func TestAWhollyResidentPromptStillWaitsBehindWhatIsQueued(t *testing.T) {
 	assert.InDelta(t, qOn, totOn, 1e-9,
 		"and the whole forecast is that queue term, because own is zero")
 }
+
+func TestTheArrivalsTermIsAWindowAndNotAGain(t *testing.T) {
+	// The projection has no term for the prompts routed in DURING the horizon.
+	// Measured per instance per horizon on the eight-instance fleet, the realised
+	// change is generation +41,508 plus prompts routed in +133,565 minus released
+	// -173,317 = -971, while the model predicts +41,508 - 129,219 = -87,735, so
+	// the omitted term is 1.5 times the drain that is modelled.
+	//
+	// The one design property worth pinning is that arrivalHorizons chooses how
+	// much noise is averaged away and NOT how much is charged. If it scaled the
+	// charge it would be a gain, and a gain in a loop whose measured delay is 5 to
+	// 25 s is the condition under which a previous arrivals estimator left two
+	// runs of one binary eight attainment points apart. The term is therefore the
+	// MEAN per horizon: with a steady arrival stream every window must return the
+	// same value.
+	const horizonMs = 4000.0
+	steady := func(k int) float64 {
+		p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+			c.arrivalHorizons = k
+		})
+		// One placement of 1,000 prompt tokens every 100 ms for 30 horizons, so
+		// every window of every length sees the same rate.
+		now := int64(0)
+		for i := 0; i < 1200; i++ {
+			p.noteArrival("i1", now, 1000)
+			now += 100
+		}
+		return p.arrivalsPerHorizon("i1", horizonMs, now)
+	}
+	one, ten := steady(1), steady(10)
+	assert.InDelta(t, 40_000.0, one, 1.0,
+		"one horizon of 4,000 ms at one 1,000-token placement per 100 ms is 40,000 tokens")
+	assert.InDelta(t, one, ten, 1.0,
+		"a longer window must average the same steady rate to the same value, or "+
+			"arrivalHorizons is a gain rather than a window")
+
+	// Off by default, and off means exactly zero rather than a small number.
+	off := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {})
+	off.noteArrival("i1", 0, 1000)
+	assert.InDelta(t, 0.0, off.arrivalsPerHorizon("i1", horizonMs, 1000), 1e-9,
+		"with the term off nothing is recorded and nothing is charged")
+
+	// The window really does forget: a burst that has fallen out of it is gone.
+	p := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.arrivalHorizons = 1
+	})
+	p.noteArrival("i1", 0, 500_000)
+	assert.InDelta(t, 500_000.0, p.arrivalsPerHorizon("i1", horizonMs, 1000), 1.0)
+	assert.InDelta(t, 0.0, p.arrivalsPerHorizon("i1", horizonMs, 10_000), 1e-9,
+		"one horizon later the burst is outside the window")
+}
