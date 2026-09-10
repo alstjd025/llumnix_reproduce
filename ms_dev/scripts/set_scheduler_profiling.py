@@ -194,6 +194,55 @@ def polyserve_flags():
             ",".join(f"{tier}:{int(round(by_name[name]['mean']))}"
                      for name, tier in pairs)}
 
+
+def _budget_ms(env_key):
+    """One per-token budget in whole milliseconds, or None when unset.
+
+    Whole milliseconds because the scheduler's parser is strconv.Atoi and a
+    non-integer makes it panic during start-up, which shows up as a scheduler
+    in CrashLoopBackOff while the previous pod keeps serving -- the failure
+    CLAUDE.md group A records as indistinguishable from a slow rollout. Failing
+    here, before anything is deployed, is the whole point of the check.
+    """
+    raw = os.environ.get(env_key)
+    if not raw:
+        return None
+    try:
+        val = float(raw)
+    except ValueError:
+        sys.exit(f"{env_key}={raw!r} is not a number")
+    if val <= 0 or abs(val - round(val)) > 1e-9:
+        sys.exit(
+            f"{env_key}={raw} must be a positive WHOLE number of milliseconds. "
+            f"The scheduler reads --fluidserve-class-budgets with strconv.Atoi "
+            f"and panics on anything else, and rounding it here would leave the "
+            f"scorer free to use the unrounded value, so the policy and the "
+            f"analysis would judge the same requests against different budgets. "
+            f"Pick the integer, and set the scorer's env to the same integer.")
+    return int(round(val))
+
+
+def _class_budgets_spec():
+    """The --fluidserve-class-budgets string, built from the environment.
+
+    Tier keys are fixed at 25 (swe), 50 (chat) and 100 (deepresearch) because
+    they are what names the class in the length profile and in every log line.
+    Each entry carries an explicit budget when its environment variable is set
+    and falls back to the historical form otherwise, so an invocation that sets
+    none of them produces exactly the string every earlier condition ran with.
+    """
+    swe_tbt = _budget_ms("FS_SWE_TBT_MS")
+    if swe_tbt is not None:
+        swe = f"25:decode:{swe_tbt}"
+    else:
+        swe = f"25:e2e:{int(float(os.environ.get('FS_SWE_E2E_MS', '30000')))}"
+    chat_tbt = _budget_ms("FS_CHAT_TBT_MS")
+    chat = f"50:decode:{chat_tbt}" if chat_tbt is not None else "50:decode"
+    dr_tbt = _budget_ms("FS_DR_TBT_MS")
+    dr = f"100:decode:{dr_tbt}" if dr_tbt is not None else "100:decode"
+    return ",".join([swe, chat, dr])
+
+
 # How each tier's latency budget is defined, which is how the requests are
 # actually scored: chat and deepresearch on the mean time between output tokens
 # over the whole request, swe on end-to-end latency.  Both forms are cumulative,
@@ -216,11 +265,28 @@ FLUIDSERVE_FLAGS = {
     # below this hardware's decode floor. Mutually exclusive with FS_SWE_E2E_MS;
     # scoring must move with it (per-token rule at the same value, stated in the
     # arm name).
-    "--fluidserve-class-budgets":
-        (f"25:decode:{int(float(os.environ['FS_SWE_TBT_MS']))},"
-         if os.environ.get('FS_SWE_TBT_MS') else
-         f"25:e2e:{int(float(os.environ.get('FS_SWE_E2E_MS', '30000')))},")
-        + "50:decode,100:decode",
+    #
+    # EXP-121. The chat and deepresearch budgets are settable the same way, and
+    # for the same reason. Until now their entries were the bare "50:decode" and
+    # "100:decode", where the TIER KEY IS the budget -- which is right only while
+    # the budget a class is promised happens to equal the key that names it. On
+    # the eight-instance Llama-3.1-8B fleet the per-token budgets are so loose
+    # relative to the engine that the KV pool fills before any per-token budget
+    # is violated, so halving all three is what moves the binding ceiling from
+    # memory to pace. The tier keys CANNOT move to carry that: the FluidServe
+    # length model in fluidserve_profile.go indexes classes by
+    # classes[].tpot_slo_ms (25 swe / 50 chat / 100 deepresearch), so a request
+    # arriving with tier 25 for chat would both collide with the agent tier and
+    # send every profile lookup to the fallback. The key keeps naming the class
+    # and the third field carries the budget, for all three classes.
+    #
+    # INTEGER ONLY. parseClassBudgets in fluidserve_registry.go reads the third
+    # field with strconv.Atoi and fluidserve.go panics at start-up on a parse
+    # error, so a half-millisecond budget cannot be expressed here at all. The
+    # value is validated below rather than truncated, because int(float("37.5"))
+    # is 37 while a scorer reading float("37.5") would use 37.5, and the two
+    # would judge the same request against different budgets in silence.
+    "--fluidserve-class-budgets": _class_budgets_spec(),
     "--fluidserve-horizon-steps": "100",
     "--fluidserve-z-safety": "1.65",
     "--fluidserve-enable-pend": "true",
@@ -332,6 +398,17 @@ FLUIDSERVE_ABLATIONS = {
     # keeps the compiled 0.95.  Sweeping it is how the occupancy/rejection
     # exchange rate is measured, so it is a value flag rather than a bool.
     "FS_MEM_SAFETY": "--fluidserve-memory-safety",
+    # Price the observed prefill queue's drain at the full cost of a
+    # chunk-carrying iteration, t_pre + t_dec - c0, instead of dividing the
+    # prefill-only cost by the instance's unconditional prefill duty and taking
+    # the larger of that and the horizon's arriving work.  Measured over six
+    # one-hour runs, one millisecond of prefill-only queue cost is worth
+    # 0.35-1.03 ms of wall clock where 1/duty asserts 3.0-3.6.
+    "FS_PREFILL_FULLITER": "--fluidserve-prefill-full-iteration",
+    # Let a prompt believed wholly resident in the prefix index still carry the
+    # instance-level queue term.  A prefix hit removes this request's own
+    # prefill compute; it does not move the request forward in the queue.
+    "FS_PREFILL_RESIDENTQ": "--fluidserve-prefill-resident-queue",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -754,6 +831,8 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-cap-costs-capacity", "capcost"),
         ("--fluidserve-mem-level-test", "memlevel"),
         ("--fluidserve-memory-safety", "memsafety"),
+        ("--fluidserve-prefill-full-iteration", "prefillfulliter"),
+        ("--fluidserve-prefill-resident-queue", "prefillresidentq"),
     ]
     bad = []
     for flag, key in checks:
