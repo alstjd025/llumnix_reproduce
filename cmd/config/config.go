@@ -266,49 +266,51 @@ type FullModeSchedulingConfig struct {
 	// first port left out or inverted. Every one of them defaults to the port's
 	// previous behaviour, so a run that does not name them decides exactly as
 	// every PolyServe run before 2026-08-27 did.
-	PolyserveAdmissionBinds          bool
-	PolyserveSteadyStateIgnoresPref  bool
-	PolyserveLazyPromotion           bool
-	PolyservePartition               string
-	PolyservePreferLoaded            bool
-	PolyserveKvAdmission             bool
+	PolyserveAdmissionBinds         bool
+	PolyserveSteadyStateIgnoresPref bool
+	PolyserveLazyPromotion          bool
+	PolyservePartition              string
+	PolyservePreferLoaded           bool
+	PolyserveKvAdmission            bool
 
 	// FluidServe
-	FluidserveProfilePath       string
-	FluidserveClassBudgets      string
-	FluidserveHorizonSteps      int
-	FluidserveZSafety           float64
-	FluidserveTtftSafetyMs      int
-	FluidserveEnablePend        bool
-	FluidserveEnableShed        bool
-	FluidserveShedSignal string
-	FluidserveOracleLength bool
-	FluidserveEnableAffinity    bool
-	FluidserveAffinityWeight    float64
-	FluidserveAffinityMetric    string
-	FluidservePerInstanceCorrection bool
-	FluidserveMemoryUsesPaceCap     bool
-	FluidservePerInstanceDelay      bool
-	FluidserveDeadlineUsesDelay     bool
-	FluidserveShedIgnoresFirstToken bool
+	FluidserveProfilePath            string
+	FluidserveClassBudgets           string
+	FluidserveHorizonSteps           int
+	FluidserveZSafety                float64
+	FluidserveTtftSafetyMs           int
+	FluidserveEnablePend             bool
+	FluidserveEnableShed             bool
+	FluidserveShedSignal             string
+	FluidserveOracleLength           bool
+	FluidserveEnableAffinity         bool
+	FluidserveAffinityWeight         float64
+	FluidserveAffinityMetric         string
+	FluidservePerInstanceCorrection  bool
+	FluidserveMemoryUsesPaceCap      bool
+	FluidservePerInstanceDelay       bool
+	FluidserveDeadlineUsesDelay      bool
+	FluidserveShedIgnoresFirstToken  bool
 	FluidservePrefillInterleaveAware bool
-	FluidserveClassPin          string
-	FluidserveEnableFlux        bool
-	FluidserveClassHarm         bool
-	FluidserveForceMargin       bool
-	FluidserveOwnBudgetGate     bool
-	FluidserveDeadlineFeasible  bool
+	FluidserveClassPin               string
+	FluidserveEnableFlux             bool
+	FluidserveClassHarm              bool
+	FluidserveForceMargin            bool
+	FluidserveOwnBudgetGate          bool
+	FluidserveIncumbentBalance       bool
+	FluidserveOracleFlux             bool
+	FluidserveDeadlineFeasible       bool
 	FluidserveMemLevelTest           bool
 	FluidserveMemorySafety           float64
 	FluidservePrefillFullIteration   bool
 	FluidservePrefillResidentQueue   bool
 	FluidserveArrivalHorizons        int
-	FluidservePrefixAware       bool
-	FluidservePrefixCalibration bool
-	FluidservePrefixBlockTokens int
-	FluidservePrefixCapacity    int
-	FluidserveKvSlopeProjection bool
-	FluidserveGateSlack         float64
+	FluidservePrefixAware            bool
+	FluidservePrefixCalibration      bool
+	FluidservePrefixBlockTokens      int
+	FluidservePrefixCapacity         int
+	FluidserveKvSlopeProjection      bool
+	FluidserveGateSlack              float64
 
 	// EXP-107
 	FluidserveClassInstanceCap           bool
@@ -525,6 +527,22 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 		"Use the per-request output-length hint from the OpenAI user field "+
 			"(len:<tokens>) in place of the class length distribution. EXP-64: this "+
 			"bounds what a finer-grained length predictor could be worth.")
+	flags.BoolVar(&c.FluidserveOracleFlux, "fluidserve-oracle-flux", false,
+		"Let the per-request length hint drive the FLEET projection too, not "+
+			"only the arriving request. --fluidserve-oracle-length replaces three "+
+			"quantities -- what an arrival is charged, whether it can still meet "+
+			"its deadline, and how many tokens a resident still owes -- but the "+
+			"two flux terms keep their old sources: outflow asks the class "+
+			"survival curve how likely each resident is to finish inside the "+
+			"horizon, and inflow charges every decoding request the whole horizon "+
+			"whether or not it will still be there. With a hint both become facts: "+
+			"a resident finishes inside the horizon exactly when its remaining "+
+			"count fits, and it generates min(remaining, horizon) rather than the "+
+			"horizon. The first also zeroes that request's term in the variance "+
+			"the z-safety margin comes from, because perfect information needs no "+
+			"margin. Kept separate from --fluidserve-oracle-length so EXP-64's "+
+			"narrower meaning stays measurable; residents without a hint keep the "+
+			"class curve and the flat charge.")
 
 	flags.BoolVar(&c.FluidserveEnableAffinity, "fluidserve-enable-affinity", true,
 		"Among the instances that can take a request, prefer the one already "+
@@ -742,6 +760,23 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"becomes chat's 50 ms on every instance within seconds, so a deep "+
 			"research request with a 100 ms budget cannot route onto a fleet "+
 			"running at 55.6 ms. Off by default until EXP-46 judges it.")
+	flags.BoolVar(&c.FluidserveIncumbentBalance, "fluidserve-incumbent-balance", true,
+		"Protect the requests already on an instance by what each of them has "+
+			"LEFT per token, not only by what its class was promised. This is "+
+			"the second of the two pace conditions: the first compares the pace "+
+			"after admitting against the tightest NOMINAL budget on the "+
+			"instance, this one compares it against the tightest REMAINING "+
+			"budget, which carries how fast those requests have actually been "+
+			"served so far. Turning it off leaves the nominal condition and so "+
+			"reduces the predicate to the form the baselines use, which compare "+
+			"a predicted pace against a constant budget carried on the request. "+
+			"The two are not the same quantity: measured over the hour-long "+
+			"trace the nominal and the remaining minimum disagree on 55-59%% of "+
+			"instance-seconds, by 5.9-8.1 ms at the 90th percentile against a "+
+			"50 ms chat budget, and on 3.9-6.0%% of them they give opposite "+
+			"answers; on a fixed-rate condition the same disagreement is 38-45%% "+
+			"and 2.2-3.8 ms, so a static benchmark understates this axis. On by "+
+			"default, which is the shipped behaviour.")
 	flags.BoolVar(&c.FluidserveMemLevelTest, "fluidserve-mem-level-test", false,
 		"Compare kvLogical + cost against capMem instead of proj + cost, making "+
 			"the memory predicate a level test. The projection prices departures "+

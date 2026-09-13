@@ -1,0 +1,140 @@
+{
+ "metadata": {
+  "model": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+  "hardware": "B200 x2 (TP2)",
+  "timestamp": "2026-07-26 15:00:00",
+  "stepdump_glob": "Agent_applications/agent_motivation_experiment/results/*exp16*/server_metrics/sched_steps.jsonl",
+  "metrics_glob": "Agent_applications/agent_motivation_experiment/results/260730_*/metrics.csv|Agent_applications/agent_motivation_experiment/results/260731_*/metrics.csv|Agent_applications/agent_motivation_experiment/results/260801_*/metrics.csv",
+  "description": "FluidServe offline seed. decode_step_law gives the cost of a decode-only iteration as a function of the KV tokens held and the number of decoding requests. prefill_step_law gives the cost of an iteration that carries a prefill chunk. classes[] gives the empirical survival function of output length per SLO tier, used for the conditional completion probability. mixed_step_validation reports how well the mixture model reproduces measured window means, bucketed by the fraction of steps that carried a prefill chunk.",
+  "classes_timestamp": "2026-08-02 00:49:00 KST",
+  "classes_note": "classes[] rebuilt 2026-08-02 00:49 KST from runs after Agent_applications 5fa82f8 (2026-07-29 16:35 KST), which changed the deep research report structure from four sections to seven and took that class's median output from 249 to 942 tokens. The 2026-07-26 profile said mean 282 for a class measuring 951, so completionProb over the 100-iteration horizon read 0.355 against a true 0.105 and the release term of the KV projection was over-predicted by about 3.4x on the class holding roughly 77% of resident KV. decode_step_law and prefill_step_law are unchanged from the 2026-07-26 fit.",
+  "classes_superseded": "the 2026-07-26 classes[] is kept beside this file as fluidserve-classes-20260726.json; nothing else in this document changed",
+  "flatlen_note": "All three classes share one deterministic output length of 532 tokens, the mix-weighted mean of the 79,100 completed requests in 260831_2015_exp109r1_fsv3capgnofrct75_shift. This removes per-class length knowledge while keeping the tier keys (25/50/100) and the engine-side step laws unchanged, so the only thing ablated is the workload length model."
+ },
+ "decode_step_law": {
+  "c0_ms": 16.361197197677694,
+  "c_kv_ms_per_token": 1.2821553120779696e-05,
+  "c_n_ms_per_request": 0.07642859370237294,
+  "r2": 0.9522310173027884,
+  "cells": 76,
+  "samples": 377838,
+  "rel_err_p50": 0.06363413063534755,
+  "rel_err_p90": 0.2052634305549852
+ },
+ "prefill_step_law": {
+  "source": "ttft.json",
+  "ms_at_1024": 80.14934975653887,
+  "ms_at_4096": 264.2379170283675,
+  "ms_at_8192": 519.6887981146574
+ },
+ "mixed_step_validation": [
+  {
+   "phi_bucket": 0.0,
+   "n": 4717,
+   "measured_median_ms": 21.453142166137695,
+   "predicted_median_ms": 19.850721668780675,
+   "pred_over_meas": 0.955198997490468,
+   "separate_model_over_meas": 0.9539541669741218
+  },
+  {
+   "phi_bucket": 0.2,
+   "n": 2459,
+   "measured_median_ms": 22.08552605066544,
+   "predicted_median_ms": 25.046878965026313,
+   "pred_over_meas": 1.1132857419835975,
+   "separate_model_over_meas": 1.0645704334366402
+  },
+  {
+   "phi_bucket": 0.4,
+   "n": 1050,
+   "measured_median_ms": 30.06596137315799,
+   "predicted_median_ms": 36.487138149165936,
+   "pred_over_meas": 1.1905873761551597,
+   "separate_model_over_meas": 0.9878562985133601
+  },
+  {
+   "phi_bucket": 0.6,
+   "n": 36,
+   "measured_median_ms": 124.60254705869235,
+   "predicted_median_ms": 109.81940905863617,
+   "pred_over_meas": 0.9028512493350578,
+   "separate_model_over_meas": 0.661844907255935
+  },
+  {
+   "phi_bucket": 0.8,
+   "n": 4,
+   "measured_median_ms": 134.61696795928174,
+   "predicted_median_ms": 123.2335867963034,
+   "pred_over_meas": 0.8948077653396731,
+   "separate_model_over_meas": 0.5876510774933896
+  }
+ ],
+ "classes": [
+  {
+   "name": "swe",
+   "tpot_slo_ms": 25,
+   "n": 79100,
+   "mean": 532.0,
+   "p50": 532.0,
+   "p90": 532.0,
+   "p99": 532.0,
+   "max": 532.0,
+   "grid": [
+    0,
+    531,
+    532,
+    100000
+   ],
+   "survival": [
+    1.0,
+    1.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "name": "chat",
+   "tpot_slo_ms": 50,
+   "n": 79100,
+   "mean": 532.0,
+   "p50": 532.0,
+   "p90": 532.0,
+   "p99": 532.0,
+   "max": 532.0,
+   "grid": [
+    0,
+    531,
+    532,
+    100000
+   ],
+   "survival": [
+    1.0,
+    1.0,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "name": "deepresearch",
+   "tpot_slo_ms": 100,
+   "n": 79100,
+   "mean": 532.0,
+   "p50": 532.0,
+   "p90": 532.0,
+   "p99": 532.0,
+   "max": 532.0,
+   "grid": [
+    0,
+    531,
+    532,
+    100000
+   ],
+   "survival": [
+    1.0,
+    1.0,
+    0.0,
+    0.0
+   ]
+  }
+ ]
+}

@@ -331,6 +331,15 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-64. Read the client's per-request output-length hint instead of the
     # class distribution. Default false, so the control arm is unchanged.
     "FS_ORACLE_LEN": "--fluidserve-oracle-length",
+    # EXP-132. The per-request length hint also drives the KV flux projection:
+    # inflow becomes min(remaining, horizon) per resident instead of an
+    # unconditional horizon, and outflow's completion probability becomes 0 or 1
+    # instead of the class survival curve. Only meaningful together with
+    # FS_ORACLE_LEN, because a request with no hint falls back to the class
+    # distribution in both terms. Default false, so the control arm is unchanged.
+    # The binary must be one that defines it (063e1c85 or later) -- pflag exits on
+    # an unknown flag and the scheduler then CrashLoopBackOffs (EXP-48).
+    "FS_ORACLE_FLUX": "--fluidserve-oracle-flux",
     "FS_SHED": "--fluidserve-enable-shed",
     "FS_AFFINITY": "--fluidserve-enable-affinity",
     # EXP-58. Not a boolean either: a float between 0 and 1.
@@ -354,6 +363,15 @@ FLUIDSERVE_ABLATIONS = {
     "FS_FORCE_MARGIN": "--fluidserve-force-margin",
     # EXP-46 candidate C.
     "FS_OWN_BUDGET_GATE": "--fluidserve-own-budget-gate",
+    # The ablation of the second pace condition: the pace after admitting must
+    # also fit the tightest REMAINING budget on the instance, not only the
+    # tightest nominal one. ON by default (the shipped behaviour), so an arm
+    # that does not set it keeps the deployed policy. Setting it false leaves
+    # the nominal gate, which is the form the baselines use -- that contrast is
+    # what the ablation prices. Only pin this in a driver that deploys a binary
+    # which HAS the flag: pflag exits on an unknown flag and the scheduler goes
+    # into CrashLoopBackOff (EXP-48).
+    "FS_INCUMBENT_BALANCE": "--fluidserve-incumbent-balance",
     "FS_DEADLINE_FEASIBLE": "--fluidserve-deadline-feasible",
     # EXP-49 candidate H2.
     "FS_KV_SLOPE": "--fluidserve-kv-slope-projection",
@@ -409,6 +427,19 @@ FLUIDSERVE_ABLATIONS = {
     # instance-level queue term.  A prefix hit removes this request's own
     # prefill compute; it does not move the request forward in the queue.
     "FS_PREFILL_RESIDENTQ": "--fluidserve-prefill-resident-queue",
+    # EXP-124. Add the fourth term to the KV projection: the mean prompt mass
+    # this instance was given per horizon over the last N horizons.  The
+    # projection prices what the resident set will generate and what completions
+    # will release and has no term for the prompts routed in DURING the horizon;
+    # measured per instance per horizon on the eight-instance fleet the realised
+    # change is +41,508 generated plus +133,565 routed in minus 173,317 released
+    # = -971, while the model says +41,508 - 129,219 = -87,735.  An INTEGER, not
+    # a boolean: it is a window and not a gain, because the term is the mean per
+    # horizon rather than the sum, so N changes how much noise is averaged away
+    # and not how much is charged.  Zero, the compiled default, disables the term
+    # and reproduces the deployed behaviour exactly, so every arm before EXP-124
+    # emits exactly the flag string it emits today.
+    "FS_ARRIVAL_HORIZONS": "--fluidserve-arrival-horizons",
 }
 
 # The gateway holds a request and re-asks the scheduler while no instance can
@@ -833,6 +864,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-memory-safety", "memsafety"),
         ("--fluidserve-prefill-full-iteration", "prefillfulliter"),
         ("--fluidserve-prefill-resident-queue", "prefillresidentq"),
+        ("--fluidserve-arrival-horizons", "arrivalhorizons"),
     ]
     bad = []
     for flag, key in checks:

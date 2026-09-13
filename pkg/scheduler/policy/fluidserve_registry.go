@@ -179,6 +179,9 @@ type liveRequest struct {
 	// request, so it is excluded from the constraint that sets an instance's
 	// capacity; continuing to honour it would hold the whole instance at a
 	// capacity that helps nobody.
+	// oracleTokens is the client's per-request length hint, carried through so
+	// the fleet projection can use it as well. Zero when absent.
+	oracleTokens int
 	unachievable bool
 }
 
@@ -235,7 +238,7 @@ type requestRegistry struct {
 	// cadence, so the difference between two consecutive calls IS that cadence,
 	// measured rather than configured. See noteArrival.
 	lastSeenMs map[string]int64
-	lastGCMs  int64
+	lastGCMs   int64
 
 	// dispatchVersion[instanceID] increments on every placement. It is what lets
 	// a cached view of an instance be invalidated by something other than the
@@ -803,13 +806,14 @@ func (r *requestRegistry) liveViewLocked(rec *dispatchRecord, j int, nowMs int64
 		allowance = 0
 	}
 	return liveRequest{
-		id:          rec.id,
-		tier:        rec.tier,
-		j:           j,
-		kvTokens:    float64(rec.promptTokens + j),
-		remaining:   remaining,
-		allowanceMs: allowance,
-		nominalMs:   r.nominalAllowanceLocked(rec.tier),
+		id:           rec.id,
+		tier:         rec.tier,
+		j:            j,
+		kvTokens:     float64(rec.promptTokens + j),
+		remaining:    remaining,
+		allowanceMs:  allowance,
+		nominalMs:    r.nominalAllowanceLocked(rec.tier),
+		oracleTokens: rec.oracleTokens,
 	}
 }
 

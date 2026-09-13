@@ -102,8 +102,8 @@ type fluidserveConfig struct {
 	ttftSafetyMs float64
 	// Ablation switches. These select which mechanism is in play, they are not
 	// quantities to tune.
-	enablePend     bool
-	enableShed     bool
+	enablePend bool
+	enableShed bool
 	// shedFleetScale is set when the shed test reads the fleet mean instead of
 	// the placement about to be made -- the independent-combination ablation of
 	// fluidserve-design.md section 6.3. Zero means coupled, the shipped
@@ -113,7 +113,8 @@ type fluidserveConfig struct {
 	shedFleetScale float64
 	// oracleLength makes the policy read the client's per-request output-length
 	// hint in place of the class distribution. EXP-64.
-	oracleLength bool
+	oracleLength   bool
+	oracleFlux     bool
 	enableAffinity bool
 	// affinityWeight is the one exception to the line above: it is a quantity,
 	// between 0 and 1, and it exists so that the class preference can be varied
@@ -210,11 +211,16 @@ type fluidserveConfig struct {
 	// classPin maps a class's per-token budget tier to the positions, in the
 	// sorted list of instance ids, that the class may be placed on. Empty means
 	// no pinning, which is the default and every experiment before EXP-59.
-	classPin   map[int][]int
-	enableFlux bool
-	classHarm      bool
-	forceMargin    bool
-	ownBudgetGate  bool
+	classPin      map[int][]int
+	enableFlux    bool
+	classHarm     bool
+	forceMargin   bool
+	ownBudgetGate bool
+	// incumbentBalance keeps the second pace condition: the pace after
+	// admitting must also fit the tightest REMAINING budget on the instance,
+	// not only the tightest nominal one. False removes that condition and
+	// leaves the nominal gate, which is the form the baselines use.
+	incumbentBalance bool
 	// memLevelTest makes the memory predicate compare kvLogical + cost against
 	// capMem instead of proj + cost. See where memKv is computed. EXP-114.
 	memLevelTest bool
@@ -268,9 +274,9 @@ type fluidserveConfig struct {
 	// prefixCalibrate multiplies that charge by the measured residual, which is
 	// what keeps a prediction that claims too many cache hits from admitting
 	// past the budget. Off makes the ablation arm.
-	prefixCalibrate  bool
-	prefixBlockToks  int
-	prefixCapacity   int
+	prefixCalibrate bool
+	prefixBlockToks int
+	prefixCapacity  int
 }
 
 // fluidserveRequest is the per-request context the selector needs. Filters and
@@ -362,8 +368,8 @@ type instanceFlux struct {
 	achievable        int
 	unachievable      int
 
-	inflow   float64
-	outflow  float64
+	inflow  float64
+	outflow float64
 	// arrivals is the mean prompt mass this instance received per horizon over
 	// the last arrivalHorizons horizons. Zero when the term is off.
 	arrivals float64
@@ -1254,6 +1260,20 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	}
 
 	f.inflow = f.nDecode * float64(p.cfg.horizonSteps)
+	if p.cfg.oracleFlux {
+		// With a length in hand the growth is not "the whole horizon" but what
+		// the request still owes, capped at the horizon. Residents without a
+		// hint keep the flat charge, so a partial table degrades towards the
+		// control rather than towards a fleet that looks free.
+		f.inflow = 0
+		for _, r := range f.live {
+			if r.oracleTokens > 0 {
+				f.inflow += math.Min(r.remaining, float64(p.cfg.horizonSteps))
+			} else {
+				f.inflow += float64(p.cfg.horizonSteps)
+			}
+		}
+	}
 	f.outflow = p.expectedOutflow(f.live, p.cfg.horizonSteps)
 	if p.cfg.kvSlopeProjection {
 		// Candidate H2. Project with the rate the engine's occupancy is actually
@@ -1363,6 +1383,16 @@ func (p *fluidserveDispatchPolicy) expectedOutflow(live []liveRequest, horizon i
 			continue
 		}
 		q := prof.completionProb(r.j, horizon)
+		if p.cfg.oracleFlux && r.oracleTokens > 0 {
+			// A length, not a distribution: finishing inside the horizon is a
+			// fact. q is 0 or 1, which also zeroes this request's term in the
+			// variance below.
+			if r.remaining <= float64(horizon) {
+				q = 1
+			} else {
+				q = 0
+			}
+		}
 		mean += q * r.kvTokens
 		variance += q * (1 - q) * r.kvTokens * r.kvTokens
 	}
@@ -1408,11 +1438,18 @@ type candidate struct {
 	harm float64
 	// room is free space after admitting, as a fraction of the instance's
 	// physical capacity. It breaks ties in both sets.
-	room          float64
-	meanBefore    float64
-	meanAfter     float64
-	gateAfter     float64
-	headroomAfter float64
+	room       float64
+	meanBefore float64
+	meanAfter  float64
+	gateAfter  float64
+	// incumbentAfter is the pace this candidate must also fit to avoid pushing
+	// a request already here past what it has LEFT. It is the instance's
+	// tightest remaining budget, or +Inf when --fluidserve-incumbent-balance is
+	// off. Stored for the same reason gateAfter is: the reason counter and the
+	// snapshot comparison must read the condition the decision read, not
+	// recompute a different one.
+	incumbentAfter float64
+	headroomAfter  float64
 	// missesTtftDeadline is true when a placement here could not deliver this
 	// request's FIRST TOKEN inside its budget, counting the wait it has already
 	// spent and the prefill queued ahead of it on this instance. Computed for
@@ -1799,7 +1836,7 @@ func infeasibleReasons(c *candidate) []string {
 	if c.meanAfter > c.gateAfter {
 		out = append(out, "gate")
 	}
-	if c.flux != nil && c.meanAfter > c.flux.tightestAllowance {
+	if c.flux != nil && c.meanAfter > c.incumbentAfter {
 		out = append(out, "incumbents")
 	}
 	if c.headroomAfter < 0 {
@@ -2083,7 +2120,11 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	c.gateAfter = gate * fsAllowanceUtilisation
 	unpredictable := math.IsInf(c.meanAfter, 0)
 	overGate := c.meanAfter > c.gateAfter
-	overIncumbents := c.meanAfter > f.tightestAllowance
+	c.incumbentAfter = f.tightestAllowance
+	if !p.cfg.incumbentBalance {
+		c.incumbentAfter = math.Inf(1)
+	}
+	overIncumbents := c.meanAfter > c.incumbentAfter
 	// The memory predicate, and which ceiling it reads.
 	//
 	// capMem is the physical pool: kvCapacity x 0.95 over the sharing ratio.
@@ -2220,7 +2261,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	snapMean := p.capacity.meanStepMs(f.id, snapKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
 	c.snapFeasible = !math.IsInf(snapMean, 0) &&
 		snapMean <= c.gateAfter &&
-		snapMean <= f.tightestAllowance &&
+		snapMean <= c.incumbentAfter &&
 		snapKv <= f.capMem
 	c.snapRoom = (math.Min(f.capKv, f.capMem) - snapKv) / math.Max(f.capMem, 1)
 	if c.feasible != c.snapFeasible {
@@ -3140,18 +3181,20 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		enableShed:     p.FluidserveEnableShed,
 		shedFleetScale: parseShedSignal(p.FluidserveShedSignal),
 		oracleLength:   p.FluidserveOracleLength,
+		oracleFlux:     p.FluidserveOracleFlux,
 		enableAffinity: p.FluidserveEnableAffinity,
 		affinityWeight: p.FluidserveAffinityWeight,
 		affinityMetric: p.FluidserveAffinityMetric,
 
 		perInstanceCorrection: p.FluidservePerInstanceCorrection,
 		memoryUsesPaceCap:     p.FluidserveMemoryUsesPaceCap,
-		classPin:       pin,
-		enableFlux:     p.FluidserveEnableFlux,
-		classHarm:      p.FluidserveClassHarm,
-		forceMargin:    p.FluidserveForceMargin,
-		ownBudgetGate:  p.FluidserveOwnBudgetGate,
-		deadlineFeasible: p.FluidserveDeadlineFeasible,
+		classPin:              pin,
+		enableFlux:            p.FluidserveEnableFlux,
+		classHarm:             p.FluidserveClassHarm,
+		forceMargin:           p.FluidserveForceMargin,
+		ownBudgetGate:         p.FluidserveOwnBudgetGate,
+		incumbentBalance:      p.FluidserveIncumbentBalance,
+		deadlineFeasible:      p.FluidserveDeadlineFeasible,
 		memLevelTest:          p.FluidserveMemLevelTest,
 		memorySafety:          p.FluidserveMemorySafety,
 		prefillFullIteration:  p.FluidservePrefillFullIteration,
@@ -3161,10 +3204,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		kvSlopeProjection: p.FluidserveKvSlopeProjection,
 		gateSlack:         p.FluidserveGateSlack,
 
-		perInstanceDelay:      p.FluidservePerInstanceDelay,
+		perInstanceDelay:       p.FluidservePerInstanceDelay,
 		shedIgnoresFirstToken:  p.FluidserveShedIgnoresFirstToken,
 		prefillInterleaveAware: p.FluidservePrefillInterleaveAware,
-		deadlineUsesDelay: p.FluidserveDeadlineUsesDelay,
+		deadlineUsesDelay:      p.FluidserveDeadlineUsesDelay,
 
 		prefixAware:     p.FluidservePrefixAware,
 		prefixCalibrate: p.FluidservePrefixCalibration,
@@ -3246,8 +3289,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		// comment below gives about classpin.
 		"percorr=%v, pacecap=%v, perdelay=%v, deadlinedelay=%v, shednoft=%v, interleave=%v, "+
 		"flux=%v, classharm=%v, deadlinefeasible=%v, "+
-		"forcemargin=%v, ownbudgetgate=%v, kvslope=%v, gateslack=%.3f, "+
-			"shedsignal=%s, oraclelen=%v, "+
+		"forcemargin=%v, ownbudgetgate=%v, incumbentbalance=%v, kvslope=%v, gateslack=%.3f, "+
+		"shedsignal=%s, oraclelen=%v, oracleflux=%v, "+
 		// The prefix fields sit BEFORE classpin because the deployment script
 		// reads the pin with `classpin=(.+?), budgets `, which needs those two
 		// to stay adjacent. A field inserted between them is swallowed by that
@@ -3265,8 +3308,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.prefillInterleaveAware,
 		cfg.enableFlux, cfg.classHarm,
 		cfg.deadlineFeasible,
-		cfg.forceMargin, cfg.ownBudgetGate, cfg.kvSlopeProjection, cfg.gateSlack,
-		p.FluidserveShedSignal, cfg.oracleLength,
+		cfg.forceMargin, cfg.ownBudgetGate, cfg.incumbentBalance, cfg.kvSlopeProjection, cfg.gateSlack,
+		p.FluidserveShedSignal, cfg.oracleLength, cfg.oracleFlux,
 		cfg.prefixAware, cfg.prefixCalibrate, cfg.prefixBlockToks, cfg.prefixCapacity,
 		formatClassPin(cfg.classPin),
 		p.FluidserveClassBudgets,

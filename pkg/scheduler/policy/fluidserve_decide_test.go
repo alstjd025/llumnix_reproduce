@@ -45,6 +45,9 @@ func fsPolicy(t *testing.T, budgets string, mutate func(*fluidserveConfig)) *flu
 		// Same reason again: the zero value disables the force branch, which is
 		// the EXP-107 treatment arm, not the shipped default.
 		enableForce: true,
+		// And once more: the zero value drops the second pace condition, which
+		// is the ablation this flag exists to run, not the shipped default.
+		incumbentBalance: true,
 	}
 	if mutate != nil {
 		mutate(&cfg)
@@ -1501,4 +1504,58 @@ func TestTheArrivalsTermIsAWindowAndNotAGain(t *testing.T) {
 	assert.InDelta(t, 500_000.0, p.arrivalsPerHorizon("i1", horizonMs, 1000), 1.0)
 	assert.InDelta(t, 0.0, p.arrivalsPerHorizon("i1", horizonMs, 10_000), 1e-9,
 		"one horizon later the burst is outside the window")
+}
+
+func TestIncumbentBalanceCanBeRemovedFromTheFeasibilityTest(t *testing.T) {
+	// The ablation for the paper. Two conditions protect the requests already
+	// on an instance: gateAllowance uses what their classes were PROMISED, and
+	// tightestAllowance uses what each of them has LEFT. The second is the one
+	// the baselines do not have -- they compare a predicted pace against a
+	// constant budget carried on the request -- so removing it, and only it,
+	// is what prices that difference.
+	//
+	// The state makes the balance term the binding one: the arriving request is
+	// judged on its own 100 ms budget, so the gate cannot refuse it, while an
+	// incumbent has burned its budget down to 1 ms per token.
+	f := &instanceFlux{
+		id: "i1", chunk: 8192, meanStep: 55.6,
+		gateAllowance: 100.0, tightestAllowance: 1.0,
+		capKv: 4e6, capMem: 4e6, kvLogical: 1e5, nDecode: 200,
+	}
+	deep := &fluidserveRequest{
+		id: "dr", tier: 100, ttftSloMs: 10000, promptTokens: 4639,
+		expectedToks: 840, nominalMs: 100,
+	}
+
+	on := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.incumbentBalance = true
+	})
+	off := fsPolicy(t, "25:e2e:30000,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.incumbentBalance = false
+	})
+
+	cOn := on.evaluate(f, nil, deep)
+	cOff := off.evaluate(f, nil, deep)
+
+	// The limit the decision compared against, stored so that the reason
+	// counter and the snapshot read the same condition the decision read.
+	assert.InDelta(t, 1.0, cOn.incumbentAfter, 1e-9,
+		"with the flag on the candidate is held to the tightest remaining budget")
+	assert.True(t, math.IsInf(cOff.incumbentAfter, 1),
+		"with the flag off the condition is removed, not relaxed to some other number")
+
+	// The condition bound, and removing it is what changes the verdict.
+	assert.False(t, cOn.feasible, "the incumbent at 1 ms per token refuses this placement")
+	assert.True(t, cOff.feasible, "with the balance term gone nothing else refuses it")
+
+	// The reason counter must follow the decision. Before this flag existed it
+	// recomputed the expression from f.tightestAllowance, so with the term off
+	// it would have kept reporting "incumbents" for placements that were in
+	// fact allowed.
+	assert.Contains(t, infeasibleReasons(&cOn), "incumbents")
+	assert.NotContains(t, infeasibleReasons(&cOff), "incumbents")
+
+	// Nothing else moves: the nominal gate is the same number either way.
+	assert.InDelta(t, cOn.gateAfter, cOff.gateAfter, 1e-9,
+		"the flag touches the second pace condition only")
 }
