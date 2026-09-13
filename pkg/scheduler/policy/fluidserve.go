@@ -98,8 +98,12 @@ const (
 
 type fluidserveConfig struct {
 	horizonSteps int
-	zSafety      float64
-	ttftSafetyMs float64
+	// chargeHorizon is the horizon costOf uses, when the charging window has to
+	// be set independently of the planning horizon. Zero means follow
+	// horizonSteps, which is every configuration measured before 2026-09-14.
+	chargeHorizon int
+	zSafety       float64
+	ttftSafetyMs  float64
 	// Ablation switches. These select which mechanism is in play, they are not
 	// quantities to tune.
 	enablePend bool
@@ -1969,7 +1973,17 @@ func (p *fluidserveDispatchPolicy) prefillChargeFor(
 // horizon is also the window over which the release of everything else is
 // counted.
 func (p *fluidserveDispatchPolicy) costOf(req *fluidserveRequest) float64 {
-	growth := math.Min(float64(p.cfg.horizonSteps), req.expectedToks)
+	// The charging window is normally the planning horizon, and is separable from
+	// it so that this term can be ablated on its own. Moving the planning horizon
+	// instead also moves the pace estimate -- meanStepMs divides the prefill
+	// fraction by the same number -- so a small planning horizon refuses on the
+	// pace rather than on the charge, which is what EXP-133's last step measured
+	// by accident. See --fluidserve-charge-horizon.
+	h := p.cfg.chargeHorizon
+	if h <= 0 {
+		h = p.cfg.horizonSteps
+	}
+	growth := math.Min(float64(h), req.expectedToks)
 	return float64(req.promptTokens) + growth
 }
 
@@ -3175,6 +3189,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	cfg := fluidserveConfig{
 		horizonSteps:   p.FluidserveHorizonSteps,
+		chargeHorizon:  p.FluidserveChargeHorizon,
 		zSafety:        p.FluidserveZSafety,
 		ttftSafetyMs:   float64(p.FluidserveTtftSafetyMs),
 		enablePend:     p.FluidserveEnablePend,
@@ -3300,7 +3315,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		// same reason the prefix fields sit before classpin: nothing may be
 		// inserted between classpin and budgets.
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
-		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d",
+		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
+		"chargehorizon=%d",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3315,7 +3331,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		p.FluidserveClassBudgets,
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
-		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons)
+		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon)
 
 	go policy.reportLoop()
 	return policy

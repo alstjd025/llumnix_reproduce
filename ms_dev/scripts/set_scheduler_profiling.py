@@ -357,6 +357,13 @@ FLUIDSERVE_ABLATIONS = {
     "FS_FLUX": "--fluidserve-enable-flux",
     "FS_CLASS_HARM": "--fluidserve-class-harm",
     "FS_HORIZON": "--fluidserve-horizon-steps",
+    # EXP-134. The charging window, separable from the planning horizon. Zero (the
+    # default) follows FS_HORIZON. Needed because the planning horizon is three
+    # mechanisms in one number -- the departure-credit window, the arriving
+    # request's charge, and the denominator of the prefill fraction in the pace
+    # estimate -- so moving it cannot ablate any one of them. Only on a binary
+    # that defines it (12faf17f or later).
+    "FS_CHARGE_HORIZON": "--fluidserve-charge-horizon",
     "FS_Z": "--fluidserve-z-safety",
     # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
     # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.

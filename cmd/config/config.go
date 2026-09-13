@@ -277,6 +277,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveProfilePath            string
 	FluidserveClassBudgets           string
 	FluidserveHorizonSteps           int
+	FluidserveChargeHorizon          int
 	FluidserveZSafety                float64
 	FluidserveTtftSafetyMs           int
 	FluidserveEnablePend             bool
@@ -471,6 +472,26 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"seconds because decode growth is then exactly one token per request per "+
 			"iteration, and because iteration time is itself a function of the occupancy "+
 			"being controlled.")
+	flags.IntVar(&c.FluidserveChargeHorizon, "fluidserve-charge-horizon", 0,
+		"Iterations of future decode an ARRIVING request is charged for, when that "+
+			"has to differ from --fluidserve-horizon-steps. Zero, the default, means "+
+			"follow the planning horizon, which reproduces every measurement taken "+
+			"before 2026-09-14.\n"+
+			"Why it exists. The planning horizon enters the policy in three places and "+
+			"they are not the same mechanism. It is the window over which departures "+
+			"are credited (expectedOutflow), it is the number of iterations the "+
+			"arriving request is charged for (costOf), and it is the denominator of "+
+			"the prefill fraction in the pace estimate, meanStepMs, which returns "+
+			"corr*((k-sp)*dec + sp*(pre+dec-c0))/k with sp clamped to k. Because the "+
+			"pace is evaluated with the arriving request's own prompt already in "+
+			"pendingPrefill, sp is at least one at every decision, so a horizon of 1 "+
+			"makes that expression the cost of a whole prefill iteration for every "+
+			"candidate and the gate refuses nearly everything. EXP-133's last "+
+			"cumulative step moved the horizon to 1 intending to remove only the "+
+			"charge, and what it actually measured was mostly that saturation: "+
+			"attainment 40.0 with 59.9% refused. Setting this to 1 and leaving the "+
+			"planning horizon at its deployed value removes the charge and nothing "+
+			"else, which is the ablation that step was supposed to be.")
 	flags.Float64Var(&c.FluidserveZSafety, "fluidserve-z-safety",
 		consts.DefaultFluidserveZSafety,
 		"Standard deviations subtracted from the expected KV release. Larger values "+
