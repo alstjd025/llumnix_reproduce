@@ -264,12 +264,59 @@ panel is tall gets clipped, so shorten the text instead.
   migration" on every figure while its own counter reports 225 rescheduling
   pairs for PolyServe and 0 for Llumnix SLO. Unresolved notes stay out.
 
+### Every paper figure writes its data beside it, as CSV
+
+**A figure is not finished until the numbers it draws are on disk next to it, in
+the same directory, under the same basename with a `.csv` extension.** Both
+files are written by the same run of the same script, from the same aggregate
+the panels are drawn from — not by a second pass, and never by transcribing.
+
+  motivation_throughput_vs_goodput_4panel_t75.pdf
+  motivation_throughput_vs_goodput_4panel_t75.csv
+
+**Why.** Until 2026-09-01 the plotted values lived only as a hand-written
+markdown table in `paper_figures/README.md`, which fails in three ways at once: a
+reader who wants the value at one arrival rate has to re-run the whole scoring
+pipeline to get it, the table cannot be diffed against the figure it describes,
+and it goes stale the first time the figure is redrawn while still reading as
+current. This repository has already paid for the third one — `motivation_fig1.py`
+kept its headline numbers as literals in the suptitle and went on printing "21%"
+and naming the wrong policy after a re-measurement had moved the answer to 24%.
+A CSV written by the drawing code cannot drift from the drawing.
+
+**What goes in it: exactly what is drawn, and nothing else.**
+
+- one row per (arm, x value);
+- the **line**: the aggregate that is plotted, with its unit in the column name
+  (`goodput_tok_s`, not `goodput` — a bare name does not say tokens or requests);
+- the **band**: its min and max in their own columns, under the line's name plus
+  `_min` / `_max`, so that a cell with no band is visibly a cell whose two
+  repeats agree rather than a cell with one repeat;
+- **`n_repeats`** per cell, because a point with one run reads as the most
+  precise point on the figure and only this column says otherwise;
+- **the identity of the metric**: the scoring rule, denominator, or budget form
+  the numbers were produced under, as a column. Two figures in this directory now
+  differ only in that identity, and a CSV that does not carry it can be merged
+  with the wrong one.
+
+Everything else about those runs — every other rule, every other denominator,
+per-class breakdowns — stays in the per-run scoring table the script read from.
+Copying it into the figure's CSV would create a second place for it to go stale,
+which is the defect this rule exists to remove.
+
+**Variants each get their own CSV.** A figure drawn with and without one arm is
+two PDFs and two CSVs, and the rows the two share must be identical — check
+that, because a variant that recomputes its own aggregate can silently rescale
+an axis or drop a repeat.
+
 ### Record what the figure is made of
 
 `paper_figures/README.md` carries, per figure: the run glob and directories, n
-per cell, which sessions, what was excluded and why, the metric definitions, the
-full table of plotted values, and the list of things the caption must state.
-This is what makes a figure re-derivable a month later, and it is where the
+per cell, which sessions, what was excluded and why, the metric definitions, and
+the list of things the caption must state. **The table of plotted values belongs
+in the figure's CSV, not here** — the README says where the numbers came from
+and what may not be said about them, the CSV says what they are. This is what
+makes a figure re-derivable a month later, and the README is where the
 uncorrected-vs-corrected comparison for a re-scored run belongs.
 
 ### Refactoring these scripts
