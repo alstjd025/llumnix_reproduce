@@ -254,7 +254,21 @@ func (p *DispatchPolicy) Schedule(request *types.SchedulingRequest) error {
 		} else {
 			p.clusterViewClient.Unlock()
 		}
-		metrics.Histogram("request_full_mode_schedule_duration_milliseconds", metrics.Labels{}).ObserveInt(time.Since(startTime).Milliseconds())
+		elapsed := time.Since(startTime)
+		metrics.Histogram("request_full_mode_schedule_duration_milliseconds", metrics.Labels{}).ObserveInt(elapsed.Milliseconds())
+		// MICROSECONDS, UNDER A DIFFERENT NAME. The millisecond histogram above
+		// records `elapsed.Milliseconds()`, which FLOORS: every decision faster
+		// than 1 ms lands in the same bucket as a decision that took no time at
+		// all. Its sum/count is therefore not a mean -- on the EXP-139 runs it
+		// reads 0.009 to 0.015, which says only that 0.9% to 1.5% of decisions
+		// crossed a millisecond, and leaves the actual mean unknown anywhere
+		// between 0 and 1 ms.
+		//
+		// The name carries the unit because the old one is in every run already
+		// on disk. Reusing it would put values a thousand-fold apart in one
+		// column, which is the "two quantities under one name" failure this
+		// repository keeps recording.
+		metrics.Histogram("request_full_mode_schedule_duration_microseconds", metrics.Labels{}).ObserveInt(elapsed.Microseconds())
 	}()
 
 	if p.c.EnableFullModeScheduling {
@@ -266,7 +280,16 @@ func (p *DispatchPolicy) Schedule(request *types.SchedulingRequest) error {
 	clusterViewScheduling.setRequestSlo(request)
 	klog.V(4).Infof("Retrieved cluster instances, count: %d", len(clusterViewScheduling.instanceViews))
 
+	// The policy's own decision, timed apart from everything around it. The
+	// histogram above spans the lock, the CMS fetch and the view conversion,
+	// which are Llumnix's cost and are paid by every policy alike; only this
+	// call is the cost of the routing and admission rules under test. Reporting
+	// the outer number as "our overhead" would charge us for infrastructure we
+	// share with the baselines.
+	policyStart := time.Now()
 	selectedInstances := p.schedule(request, clusterViewScheduling)
+	metrics.Histogram("request_policy_decide_duration_microseconds", metrics.Labels{}).
+		ObserveInt(time.Since(policyStart).Microseconds())
 	if len(selectedInstances) == 0 {
 		// An empty result means one of two different things, and the gateway has
 		// to be told which. A policy that holds a request answers "no endpoint"
