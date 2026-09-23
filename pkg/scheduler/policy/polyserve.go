@@ -11,6 +11,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"llumnix/pkg/consts"
+	"llumnix/pkg/metrics"
 	"llumnix/pkg/types"
 )
 
@@ -568,8 +569,22 @@ func (c *polyserveConfig) judge(
 		return polyserveVerdict{reason: "steady_state", util: util}
 	}
 	if c.kvAdmission {
-		if capTokens := kvCapacityTokens(view); capTokens > 0 && projectedKvTokens(view) > capTokens {
-			return polyserveVerdict{reason: "memory", util: util}
+		if capTokens := kvCapacityTokens(view); capTokens > 0 {
+			proj := projectedKvTokens(view)
+			if proj > capTokens {
+				// EXP-127. What the section 4.5 simulation charged, at the moment
+				// it refused. Published only on the refusal branch: judge runs
+				// once per candidate per request, and setting a gauge on every
+				// call would put a map lookup and a label allocation on the
+				// scheduler's hot path for values nobody asked for. Read against
+				// instance_cms_all_decodes_tokens_num, collected on the same
+				// scrape, this says at what real occupancy the accounting stops
+				// admitting -- which could not be answered from any recorded
+				// series before, because the pool size was in none of them.
+				metrics.Gauge("scheduler_polyserve_memrefuse_projected_tokens",
+					metrics.Labels{{Name: "instance", Value: view.GetInstanceId()}}).Set(proj)
+				return polyserveVerdict{reason: "memory", util: util}
+			}
 		}
 	}
 	return polyserveVerdict{admitted: true, util: util}

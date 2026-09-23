@@ -285,6 +285,38 @@ func (f *polyserveFleet) publishLocked(instances map[string]*instanceViewSchedul
 	}
 	metrics.Gauge("scheduler_polyserve_pool_servers", nil).Set(float64(counts[0]))
 	metrics.Gauge("scheduler_polyserve_live_servers", nil).Set(float64(len(instances)))
+
+	// EXP-127. The two sides of the section 4.5 memory test, per instance.
+	//
+	// WHY. The admission test refuses when projectedKvTokens exceeds the pool,
+	// and on the four-instance 70B hour (EXP-109) 90.5% of all refusals cited
+	// memory while no engine's observed KV ever passed 64%. Whether that is the
+	// test being conservative or the pool genuinely being reached could not be
+	// decided from the recorded series: the pool size is not in any of them, and
+	// deriving it from instance_cms_all_decodes_tokens_num divided by
+	// instance_cms_kv_cache_usage_ratio_projected gave 712k / 791k / 1,329k /
+	// 793k across four identical instances, so that derivation is wrong -- the
+	// gauge's numerator is not the quantity being divided, and the gap is widest
+	// on the instance holding the class with 6,812-token prompts.
+	//
+	// Publishing the capacity alone would be enough to reconstruct the
+	// projection offline from series that are already collected, but the
+	// scheduler's own projection is published beside it so that the
+	// reconstruction can be checked against the value the decision actually
+	// used rather than trusted.
+	//
+	// Only the CAPACITY is published here. The projection is not: it lives in the
+	// per-request scheduling context, and a fleet tick has no such context, so
+	// projectedKvTokens returns its "not the polyserve estimate" zero. The probe
+	// condition reported the capacity in 185 scrapes and the projection in none,
+	// which is what that guard looks like from outside. The projection is
+	// published from judge instead, at the refusal.
+	for id, view := range instances {
+		if capTokens := kvCapacityTokens(view); capTokens > 0 {
+			metrics.Gauge("scheduler_polyserve_kv_capacity_tokens",
+				metrics.Labels{{Name: "instance", Value: id}}).Set(capTokens)
+		}
+	}
 }
 
 // describeLocked renders the split for a log line. Called with f.mu held.
