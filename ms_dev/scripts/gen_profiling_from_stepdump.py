@@ -102,6 +102,10 @@ LINK_TOL_S = 0.002      # tolerance when re-linking a step to its predecessor
 # ---------------------------------------------------------------------------
 # load + per-engine chain reconstruction
 # ---------------------------------------------------------------------------
+# Set from --allow-missing-prefill-anchor; see prefill_anchor().
+ALLOW_MISSING_PREFILL_ANCHOR = False
+
+
 def load_steps(pattern):
     """Read every step record.  All four engines write into one host-mounted
     file, so records interleave; `_run` plus the step counter disambiguates."""
@@ -298,6 +302,21 @@ def prefill_anchor(chains):
             else:
                 i += 1
     if not wins:
+        # EXP-129. This anchor feeds the PREFILL table only, and the documented
+        # order for building a profile overwrites that table afterwards with the
+        # idle-engine sweep from measure_ttft_sweep.py, which the existing
+        # profile directories show was the order they were built in. So a set of
+        # dumps with no saturated window is not a reason to refuse to write
+        # tpot.json, and refusing costs a whole profiling stage: the decode law
+        # is identified in the UNSATURATED region, and the saturated conditions
+        # that would supply this anchor are exactly the ones that destroy it. On
+        # Qwen2.5-14B the median relative error of the decode surface is 17.9%
+        # on unsaturated dumps and 66.9-73.4% as soon as one saturated condition
+        # is added.
+        if ALLOW_MISSING_PREFILL_ANCHOR:
+            print("  no sustained prefill window -- writing tpot.json only "
+                  "(--allow-missing-prefill-anchor)")
+            return None, None
         sys.exit("no sustained prefill window found -- cannot anchor the TTFT table")
     tps = tok / sec
     chunk = tok / steps
@@ -398,7 +417,15 @@ def main():
     ap.add_argument("--hardware", default="B200 x2 (TP2)")
     ap.add_argument("--timestamp", required=True,
                     help="provenance stamp, e.g. '2026-07-25 20:30:00'")
+    ap.add_argument("--allow-missing-prefill-anchor", action="store_true",
+                    help="write tpot.json even when the dumps contain no "
+                         "saturated prefill window, and skip ttft.json. For "
+                         "dumps that are deliberately all unsaturated because "
+                         "that is where the decode law is identified; the "
+                         "prefill table then comes from measure_ttft_sweep.py.")
     a = ap.parse_args()
+    global ALLOW_MISSING_PREFILL_ANCHOR
+    ALLOW_MISSING_PREFILL_ANCHOR = a.allow_missing_prefill_anchor
     os.makedirs(a.out_dir, exist_ok=True)
 
     print("[load]")
@@ -414,7 +441,10 @@ def main():
     print("\n[prefill anchor]")
     tps, chunk = prefill_anchor(chains)
     floor = float(coef[0])
-    ttft, rate = prefill_table(tps, chunk, floor)
+    if tps is None:
+        ttft, rate = None, None
+    else:
+        ttft, rate = prefill_table(tps, chunk, floor)
 
     common = dict(model=a.model, timestamp=a.timestamp)
     tpot_doc = {
@@ -440,7 +470,7 @@ def main():
                                  cells[(b, t)][1] if (b, t) in cells else None))
                     for b in BATCH_AXIS for t in TOKENS_AXIS],
     }
-    ttft_doc = {
+    ttft_doc = None if ttft is None else {
         "metadata": dict(
             common,
             description=("Per-STEP prefill cost vs chunk size. PROVISIONAL: async "
@@ -459,12 +489,25 @@ def main():
                          **stats(ttft[c])) for c in PREFILL_AXIS],
     }
 
-    for name, doc in (("tpot.json", tpot_doc), ("ttft.json", ttft_doc)):
+    docs = [("tpot.json", tpot_doc)]
+    if ttft is not None:
+        docs.append(("ttft.json", ttft_doc))
+    for name, doc in docs:
         p = os.path.join(a.out_dir, name)
         with open(p, "w") as f:
             json.dump(doc, f, indent=1)
         print(f"\nwrote {p}  ({len(doc['results'])} results, {os.path.getsize(p):,} bytes)")
 
+    if ttft is None:
+        # validate() replays the Go predictor over BOTH tables, so it cannot run
+        # on a decode-only build. The decode grid is still checked above by the
+        # isotonic pass and by the per-cell sample counts written into the file;
+        # the pair is validated when the profile directory is complete, which is
+        # what set_scheduler_profiling.py reports on every deployment.
+        print("\n[validate] skipped: this run wrote the decode grid only, so "
+              "there is no prefill table to replay against. Validate the pair "
+              "after measure_ttft_sweep.py has written ttft.json.")
+        return True
     return validate(grid, ttft)
 
 

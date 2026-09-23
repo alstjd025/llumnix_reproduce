@@ -88,6 +88,21 @@ MODELS = {
         tp=1, dp=8,
         profile_dir="qwen25-14b-b200-tp1",
     ),
+    # EXP-130. Added 2026-09-12 after Qwen2.5-14B turned out to run its decode
+    # steps about ten times the memory-bandwidth floor above batch 48, where the
+    # other three models all sit at 1.7-2.1x, and eight hypotheses for why were
+    # refuted. 7B pairs with Llama-3.1-8B at the same size class and a different
+    # family, and it is the lightest candidate on disk: 15 GB of weights and
+    # 56 KiB of KV per token, against 14B's 30 GB and 192 KiB.
+    "qwen25-7b-b200-tp1": dict(
+        model="Qwen/Qwen2.5-7B-Instruct",
+        repo="models--Qwen--Qwen2.5-7B-Instruct",
+        snapshot="a09a35458c702b33eeacc393d103063234e8bc28",
+        label="Qwen2.5-7B-Instruct",
+        max_model_len=32768,   # the model's own max_position_embeddings
+        tp=1, dp=8,
+        profile_dir="qwen25-7b-b200-tp1",
+    ),
 }
 
 
