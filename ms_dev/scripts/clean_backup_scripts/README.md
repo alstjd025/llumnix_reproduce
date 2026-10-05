@@ -9,7 +9,7 @@
 
 | 위치 | 무엇 | 기록 |
 |---|---|---|
-| 노드 `.../agent_motivation_experiment/results/` | run 디렉토리 1,843개. `metrics.csv`, `server_metrics/`, `request_ids.jsonl`, `run_config.json` 등. **`tbt_events.jsonl`과 `agent_logs/`는 2026-10-05 이동 후 노드에 없다**(§2의 2026-10-05 항목이 끝났는지 확인할 것) | |
+| 노드 `.../agent_motivation_experiment/results/` | `metrics.csv`·`server_metrics/`가 있는 run 1,841개, 123 GB. **`tbt_events.jsonl`과 `agent_logs/`는 2026-10-05에 Lustre로 압축 이동했고 노드에 없다**(§3이 꺼내는 법) | |
 | Lustre `/NHNHOME/NXC_ROOT/NXC13/home_backup_2026-08-28/` | `results_priority/`(08-28 백업, 151 GB), `tbt_archive_2026-09-10/`(tbt 140개, 608 GiB, 비압축), `results_archive_2026-10-05/`(tbt·agent_logs, zstd 압축) | 각 하위 디렉토리의 README/MANIFEST, 그리고 그 사본이 이 디렉토리에 있다 |
 | 맥에 연결한 외장 SSD `/Volumes/volume1/nxc13_backup_2026-09-23/` | tbt와 agent_logs를 뺀 results(122 GB), git이 추적하지 않는 파일, agent_logs tar.gz | `RESTORE-2026-09-23.md`, `backup_manifest_node_2026-09-23.tsv` |
 | GitHub | 두 저장소 | |
@@ -107,8 +107,16 @@
   - tbt_events 345개: 838.7 GB → **96.7 GB** (8.7배)
   - agent_logs 1,841개 run, 파일 55,248,554개: 217.0 GB → **15.9 GB** (13.6배)
   - `.part` 0개, MANIFEST 중복 0개, 목적지 파일 수 345 / 1,841로 일치.
-- delete 단계: **아직 실행하지 않았다.** 노드의 원본은 그대로 있다(2026-10-05 18:10 기준).
-  실행하면 `DELETED.tsv`가 생기고 이 줄을 고친다.
+- delete 단계 (2026-10-05 18:19:37 ~ 18:34:29 KST, **사용자가 직접 실행**. Claude Code 권한 검사가
+  되돌릴 수 없는 삭제로 막았기 때문이다): **2,186개 삭제, SKIP 0.**
+  - tbt_events 345개 838.7 GB, agent_logs 1,841개 run 217.0 GB.
+  - MANIFEST의 OK 항목과 `DELETED.tsv`가 정확히 일치한다(빠진 것 0, 목록 밖 삭제 0).
+  - 노드에 남은 tbt_events 0개, agent_logs 0개. `metrics.csv`와 `server_metrics/`는 1,841개 run 전부 남아 있다.
+  - `results/` 실제 사용량(`du`): 약 1.19 TB → **123 GB.**
+  - 삭제 후 Lustre 압축본 표본 검사(`zstd -t`, 종류마다 3개) 정상.
+- ⚠ **이 셸에서 보이는 `df -h /`는 삭제 전후로 거의 같았다**(사용 771 → 772 GB). 삭제 전에도 결과
+  디렉토리 크기(1.19 TB)보다 작은 값이었으므로, 그 overlay의 `df`는 `results/`가 실제로 놓인 디스크를
+  재지 않는다. **노드 여유는 호스트의 `df`나 `kubectl describe node`로 확인한다.**
 
 ## 3. 압축 아카이브에서 꺼내는 법
 

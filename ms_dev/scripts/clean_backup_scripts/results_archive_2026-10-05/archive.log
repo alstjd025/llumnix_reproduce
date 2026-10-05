@@ -2187,3 +2187,5 @@
 2026-10-05 18:07:58 OK alog 260917_1817_exp139k100rovh_fsv3capgnofrct75k_k100_rpm_2100 16860 files 67060948 -> 7824657
 2026-10-05 18:07:58 OK alog 260917_1843_exp139k100rovhv0_fsv3capgnofrct75k_k100_rpm_2100 16860 files 67012092 -> 7821100
 2026-10-05 18:07:58 === archive done: OK 2186, FAIL 0
+2026-10-05 18:19:37 === delete start
+2026-10-05 18:34:29 === delete done: 2186 removed
