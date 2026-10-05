@@ -509,7 +509,7 @@ PolyServe 수치에 항상 붙인다. 계측 바이너리는 `bf9e01b6`이고 **
 
 **`tbt_events.jsonl` 67개 359.9 GB 삭제**, 여유 167 → 527 GB. 대상은 **EXP-114**(인프라 디버깅
 아크, 그 정책 수치는 이미 인용 금지)와 **EXP-118/119/120**(기각된 수정 셋)뿐. 목록과 근거는
-`/home/nxclab/tools/exp_tbt_delete_2026-09-11.tsv`. **67개 전부 `metrics.csv`·`server_metrics/`가
+`ms_dev/scripts/clean_backup_scripts/exp_tbt_delete_2026-09-11.tsv`(2026-10-05에 `/home/nxclab/tools/`에서 옮김). **67개 전부 `metrics.csv`·`server_metrics/`가
 온전하다**(손상 0건). 논문 manifest 고정 run과 EXP-121~127은 건드리지 않았다.
 ⚠ **`tbt_events.jsonl`을 지우면 그 run은 누적 마감 규칙(`deadline_ladder_attainment.py`)으로
 다시 채점할 수 없다.** ITL CDF 그림 둘도 같다.
@@ -1230,7 +1230,7 @@ EXP-108의 t75 조건에서 다시 읽는다.
 ### ▶ 재개 앵커 (2026-08-28 17:00 KST 작성) — 3일 점검(홈 초기화) 직전의 최종 상태
 
 **서버는 2026-08-28 18:00 KST부터 3일 점검, `/home/nxclab` 전체 초기화.**
-복원 절차의 정본은 [RESTORE-2026-08-28.md](RESTORE-2026-08-28.md)
+복원 절차의 정본은 [RESTORE-2026-08-28.md](../scripts/clean_backup_scripts/RESTORE-2026-08-28.md)
 (백업 위치 `/NHNHOME/NXC_ROOT/NXC13/home_backup_2026-08-28/`, 홈·클러스터 복원,
 검증 run). 분석용 사본은 사용자의 맥 SSD `mac_kit_2026-08-28/`(347 run + 소스 +
 traces + shift 계열 토큰 이벤트).
