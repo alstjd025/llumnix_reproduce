@@ -5,18 +5,25 @@
 무엇이 지워졌는지는 아래 §2에 날짜순으로 한 줄씩 추가한다.** 다른 문서(STATUS.md, 실험 기록)에는
 이 디렉토리를 가리키는 링크만 둔다. 기록이 여러 곳에 흩어지면 무엇이 남아 있는지 추적할 수 없다.
 
-## 1. 지금 데이터가 어디에 있나 (2026-10-05 기준)
+## 1. 지금 데이터가 어디에 있나 (2026-10-07 기준)
 
 | 위치 | 무엇 | 기록 |
 |---|---|---|
-| 노드 `.../agent_motivation_experiment/results/` | `metrics.csv`·`server_metrics/`가 있는 run 1,841개, 123 GB. **`tbt_events.jsonl`과 `agent_logs/`는 2026-10-05에 Lustre로 압축 이동했고 노드에 없다**(§3이 꺼내는 법) | |
-| Lustre `/NHNHOME/NXC_ROOT/NXC13/home_backup_2026-08-28/` | `results_priority/`(08-28 백업, 151 GB), `tbt_archive_2026-09-10/`(tbt 140개, 608 GiB, 비압축), `results_archive_2026-10-05/`(tbt·agent_logs, zstd 압축) | 각 하위 디렉토리의 README/MANIFEST, 그리고 그 사본이 이 디렉토리에 있다 |
+| 노드 `.../agent_motivation_experiment/results/` | **2026-10-06에 컨테이너를 초기화해서 run 디렉토리가 하나도 없다**(`aggregate_analysis/`만 git에서 왔다). 초기화 전에는 `metrics.csv`·`server_metrics/`가 있는 run 1,841개, 123 GB였다. 1,841개 전부 아래 Lustre `results_priority/`(1,296개)나 맥 SSD(1,841개 전부)에 사본이 있다 — §2의 2026-10-06 항목 | |
+| Lustre `/NHNHOME/storage/home_backup_2026-08-28/` (2026-10-05까지는 `/NHNHOME/NXC_ROOT/NXC13/home_backup_2026-08-28/`로 보였다) | `results_priority/`(08-28 백업, 151 GB), `tbt_archive_2026-09-10/`(tbt 140개, 608 GiB, 비압축), `results_archive_2026-10-05/`(tbt·agent_logs, zstd 압축) | 각 하위 디렉토리의 README/MANIFEST, 그리고 그 사본이 이 디렉토리에 있다 |
 | 맥에 연결한 외장 SSD `/Volumes/volume1/nxc13_backup_2026-09-23/` | tbt와 agent_logs를 뺀 results(122 GB), git이 추적하지 않는 파일, agent_logs tar.gz | `RESTORE-2026-09-23.md`, `backup_manifest_node_2026-09-23.tsv` |
 | GitHub | 두 저장소 | |
 
-**Lustre는 공유 파일시스템이다**(59 TB, 2026-10-05에 33 TB 여유). `/NHNHOME/NXC_ROOT/NXC13` 자체는
-`iitp_inse` 소유라 `nxclab`이 쓸 수 없고, 우리 것은 전부 `nxclab` 소유인 `home_backup_2026-08-28/`
-아래에 있다. 용량은 `df -h /NHNHOME`이 아니라 `df -h /NHNHOME/NXC_ROOT`로 본다.
+**Lustre는 공유 파일시스템이다**(59 TB, 2026-10-07에 33 TB 여유). 우리 디렉토리의 부모(지금
+`/NHNHOME/storage`, 예전 `/NHNHOME/NXC_ROOT/NXC13`)는 `iitp_inse` 소유라 `nxclab`이 쓸 수 없고, 우리 것은
+전부 `nxclab` 소유인 `home_backup_2026-08-28/` 아래에 있다. 용량은 `df -h /NHNHOME`(로컬 NVMe)이 아니라
+`df -h /NHNHOME/storage`로 본다.
+
+⚠ **마운트 경로는 컨테이너가 만들어질 때마다 바뀔 수 있다.** 2026-10-06에 컨테이너를 새로 만든 뒤
+`/NHNHOME/NXC_ROOT`는 마운트되지 않았고, 같은 디렉토리가 `/NHNHOME/storage/` 아래에 보인다. 같은
+디렉토리라는 것은 2026-10-07에 확인했다 — `results_archive_2026-10-05/`의 tbt 345개·agent_logs 1,841개가
+그대로 있고, `DELETED.tsv`가 이 디렉토리의 사본과 바이트 단위로 같다. 이 디렉토리의 옛 문서(RESTORE-*.md
+등)에 적힌 `/NHNHOME/NXC_ROOT/NXC13/...`는 `/NHNHOME/storage/...`로 바꿔 읽는다.
 
 ⚠ **`tbt_events.jsonl`을 읽는 것은 "ITL CDF 그림 둘"만이 아니다.** 2026-09-01부터 논문의 주 지표인
 누적 마감 채점(`analysis_scripts/request_level/deadline_ladder_attainment.py`, 규칙 `ladder95`)이 이
@@ -114,13 +121,51 @@
   - 노드에 남은 tbt_events 0개, agent_logs 0개. `metrics.csv`와 `server_metrics/`는 1,841개 run 전부 남아 있다.
   - `results/` 실제 사용량(`du`): 약 1.19 TB → **123 GB.**
   - 삭제 후 Lustre 압축본 표본 검사(`zstd -t`, 종류마다 3개) 정상.
-- ⚠ **이 셸에서 보이는 `df -h /`는 삭제 전후로 거의 같았다**(사용 771 → 772 GB). 삭제 전에도 결과
-  디렉토리 크기(1.19 TB)보다 작은 값이었으므로, 그 overlay의 `df`는 `results/`가 실제로 놓인 디스크를
-  재지 않는다. **노드 여유는 호스트의 `df`나 `kubectl describe node`로 확인한다.**
+- ⚠ **삭제했는데 디스크 공간이 돌아오지 않았다.** `df -h /`가 삭제 전후로 거의 같았다(사용 771 → 772 GB).
+  처음에는 이 셸의 `df`가 다른 디스크를 재고 있다고 적었는데 **틀렸다.** 원인은 지운 파일이 컨테이너
+  이미지의 읽기 전용 layer 안에 있었던 것이다. 근거는 GPU 클러스터 플랫폼이 남긴 컨테이너 로그
+  `/NHNHOME/NXC_ROOT/.gc/NXC13_*_log.out`(2026-10-05에 읽음. 2026-10-07 지금 컨테이너에서는 그 경로가
+  보이지 않는다)이다.
+  1. 2026-10-03 15:01에 08-31부터 돌던 컨테이너가 종료되면서 플랫폼이 컨테이너 전체를
+     `nvidia-docker commit NXC13 .../nxclab-nxc13:2`로 이미지로 만들고 registry에 push했다. 이미지가 `:1`의
+     26.1 GB에서 `:2`의 **1.29 TB**가 됐다 — 그때 노드에 있던 results 1.19 TB가 전부 이미지에 들어갔다.
+     commit과 push에 2시간 16분이 걸렸다(15:01 → 17:17).
+  2. 2026-10-04 12:03과 20:57에 플랫폼이 그 `:2` 이미지로 컨테이너를 새로 만들었다. 생성 옵션의
+     `--storage-opt size=1600G` 때문에 `df`의 `/` 크기가 1.6T로 보인다.
+  3. 그래서 10-04 이전의 모든 파일은 overlay 파일시스템의 lower layer(읽기 전용)에 있었다. lower layer의
+     파일을 지우면 쓰기 가능한 upper layer에 "이 파일은 지워졌다"는 표시(whiteout)만 생기고 데이터는 lower
+     layer에 그대로 남는다. `rm`은 성공하고 `du`도 123 GB로 줄지만 `df`는 그대로인 이유가 이것이다.
+  - **평범한 `docker commit`을 다시 해도 공간은 줄지 않는다.** commit은 기존 layer를 그대로 두고 upper layer를
+    새 layer로 하나 더 얹으므로, 새 이미지는 기존 1.29 TB에 whiteout이 담긴 layer가 더해진 크기가 된다.
+    공간을 돌려받으려면 layer를 하나로 합친 이미지를 만들거나(`docker export | docker import`, 실행 설정
+    ENV·CMD는 옮겨지지 않는다) 작은 기본 이미지 `:1`에서 컨테이너를 새로 만들어야 하고, 둘 다 플랫폼 쪽
+    작업이다. registry에 남은 `:2`(1.29 TB)는 관리자가 지우지 않으면 registry 공간을 계속 차지한다.
+  - 이 항목은 2026-10-05에 커밋 `5a30e1a`로 적었는데 **push하기 전에 컨테이너가 초기화되어 사라졌고**,
+    2026-10-07에 대화 기록에서 다시 적었다.
+
+### 2026-10-06 — 사용자가 컨테이너를 초기화, 저장소를 GitHub에서 다시 클론
+- 위 정리와 push가 끝난 뒤 사용자가 컨테이너를 초기화했다. 새 컨테이너의 `/`는 1.6 TB 중 588 MB 사용으로
+  시작했다(위 overlay 문제는 이것으로 해소됐다). 두 저장소는 GitHub에서 다시 클론했다.
+- **잃은 것**
+  - push하지 않은 커밋 `5a30e1a` 하나(위 항목, 다시 적었다).
+  - 노드의 `results/` run 1,841개(123 GB). **사본이 없는 run은 0개다** — `DELETED.tsv`의 run 목록 1,841개를
+    Lustre `results_priority/results/`(그 안에 `metrics.csv`가 있는 run 1,296개)와 맥 SSD 매니페스트
+    `backup_manifest_node_2026-09-23.tsv`에 대조했다. 마지막 run이 09-17(`260917_1843_exp139…`)이라 SSD
+    백업(09-23) 이후에 생긴 run은 없다. ⚠ **545개 run은 맥 SSD에만 있다.** 다시 분석하려면 SSD에서 옮겨야 한다.
+  - 배포돼 있던 `bin/scheduler-exp07`(STATUS.md의 `9e8f68b6`). `bin/`은 git 밖이고 아래 tgz에도 없다.
+    `tools/staging/scheduler-usec`가 같은 파일일 가능성이 높으나 md5를 대조하기 전까지는 확정이 아니다.
+  - `/home/nxclab/tools/`, Go 툴체인, k3s 클러스터, `lib/sglang` 서브모듈 체크아웃.
+- **초기화 직전에 사용자가 만든 백업** `/NHNHOME/share/nxclab_backup_1006/`(Lustre, 2026-10-06 19:06):
+  `home_misc_1006.tgz`(2.9 GB, 항목 17,807개 — `tools/` 16,790개, `scratch/` 948개, `handover/` 50개,
+  `bk1006/env/` 16개), `powertest_1006.tgz`(다른 프로젝트), `env/`(환경 기록), `MD5SUMS`.
+  `tools/`에는 Go 툴체인, `bin-backup/` 66개(`scheduler-exp07.pre-exp140` = `063e1c85` 포함), 실험 체인
+  스크립트 236개(`exp139b.sh`·`exp140*.sh` 포함), `staging/`이 들어 있다. 저장소 디렉토리 자체는 이 tgz에 없다.
+- 클론 직후 체크아웃된 기본 브랜치는 `feat/fluidserve`(08-06)이고, 최신 작업은 `feat/gate-cost-instrumentation`
+  이다. 브랜치를 바꿔야 한다.
 
 ## 3. 압축 아카이브에서 꺼내는 법
 
-    L=/NHNHOME/NXC_ROOT/NXC13/home_backup_2026-08-28/results_archive_2026-10-05
+    L=/NHNHOME/storage/home_backup_2026-08-28/results_archive_2026-10-05   # 2026-10-05까지는 /NHNHOME/NXC_ROOT/NXC13/...
     R=/home/nxclab/llumnix_reproduce/Agent_applications/agent_motivation_experiment/results
     # tbt 하나
     zstd -dc $L/tbt_events/<run>.tbt_events.jsonl.zst > $R/<run>/tbt_events.jsonl
