@@ -8,6 +8,12 @@ description: Launch, monitor and judge a cluster experiment in llumnix_reproduce
 Every rule here exists because it failed once. None are precautions in the
 abstract.
 
+**Read `traps.md` in this directory before launching or changing a setting.** It
+holds the full judgement rules and the trap groups A–F (setting changes, launch,
+while running, reading results, derived numbers, infrastructure) that lived in
+`CLAUDE.md` until 2026-10-11. This file is the procedure; that file is the facts.
+How to rebuild the cluster is in `project/reproduce.md`.
+
 ## 1. Before changing any setting, find out what it already is and why
 
 The single most expensive mistake made here was changing an experiment setting

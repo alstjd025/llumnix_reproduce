@@ -273,7 +273,7 @@ type fluidserveConfig struct {
 
 	// prefixAware charges an arriving prompt only for the blocks the instance
 	// under consideration is not already believed to hold, instead of for a
-	// fleet-wide fraction of it. See ms_dev/notes/fluidserve-prefix.md.
+	// fleet-wide fraction of it. See archive/llumnix_reproduce/ms_dev/notes/fluidserve-prefix.md.
 	prefixAware bool
 	// prefixCalibrate multiplies that charge by the measured residual, which is
 	// what keeps a prediction that claims too many cache hits from admitting

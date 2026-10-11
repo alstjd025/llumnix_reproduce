@@ -148,7 +148,7 @@ def tier_by_class():
 # none of them configures exactly what every PolyServe condition before
 # 2026-08-27 ran with.
 #
-# Full reasoning in ms_dev/notes/polyserve-fidelity.md section 9.
+# Full reasoning in archive/llumnix_reproduce/ms_dev/notes/polyserve-fidelity.md section 9.
 POLYSERVE_ABLATIONS = {
     # Stop Llumnix's second scheduling pass from discarding the admission test
     # when nothing passes it.  Without this the test is computed, logged, and
@@ -388,7 +388,7 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-67. Charge an arriving prompt only for the blocks the candidate
     # instance is not already believed to hold. Off in the shipped default, so
     # the control arm needs no environment variable and the treatment arm sets
-    # FS_PREFIX=true. See ms_dev/notes/fluidserve-prefix.md.
+    # FS_PREFIX=true. See archive/llumnix_reproduce/ms_dev/notes/fluidserve-prefix.md.
     "FS_PREFIX": "--fluidserve-prefix-aware",
     # On by default in the binary, so the ablation arm sets it to false.
     "FS_PREFIX_CALIBRATION": "--fluidserve-prefix-calibration",
@@ -1023,7 +1023,7 @@ def _verify_vllm_cache(logs, applied_args):
     depth, and they pile onto whichever instance looked emptiest at the last
     poll. That is a defect of our port rather than a property of their
     algorithm, so a run made in that state would attribute our artifact to them.
-    See ms_dev/notes/vllm-router-baseline.md section 3.1.
+    See archive/llumnix_reproduce/ms_dev/notes/vllm-router-baseline.md section 3.1.
     """
     line = next((l for l in logs.splitlines()
                  if "vLLM router cache_aware policy created" in l), None)

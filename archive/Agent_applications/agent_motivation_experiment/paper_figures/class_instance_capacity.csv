@@ -1,0 +1,4 @@
+cls,prompt,output,tbt_budget_ms,concurrency,per_token_ms,kv_fraction,bound,mu_req_s
+chat,635.6908,422.7741,50.0000,244,49.9554,0.4193,TBT,11.5531
+swe,6437.4809,499.1623,75.0000,70,57.9677,0.9496,KV,2.4192
+deepresearch,3798.1512,969.9380,100.0000,109,44.9824,0.9471,KV,2.4983

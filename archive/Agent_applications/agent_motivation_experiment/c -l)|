@@ -1,0 +1,1 @@
+  d=$(ls -d $R/results/*exp53* 2>/dev/null 

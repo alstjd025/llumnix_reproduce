@@ -24,7 +24,7 @@ import (
 // That error is measured rather than assumed: `capacityModel.notePrefill` now
 // divides the engine's computed tokens by the charge this predicted, so its
 // output is the ratio between the two and sits at 1.0 exactly when the
-// prediction is right. See ms_dev/notes/fluidserve-prefix.md section 2.
+// prediction is right. See archive/llumnix_reproduce/ms_dev/notes/fluidserve-prefix.md section 2.
 //
 // The alternative was the Llumnix cache-aware path, which queries a KVS
 // metadata service and therefore sees eviction. It was not taken for two

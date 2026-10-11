@@ -1,0 +1,53 @@
+---
+# EXP-10: one-shot builder job for the custom gateway binary.
+# Why in-cluster: the gateway image runs glibc 2.35 (Ubuntu 22.04) while the
+# host is newer — a host-built CGO binary would not load. The vllm image has
+# the same glibc 2.35 plus gcc, so building inside it guarantees ABI match.
+# The sglang FFI static lib is NOT rebuilt (needs a Rust toolchain): the
+# prebuilt /usr/lib/libsgl_model_gateway_go.a is extracted from the stock
+# gateway image into lib/sglang/.../bindings/golang/lib/ beforehand
+# (kubectl cp), and the Go link just points at it.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gateway-builder
+  namespace: llumnix
+spec:
+  backoffLimit: 0
+  completions: 1
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: builder
+          image: llumnix-registry.cn-beijing.cr.aliyuncs.com/llumnix/vllm:20260306-165123
+          env:
+            - { name: NVIDIA_VISIBLE_DEVICES, value: "void" }
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              export PATH=/hosttools/go/bin:$PATH
+              export GOPATH=/gohome GOMODCACHE=/gohome/pkg/mod GOCACHE=/tmp/gocache
+              export GOFLAGS=-buildvcs=false
+              cd /work
+              go version
+              LIBDIR=/work/lib/sglang/sgl-model-gateway/bindings/golang/lib
+              [ -f "$LIBDIR/libsgl_model_gateway_go.a" ] || { echo "FFI lib missing"; exit 1; }
+              CGO_ENABLED=1 CGO_LDFLAGS="-L$LIBDIR -lsgl_model_gateway_go -ldl -lm" \
+                go build -o bin/gateway-exp10 ./cmd/gateway
+              ./bin/gateway-exp10 --help >/dev/null 2>&1 || true
+              ldd bin/gateway-exp10 | head -8
+              chown 3092:1999 bin/gateway-exp10 || true
+              echo "BUILD OK: $(ls -lh bin/gateway-exp10)"
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: tools, mountPath: /hosttools, readOnly: true }
+            - { name: gohome, mountPath: /gohome }
+      volumes:
+        - name: work
+          hostPath: { path: /home/nxclab/llumnix_reproduce, type: Directory }
+        - name: tools
+          hostPath: { path: /home/nxclab/tools, type: Directory }
+        - name: gohome
+          hostPath: { path: /home/nxclab/go, type: DirectoryOrCreate }

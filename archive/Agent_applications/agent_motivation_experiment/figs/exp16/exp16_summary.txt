@@ -1,0 +1,27 @@
+====================================================================
+EXP-16 per-step decode-latency decomposition (feasibility)
+====================================================================
+steps in window : 8032  span=309s
+interval ms     : p50=95.8 p90=435.9 p99=731.4 mean=154.0
+
+[1] BIMODALITY (prefill term exists?)
+  steps carrying prefill : 32.2%
+  decode-only interval   : p50=94.6 p99=724.0 ms
+  with-prefill interval  : p50=99.9 p99=742.4 ms
+  slow/fast p50 ratio    : 1.06x  -> not separated
+
+[2] T_schedule (CPU term a latency source?)
+  t_schedule ms          : p50=1.844 p99=6.636
+  interval p99 ms        : 731.4
+  T_sched.p99 / iv.p99   : 0.91%  -> NEGLIGIBLE
+  corr(T_sched, queue)   : 0.265
+
+[3+4] SEPARABILITY (multiple regression)
+  n=8032  R^2=0.083
+  intercept C0           : 84.22 ms
+  a (KV)                 : 26.87 ms/Mtok
+  b (decode batch)       : -0.1254 ms/req
+  c (prefill)            : 19.384 ms/Ktok
+  VIF                    : kv_tokens=10.9, n_decode=10.9, prefill_tokens_step=1.0
+
+VERDICT: terms are ENTANGLED — needs decoupling runs

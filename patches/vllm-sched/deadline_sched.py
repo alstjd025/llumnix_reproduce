@@ -21,7 +21,7 @@ NOTE, 2026-08-14: the two lines above used to say unit 4 was "NOT YET (phase 2)"
 long after phase 2 had landed, and EXP-81 was planned on that stale claim -- its
 section 5 said the experiment measured a port with unit 4 missing when in fact
 all four implemented units were running. The start-up line has printed
-`dynamic_chunk=True` the whole time and ms_dev/notes/qoserve-niyama-fidelity.md
+`dynamic_chunk=True` the whole time and archive/llumnix_reproduce/ms_dev/notes/qoserve-niyama-fidelity.md
 has a section on unit 4; the header was the only thing that disagreed. A comment
 that describes what the file does not do is the kind that goes stale silently.
 

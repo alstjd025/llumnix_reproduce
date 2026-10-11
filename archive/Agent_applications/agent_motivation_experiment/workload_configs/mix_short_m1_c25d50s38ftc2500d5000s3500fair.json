@@ -1,0 +1,37 @@
+{
+  "_comment": "EXP-123. mix_short_m1_c25d50s38fair.json with every FIRST-TOKEN budget halved as well: ttft_ms chat 5000 -> 2500, deepresearch 10000 -> 5000, swe 7000 -> 3500, on top of the per-token budgets chat 25 / deepresearch 50 / swe 38 ms that EXP-121 already halved. THIS FILE IS FOR THE POLICIES THAT READ slo.<class>.tbt_ms LITERALLY as the per-token target -- PolyServe, llm-d, Llumnix SLO -- for which the field IS the budget and for which set_scheduler_profiling.tier_by_class() derives --polyserve-tier-decode-tokens from that same field, giving 25:403,38:464,50:1094 (chat, swe, deepresearch mean output tokens from fluidserve.json). The tier keys therefore MOVE for these policies, which is correct: PolyServe never reads fluidserve.json's tpot_slo_ms, so for it a tier is a bin label whose number is itself the budget. FluidServe must NOT take this file; it takes mix_short_m1_ftc2500d5000s3500.json, whose tbt_ms are the tier keys its length model is indexed by, and receives its per-token budgets through --fluidserve-class-budgets. 38 rather than 37.5 because parseClassBudgets in fluidserve_registry.go:93 reads the budget with strconv.Atoi and fluidserve.go panics at start-up on a parse error, so the FluidServe arm cannot be told 37.5 and both arms must be told the identical integer. THE FIRST-TOKEN HALVING HAS NO MEASURED DERIVATION behind it, unlike the per-token halving, whose factor of two is fixed by two independent measured normalisations that agree to 1% (budget over per-token time at a full KV pool 1.96, budget over loaded p50 per-token time under a memory-comfortable policy 1.97). Under load the first-token time is dominated by queueing rather than by prefill compute, and queueing is produced by the policy rather than by the hardware: on the hour trace swe's first-token time is p50 6,589 ms under FluidServe and p50 371 ms under PolyServe on the same fleet under the same 7 s budget. This pair of arms is a plausibility check on a tighter overall service objective, not a normalisation. SCORING MUST MOVE WITH IT for BOTH arms: FS_CHAT_TBT_MS=25 FS_DR_TBT_MS=50 FS_SWE_TBT_MS=38 FS_CHAT_TTFT_S=2.5 FS_DR_TTFT_S=5 FS_SWE_TTFT_S=3.5. Numbers scored this way must never sit in a table with numbers scored at first-token 5 / 10 / 7 s or at per-token 50 / 100 / 75 ms.",
+  "mix": {
+    "chat": 10,
+    "deepresearch": 2,
+    "swe": 1
+  },
+  "mean_input_tokens": {
+    "chat": 649,
+    "deepresearch": 4639,
+    "swe": 5557
+  },
+  "chat_config": {
+    "num_conversations": 10000
+  },
+  "deepresearch_config": {},
+  "swe_config": {
+    "transcript_file": "/work/workloads/codingagent_request_level_poisson/data/transcript_swe_short7k_mix1500.jsonl"
+  },
+  "slo": {
+    "chat": {
+      "ttft_ms": 2500,
+      "tbt_ms": 25,
+      "out_len": 386
+    },
+    "deepresearch": {
+      "ttft_ms": 5000,
+      "tbt_ms": 50,
+      "out_len": 275
+    },
+    "swe": {
+      "ttft_ms": 3500,
+      "tbt_ms": 38,
+      "out_len": 728
+    }
+  }
+}

@@ -30,7 +30,7 @@ import (
 // same forward pass, and pays the fixed per-step overhead once. Charging only
 // t_pre understates measured window means by 35-40% once most steps carry a
 // chunk, because ttft.json was measured with nothing else running. See
-// ms_dev/notes/fluidserve-implementation.md for the validation table.
+// archive/llumnix_reproduce/ms_dev/notes/fluidserve-implementation.md for the validation table.
 
 type capacityModel struct {
 	mu sync.RWMutex
@@ -229,7 +229,7 @@ const (
 // ratio is the error of that prediction and sits at 1.0 when it is right, rather
 // than being the estimate itself. Both cases share this function because they
 // share the numerator; what differs is which quantity the caller passes and
-// which bounds apply. See ms_dev/notes/fluidserve-prefix.md section 2.
+// which bounds apply. See archive/llumnix_reproduce/ms_dev/notes/fluidserve-prefix.md section 2.
 func (m *capacityModel) notePrefill(
 	measuredMs, decodeOnlyMs, steps, chunk, promptTokensDispatched float64,
 	residual bool) {

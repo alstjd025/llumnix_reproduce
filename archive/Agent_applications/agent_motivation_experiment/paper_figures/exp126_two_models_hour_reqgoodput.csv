@@ -1,0 +1,11 @@
+model,arm,run,cut_minute,req_goodput_s,met_requests,arrivals,drawn,repeats,budgets,rule
+Llama-3.1-8B,vLLM-router,260911_0136_exp126h62r1_vllmcachec25d50s38ftc2500d5000s3500_shift62,60.0000,37.5242,135087,604809,False,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,vLLM-router,260911_0250_exp126h62r2_vllmcachec25d50s38ftc2500d5000s3500_shift62,60.0000,36.6722,132020,605065,True,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,Llumnix,260910_1902_exp126h62r1_slotc25d50s38ftc2500d5000s3500_shift62,60.0000,34.1733,123024,604568,False,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,Llumnix,260911_0011_exp126h62r2_slotc25d50s38ftc2500d5000s3500_shift62,60.0000,33.1906,119486,604971,True,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,PolyServe,260910_1255_exp126h62r1_polyservepc25d50s38ftc2500d5000s3500_shift62,60.0000,92.7753,333991,604761,False,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,PolyServe,260910_1630_exp126h62r2_polyservepc25d50s38ftc2500d5000s3500_shift62,60.0000,92.7175,333783,605035,True,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,llm-d,260910_1753_exp126h62r1_llmdslotc25d50s38ftc2500d5000s3500_shift62,60.0000,106.4039,383054,604901,False,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,llm-d,260910_2302_exp126h62r2_llmdslotc25d50s38ftc2500d5000s3500_shift62,60.0000,111.1975,400311,604840,True,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,FluidServe,260910_1143_exp126h62r1_fsv3capgnofrcc25d50s38ftc2500d5000s3500_shift62,60.0000,123.6661,445198,604534,False,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"
+Llama-3.1-8B,FluidServe,260910_1518_exp126h62r2_fsv3capgnofrcc25d50s38ftc2500d5000s3500_shift62,60.0000,123.6050,444978,604882,True,2,"chat 2.5s/25ms, deepresearch 5s/50ms, swe 3.5s/38ms","ladder95, halved budgets"

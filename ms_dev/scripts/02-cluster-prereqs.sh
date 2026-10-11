@@ -47,4 +47,4 @@ log "node '$NODE' allocatable nvidia.com/gpu = $gpus"
 kubectl wait --for=condition=Available deploy/lws-controller-manager -n lws-system --timeout=120s 2>/dev/null \
   || warn "LWS controller not Available yet (it may still be starting)"
 
-log "Cluster prerequisites ready. Next: ./03-deploy.sh"
+log "Cluster prerequisites ready. Next: deploy as in project/reproduce.md (03-deploy.sh was retired on 2026-10-11)."

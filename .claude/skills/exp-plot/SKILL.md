@@ -192,7 +192,9 @@ reporting the figure as done.
 Exploratory figures live in `results/aggregate_analysis/<exp>/` as PNG. Paper
 figures live in `Agent_applications/agent_motivation_experiment/paper_figures/`
 as PDF, one script per figure, with `paper_style.py` holding the shared
-constants and `README.md` recording what data each figure is drawn from. A paper
+constants and `README.md` recording what data each figure is drawn from (since
+2026-10-11 the directory holds only the figures in the submitted paper; every
+other figure and the long README are under `archive/`). A paper
 figure is not an exploratory figure exported — the constraints below only apply
 to the paper one, and they change the drawing.
 
@@ -375,8 +377,9 @@ Anything still globbing `results/*exp53*_rpm_*` would have averaged 27.5 and
   per arm.
 - **Put the selection in one script, not in a document.** The commands are long
   and easy to get subtly wrong, and a document cannot be executed.
-  `analysis_scripts/redraw_static_sweep.sh` is that script for the static sweep;
-  it prints the condition count behind every glob before drawing anything.
+  `analysis_scripts/redraw_static_sweep.sh` was that script for the static sweep
+  (archived on 2026-10-11 under `archive/Agent_applications/...`); it printed the
+  condition count behind every glob before drawing anything, and a new one should too.
 - **Say what was dropped.** `motivation_fig1.py` and `motivation_fig3.py`
   supersede inside `_supersede()` and print `using N EXP-57 conditions,
   superseding M from EXP-53`. A silent supersede is the same defect as a silent

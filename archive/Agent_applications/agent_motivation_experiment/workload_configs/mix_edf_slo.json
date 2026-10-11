@@ -1,0 +1,7 @@
+{
+  "mix": {"chat": 1, "deepresearch": 1, "swe": 1},
+  "chat_config": {"num_conversations": 1000},
+  "deepresearch_config": {},
+  "swe_config": {"transcript_file": "/work/workloads/codingagent_request_level_poisson/data/transcript_swe_calls_mix1500.jsonl"},
+  "slo_budget_ms": {"chat": 5000, "deepresearch": 10000, "swe": 11800}
+}

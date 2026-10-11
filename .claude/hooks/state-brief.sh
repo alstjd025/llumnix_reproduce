@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # SessionStart / PreCompact: 지금 상태를 생성해서 컨텍스트에 넣는다.
 #
-# 왜 있는가: 상태(무엇이 도는가, 어느 절이 정본인가)는 CLAUDE.md에서 빼서
-# ms_dev/notes/STATUS.md로 옮겼다. 그 파일을 읽는 것이 모델의 재량에 달려 있으면
-# compaction 직후나 새 세션에서 낡은 상태로 답할 수 있으므로, 세션이 시작될 때와
-# compaction 직전에 하네스가 직접 넣는다.
+# 왜 있는가: 상태(지금 무엇을 하고 있는가)는 CLAUDE.md가 아니라 project/revision.md의
+# "## 지금 상태" 절에 둔다(2026-10-11 정리 전에는 ms_dev/notes/STATUS.md였고 지금은
+# archive/에 있다). 그 파일을 읽는 것이 모델의 재량에 달려 있으면 compaction 직후나
+# 새 세션에서 낡은 상태로 답할 수 있으므로, 세션 시작과 compaction 직전에 하네스가 넣는다.
 #
-# 손으로 쓴 STATUS.md §1과 달리 아래 "지금 클러스터" 절은 매번 새로 조회하므로
-# 낡을 수 없다. 둘이 어긋나면 조회한 쪽이 사실이다.
+# 손으로 쓴 그 절과 달리 아래 "지금 클러스터" 절은 매번 새로 조회하므로 낡을 수 없다.
+# 둘이 어긋나면 조회한 쪽이 사실이다.
 set -uo pipefail
 REPO=/home/nxclab/llumnix_reproduce
-STATUS="$REPO/ms_dev/notes/STATUS.md"
+STATUS="$REPO/project/revision.md"
 RESULTS="$REPO/Agent_applications/agent_motivation_experiment/results"
 
 payload=$(cat 2>/dev/null || true)
@@ -19,12 +19,12 @@ event=$(printf '%s' "$payload" | jq -r '.hook_event_name // "SessionStart"' 2>/d
 {
   echo "# 지금 상태 (llumnix_reproduce) — 훅이 세션 시작·compaction 직전에 넣는다"
   echo
-  echo "## 손으로 관리하는 요약 (STATUS.md §1)"
+  echo "## 손으로 관리하는 요약 (project/revision.md의 '지금 상태' 절)"
   echo
   if [ -r "$STATUS" ]; then
-    sed -n '/^## §1/,/^## §2/p' "$STATUS" | sed '$d'
+    awk '/^## 지금 상태/{p=1; print; next} p && /^## /{exit} p' "$STATUS"
   else
-    echo "STATUS.md를 못 읽었다: $STATUS"
+    echo "project/revision.md를 못 읽었다: $STATUS"
   fi
 
   echo
@@ -75,15 +75,15 @@ event=$(printf '%s' "$payload" | jq -r '.hook_event_name // "SessionStart"' 2>/d
     if [ -n "$newest" ] && [ "$newest" -nt "$STATUS" ]; then
       n=$(find "$RESULTS" -maxdepth 1 -type d -newer "$STATUS" 2>/dev/null | wc -l)
       echo
-      echo "⚠ STATUS.md가 마지막으로 고쳐진 뒤에 결과 디렉토리가 ${n}개 생겼다."
+      echo "⚠ project/revision.md가 마지막으로 고쳐진 뒤에 결과 디렉토리가 ${n}개 생겼다."
       echo "  위의 '손으로 관리하는 요약'은 그만큼 낡았을 수 있다. 판단하기 전에"
-      echo "  ms_dev/notes/fluidserve-implementation.md의 마지막 절을 읽고 STATUS.md를 갱신한다."
+      echo "  그 run들이 무엇이었는지 확인하고 revision.md의 '지금 상태' 절을 갱신한다."
     fi
   fi
 
   echo
-  echo "규칙(함정 A~F, 판정 규칙, 서술 규칙)은 CLAUDE.md에 있고 항상 로드된다."
-  echo "이력(§32~§62 절별 요약)은 STATUS.md §3에 있으니 필요하면 그 파일을 읽는다."
+  echo "작업 규칙은 CLAUDE.md, 지금 상태 문서는 project/, 실험 운영 함정은 exp-run 스킬에 있다."
+  echo "과거 기록은 archive/에 있고 필요할 때만 archive/INDEX.md부터 연다."
 } > /tmp/claude-state-brief.$$ 2>/dev/null
 
 jq -n --arg e "$event" --rawfile c /tmp/claude-state-brief.$$ \

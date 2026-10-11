@@ -1,0 +1,7 @@
+# Everything under archive/ is a record and must be tracked, even file types
+# the repository-wide .gitignore excludes (*.csv, *.txt, *.jsonl, *.log,
+# AGENTS.md, and directories named bin/, logs/, env/, build/ ...). Without
+# these two lines such files would be left out of git silently when they were
+# moved here (2026-10-11 reorganisation).
+!*
+!*/

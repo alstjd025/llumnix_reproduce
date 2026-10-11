@@ -5,36 +5,38 @@ description: Write up experiments, implementation decisions and corrections in l
 
 # Recording
 
-## Where it goes
+## Where it goes (since the 2026-10-11 reorganisation)
 
 | Document | Holds |
 |---|---|
-| `ms_dev/notes/fluidserve-v0.1.md` | the self-contained spec: decision rules, what is measured versus configured, remaining constants, what v0.1 is **not** |
-| `ms_dev/notes/fluidserve-implementation.md` | chronological account, numbered sections. **The end of the file is always the newest.** |
-| `Agent_applications/.../experiments/EXP-NN_*.md` | one file per experiment: why, hypothesis, judgement rule, exact settings, result |
-| `CLAUDE.md` | **rules only** — traps that will recur, judgement rules, prose convention, the resume procedure |
-| `ms_dev/notes/STATUS.md` | **state only** — what is running, which section is current, which numbers must not be cited, the per-section digest of `implementation.md` |
-| auto-memory | pointers and the few facts not derivable from the repo |
+| `project/revision.md` | **state and decisions.** Its `## 지금 상태` section is injected at session start by the hook, so it must stay short and current. Below it: the revision issue list and every decision with its reason |
+| `project/system.md` | the implementation as it stands: decision path with file:line, the flag set of the configuration the paper reports, known defects. Change it in the same commit as a code change |
+| `project/evidence.md` | **the one place a number is written down**: paper claim -> experiment -> runs and repeat count -> value, with what must be said beside it. Other documents point here instead of copying |
+| `project/reproduce.md` | how to rebuild the environment and the last reproduction check |
+| `Agent_applications/agent_motivation_experiment/experiments/EXP-NN_*.md` | one file per **new** experiment (EXP-141 onward): why, hypothesis, judgement rule, exact settings, result |
+| `CLAUDE.md` | **rules only** — work rules for this phase, prose convention, judgement rules |
+| `archive/` | everything before 2026-10-11, unchanged. Read-only. Open `archive/INDEX.md` first |
 
-Two repositories, both on `feat/fluidserve`. Commit to each separately;
-`Agent_applications` is gitignored by the outer repo.
+Two repositories, both on `revision/reorg` at the time of writing. Commit to each
+separately; `Agent_applications` is gitignored by the outer repo.
 
-### CLAUDE.md or STATUS.md — the test is whether the next experiment changes it
+### CLAUDE.md or revision.md — the test is whether the next experiment changes it
 
-**Still true after the next run → `CLAUDE.md`, in one of the trap groups A–F.
-Changes when the next run finishes → `STATUS.md`.**
+**Still true after the next run → `CLAUDE.md` (or, for an experiment-operation
+trap, `.claude/skills/exp-run/traps.md`). Changes when the next run finishes →
+`project/revision.md`.**
 
-- "changing the workload means changing the profile too" — a rule, group A
-- "candidate C was rejected on the dynamic trace at −4.4" — state
+- "changing the workload means changing the profile too" — a rule
+- "candidate C was rejected on the dynamic trace at −4.4" — state, and the number goes in `evidence.md`
 - "the same quantity written in two places gets updated in one of them" — a rule
-- "do not cite the PolyServe numbers from EXP-53" — state, it lifts when EXP-57 lands
+- "do not cite the PolyServe numbers from EXP-53" — state, it lifts when the re-measurement lands
 
 `CLAUDE.md` is loaded in full at the start of every session, so a stale sentence
-there is read every time. `STATUS.md` is read on demand, so it is the safe place
-for anything with a shelf life.
+there is read every time. Keep it short.
 
-**After a run finishes**: update `STATUS.md` §1, add a row to §3, and add a trap
-to `CLAUDE.md` only if something recurred that is not already in A–F.
+**After a run finishes**: write the result into its experiment file, move any
+number the paper or a decision depends on into `evidence.md`, and bring the
+`## 지금 상태` section of `revision.md` up to date.
 
 ## Prose convention
 
@@ -59,7 +61,7 @@ refutation condition was written down first every time.
 
 ## Before writing a mechanism, read the code that produces the quantity
 
-Five sections of `implementation.md` are corrections of a mechanism written from
+Five sections of the old `fluidserve-implementation.md` (now under `archive/llumnix_reproduce/ms_dev/notes/`) are corrections of a mechanism written from
 the shape of a number rather than from what makes it. The pattern is always the
 same: **two quantities carried the same name and were not the same quantity.**
 
@@ -94,7 +96,7 @@ most valuable part. Do them plainly.
 - Do not enumerate mistakes as a list of failings and do not apologise in the
   documents. Say what is true now and how it came to be known.
 
-Examples worth matching: `implementation.md` §24.3 (a mid-path indicator taken
+Examples worth matching (in the archived `fluidserve-implementation.md`): §24.3 (a mid-path indicator taken
 as a proxy for the result, three times), §26 (two claims written without
 measurement), §27 (a quantity chased for days that did not exist).
 
@@ -102,11 +104,10 @@ measurement), §27 (a quantity chased for days that did not exist).
 
 Ask what a reader with no memory of this session would need:
 
-1. the newest section of `implementation.md`, self-contained
+1. the `## 지금 상태` section of `project/revision.md` brought up to date — the
+   session-start hook injects exactly that section
 2. the experiment file for anything running, with its judgement rule
-3. `ms_dev/notes/STATUS.md` §1 brought up to date — it is what the resume
-   procedure in `CLAUDE.md` sends the next session to read
-4. auto-memory updated — current state, open questions, what was refuted
+3. any decision taken in the session written into `revision.md` with its reason
 
 State what is running, its expected finish, and which binary is deployed
 (md5, and the fact that `md5sum /proc/1/exe` inside the pod is the only
@@ -119,42 +120,24 @@ was before, what measurement motivated it, and what would show it wrong. These
 are read later as the record of why the code is shaped as it is, so a message
 that only names the change is a message that will have to be re-derived.
 
-End with:
-
-```
-Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
-```
+End with the attribution line the session's instructions give.
 
 ## Before you record a number, check it against the one table
 
-Two files and two scripts exist because one measurement copied by hand into
-several documents is how this project's most frequent error happens. On
-2026-08-06 four corrections of that shape were made in one day, and the checker
-found eleven more stale values in the living documents on its first run.
+One measurement copied by hand into several documents is how this project's most
+frequent error happened (four corrections of that shape on 2026-08-06 alone).
+From 2026-10-11 the rule is simple: **a number is written in `project/evidence.md`
+and nowhere else in `project/`**; other documents point to its row. When a
+re-measurement replaces a value, keep the old value in that row's "replaced"
+column with the reason, in the same commit.
 
-```bash
-python3 ms_dev/scripts/collect_numbers.py        # results/  -> numbers.tsv
-python3 ms_dev/scripts/check_numbers.py          # notes     -> problems
-```
+`ms_dev/data/excluded_runs.tsv` lists runs that exist and are valid but must not
+enter an aggregate, with the reason; analysis scripts read it, so add a run there
+rather than narrowing a glob by hand.
 
-| file | what it holds |
-|---|---|
-| `ms_dev/notes/numbers.tsv` | **generated.** `experiment.condition.arm.metric` -> mean, repeat count, min, max. Never edit it |
-| `ms_dev/notes/retracted.tsv` | values a re-measurement replaced. A line per value, with what it was and what to use |
-| `ms_dev/notes/excluded_runs.tsv` | runs that exist and are valid but must not enter an aggregate, with the reason |
+The previous machinery (`numbers.tsv`, `retracted.tsv`, `collect_numbers.py`,
+`check_numbers.py`) is in `archive/llumnix_reproduce/ms_dev/`. Its retracted
+list is still the reference for any number taken from an archived document.
 
-**When a re-measurement changes a headline value, add a row to `retracted.tsv`
-in the same commit.** That is the whole mechanism; it is what turns "인용하면 안
-되는 수치", which was a hand-maintained paragraph in two documents, into
-something that fails.
-
-**A document may cite instead of copying**: write `{{exp57.static45.polyserve.offered}}`
-and the checker verifies the key exists. Where the table says the value is a mean
-over more than one repeat, a citation whose line does not also state the range is
-reported — this project's own rule, written in three places and broken again on
-2026-08-06.
-
-Do not convert existing documents. `fluidserve-implementation.md` and the
-`experiments/` files are append-only records; a number in them is a fact about a
-date and replacing it would make the record wrong. The checker does not read
-them for that reason.
+Do not convert archived documents. They are append-only records; a number in
+them is a fact about a date.

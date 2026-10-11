@@ -1,0 +1,3 @@
+arm,n_repeats,n_requests_total,rule,runs,throughput_tok_s,throughput_tok_s_min,throughput_tok_s_max,slo_attainment_admitted_pct,slo_attainment_admitted_pct_min,slo_attainment_admitted_pct_max,rejected_pct,rejected_pct_min,rejected_pct_max
+Llumnix SLO,2,195423,ladder95,260831_2346_exp109r1_slot75_shift 260901_1856_exp109r2_slot75_shift,10006.466,9969.566,10043.365,46.534,46.083,46.985,39.719,39.572,39.866
+llm-d,2,196149,ladder95,260831_2128_exp109r1_llmdslot75_shift 260901_1637_exp109r2_llmdslot75_shift,8259.443,8025.005,8493.882,97.928,97.886,97.970,45.797,42.522,49.073

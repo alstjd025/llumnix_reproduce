@@ -729,7 +729,7 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"the engines, so it cannot see eviction, and the error that causes is "+
 			"measured by the calibration below. On by default since v0.2; set it "+
 			"false to reproduce every arm measured before EXP-67. See "+
-			"ms_dev/notes/fluidserve-prefix.md.")
+			"archive/llumnix_reproduce/ms_dev/notes/fluidserve-prefix.md.")
 	flags.BoolVar(&c.FluidservePrefixCalibration, "fluidserve-prefix-calibration", true,
 		"Multiply the prefix-aware charge by the measured ratio between what the "+
 			"engines actually computed and what this scheduler predicted they would. "+

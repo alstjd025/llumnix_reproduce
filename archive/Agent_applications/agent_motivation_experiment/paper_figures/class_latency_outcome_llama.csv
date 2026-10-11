@@ -1,0 +1,26 @@
+model,arm,cls,panel,cut_minute,ttft_mean_ms,tbt_mean_ms,n,ttft_budget_ms,tbt_budget_ms,run,met_r_s,missed_r_s,rejected_r_s,unfinished_r_s,arrivals_r_s,met_n_r_s,missed_n_r_s,rejected_n_r_s,unfinished_n_r_s,completed_per_s
+Llama-3.1-70B,vLLM,chat,"a,b",59.250,287631.572,70.275,31370.000,5000.000,50.000,260901_2010_exp109r2_vllmcachet75_shift,,,,,,,,,,
+Llama-3.1-70B,vLLM,swe,"a,b",59.250,628547.596,193.791,6609.000,7000.000,75.000,260901_2010_exp109r2_vllmcachet75_shift,,,,,,,,,,
+Llama-3.1-70B,vLLM,deepresearch,"a,b",59.250,594162.527,128.575,8506.000,10000.000,100.000,260901_2010_exp109r2_vllmcachet75_shift,,,,,,,,,,
+Llama-3.1-70B,vLLM,all,c,59.250,,,,,,260901_2010_exp109r2_vllmcachet75_shift,5.950,7.165,0.000,11.452,87335.000,21151.000,25471.000,0.000,40713.000,
+Llama-3.1-70B,vLLM,all,total,59.250,,,46485.000,,,260901_2010_exp109r2_vllmcachet75_shift,,,,,,,,,,13.076
+Llama-3.1-70B,PolyServe,chat,"a,b",59.250,653.225,58.444,60591.000,5000.000,50.000,260901_1742_exp109r2_polyservept75_shift,,,,,,,,,,
+Llama-3.1-70B,PolyServe,swe,"a,b",59.250,1289.138,49.773,10476.000,7000.000,75.000,260901_1742_exp109r2_polyservept75_shift,,,,,,,,,,
+Llama-3.1-70B,PolyServe,deepresearch,"a,b",59.250,1797.824,47.088,9173.000,10000.000,100.000,260901_1742_exp109r2_polyservept75_shift,,,,,,,,,,
+Llama-3.1-70B,PolyServe,all,c,59.250,,,,,,260901_1742_exp109r2_polyservept75_shift,14.525,7.762,4.907,0.003,96684.000,51637.000,27595.000,17443.000,9.000,
+Llama-3.1-70B,PolyServe,all,total,59.250,,,80240.000,,,260901_1742_exp109r2_polyservept75_shift,,,,,,,,,,22.571
+Llama-3.1-70B,Llumnix SLO,chat,"a,b",59.250,800.260,57.416,34261.000,5000.000,50.000,260901_1856_exp109r2_slot75_shift,,,,,,,,,,
+Llama-3.1-70B,Llumnix SLO,swe,"a,b",59.250,5310.294,78.403,5174.000,7000.000,75.000,260901_1856_exp109r2_slot75_shift,,,,,,,,,,
+Llama-3.1-70B,Llumnix SLO,deepresearch,"a,b",59.250,13688.421,71.630,19183.000,10000.000,100.000,260901_1856_exp109r2_slot75_shift,,,,,,,,,,
+Llama-3.1-70B,Llumnix SLO,all,c,59.250,,,,,,260901_1856_exp109r2_slot75_shift,7.758,8.707,10.725,0.005,96678.000,27581.000,30955.000,38126.000,16.000,
+Llama-3.1-70B,Llumnix SLO,all,total,59.250,,,58618.000,,,260901_1856_exp109r2_slot75_shift,,,,,,,,,,16.489
+Llama-3.1-70B,llm-d,chat,"a,b",59.250,412.074,39.114,37917.000,5000.000,50.000,260901_1637_exp109r2_llmdslot75_shift,,,,,,,,,,
+Llama-3.1-70B,llm-d,swe,"a,b",59.250,845.062,44.561,6390.000,7000.000,75.000,260901_1637_exp109r2_llmdslot75_shift,,,,,,,,,,
+Llama-3.1-70B,llm-d,deepresearch,"a,b",59.250,1446.478,47.210,11897.000,10000.000,100.000,260901_1637_exp109r2_llmdslot75_shift,,,,,,,,,,
+Llama-3.1-70B,llm-d,all,c,59.250,,,,,,260901_1637_exp109r2_llmdslot75_shift,15.334,0.321,11.543,0.001,96688.000,54512.000,1140.000,41034.000,2.000,
+Llama-3.1-70B,llm-d,all,total,59.250,,,56204.000,,,260901_1637_exp109r2_llmdslot75_shift,,,,,,,,,,15.810
+Llama-3.1-70B,FluidServe,chat,"a,b",59.250,577.579,40.684,53523.000,5000.000,50.000,260901_1514_exp109r2_fsv3capgnofrct75_shift,,,,,,,,,,
+Llama-3.1-70B,FluidServe,swe,"a,b",59.250,1675.924,63.027,9387.000,7000.000,75.000,260901_1514_exp109r2_fsv3capgnofrct75_shift,,,,,,,,,,
+Llama-3.1-70B,FluidServe,deepresearch,"a,b",59.250,2098.308,63.520,14591.000,10000.000,100.000,260901_1514_exp109r2_fsv3capgnofrct75_shift,,,,,,,,,,
+Llama-3.1-70B,FluidServe,all,c,59.250,,,,,,260901_1514_exp109r2_fsv3capgnofrct75_shift,21.515,0.008,5.675,0.001,96693.000,76487.000,30.000,20173.000,3.000,
+Llama-3.1-70B,FluidServe,all,total,59.250,,,77501.000,,,260901_1514_exp109r2_fsv3capgnofrct75_shift,,,,,,,,,,21.801

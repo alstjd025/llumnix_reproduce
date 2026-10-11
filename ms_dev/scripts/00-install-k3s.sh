@@ -14,7 +14,7 @@
 #
 # Privilege is via `gcsudo <cmd>` (runs as root); plain sudo does NOT work on this host.
 # Everything here codifies the project memory "nxc7-k3s-install-recipe" (also mirrored in
-# ms_dev/notes/). It installs exactly what was verified working on 2026-06-23.
+# archive/llumnix_reproduce/ms_dev/notes/). It installs exactly what was verified working on 2026-06-23.
 set -uo pipefail
 cd "$(dirname "$0")"; source ./lib.sh
 

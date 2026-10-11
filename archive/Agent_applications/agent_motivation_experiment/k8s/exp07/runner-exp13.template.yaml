@@ -1,0 +1,96 @@
+---
+# EXP-13: searcharena_request_level_poisson (deep-research synthesis,
+# mid-length input mean ~3.2k tok). Same runner shape as exp11/12:
+# open-loop rate mode, 24 procs x 2048 threads, no-timeout gateway + 64Gi,
+# cold restart per condition. The parquet is pre-staged in /hf-cache
+# (HF_HUB_OFFLINE=1 resolves the pinned revision from cache).
+# Placeholders: __JOBNAME__ __SESSION__ __RATES__ __DURMIN__
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: __JOBNAME__
+  namespace: llumnix
+spec:
+  backoffLimit: 0
+  completions: 1
+  template:
+    metadata:
+      labels:
+        app: bench-runner-exp13
+    spec:
+      serviceAccountName: bench-runner
+      restartPolicy: Never
+      containers:
+        - name: runner
+          image: llumnix-registry.cn-beijing.cr.aliyuncs.com/llumnix/vllm:20260306-165123
+          workingDir: /work
+          env:
+            - { name: NVIDIA_VISIBLE_DEVICES, value: "void" }
+            - name: MODEL_ID
+              valueFrom:
+                configMapKeyRef: { name: llumnix-model, key: MODEL_ID }
+            # How many engine instances this fleet has. Everything that reads the
+            # fleet used to carry its own copy of "8000,8001,8002,8003", so a
+            # fleet of eight would have been scraped as four with nothing saying
+            # so -- the performance numbers look normal and half the engine
+            # series are simply absent. This key is required, not optional: a
+            # ConfigMap without it stops the pod instead of quietly measuring a
+            # fleet of a size nobody chose.
+            - name: ENGINE_PORTS
+              valueFrom:
+                configMapKeyRef: { name: llumnix-model, key: ENGINE_PORTS }
+            - { name: HF_HOME, value: /hf-cache }
+            - { name: HF_HUB_OFFLINE, value: "1" }
+            - { name: HF_DATASETS_OFFLINE, value: "1" }
+            - { name: RATE_LIST, value: "__RATES__" }
+            - { name: DURATION_MIN, value: "__DURMIN__" }
+            - { name: LOAD_PROCS, value: "24" }
+            - { name: RESULT_UID, value: "3092" }
+            - { name: RESULT_GID, value: "1999" }
+          command: ["/bin/bash", "-lc"]
+          args:
+            - |
+              set -uo pipefail
+              ln -sf /usr/local/bin/k3s /usr/local/bin/kubectl
+              kubectl version --client >/dev/null 2>&1 && echo "[runner] kubectl ok"
+              PYBIN=/work/.venv/bin/python
+              "$PYBIN" -c "import langchain_openai, pandas, pyarrow, tiktoken" \
+                && echo "[runner] venv deps ok" || { echo "[runner] venv missing deps"; exit 1; }
+              echo "[runner] exp13 searcharena sweep: rates=${RATE_LIST} rpm dur=${DURATION_MIN}min"
+              "$PYBIN" run_experiment.py \
+                --engine llumnix --in-cluster \
+                --workload searcharena_request_level_poisson \
+                --mode rate-sweep \
+                --rate-list "${RATE_LIST}" \
+                --duration-min "${DURATION_MIN}" \
+                --load-procs "${LOAD_PROCS}" \
+                --load-threads 2048 \
+                --restart-per-condition \
+                --workload-config '{}' \
+                --model "${MODEL_ID}" \
+                --warmup-rpm 120 --warmup-sec 60 \
+                --post-duration-grace 60 \
+                --output-dir /work/results \
+                --session-name "__SESSION__" \
+                --metrics-interval 1.0
+              rc=$?
+              chown -R "${RESULT_UID}:${RESULT_GID}" /work/results 2>/dev/null || true
+              echo "[runner] done rc=$rc"
+              exit $rc
+          volumeMounts:
+            - { name: work, mountPath: /work }
+            - { name: k3s, mountPath: /usr/local/bin/k3s, readOnly: true }
+            - { name: hf-cache, mountPath: /hf-cache }
+      volumes:
+        - name: work
+          hostPath:
+            path: /home/nxclab/llumnix_reproduce/Agent_applications/agent_motivation_experiment
+            type: Directory
+        - name: k3s
+          hostPath:
+            path: /usr/local/bin/k3s
+            type: File
+        - name: hf-cache
+          hostPath:
+            path: /NHNHOME/huggingface
+            type: Directory

@@ -1,0 +1,38 @@
+apiVersion: llm-d.ai/v1alpha1
+kind: EndpointPickerConfig
+plugins:
+  - type: approx-prefix-cache-producer
+    parameters:
+      # Upstream uses 262144 for a 256K-context agentic case. Our longest
+      # prompts are the swe transcripts at roughly 5.6k input tokens and the
+      # engine's max-model-len is 40960, so the chart default range is more
+      # than enough and a smaller value costs less CPU per request.
+      maxPrefixTokensToMatch: 65536
+  - type: predicted-latency-producer
+    parameters:
+      streamingMode: true
+  - type: prefix-cache-affinity-filter
+    name: strict-affinity-filter
+    parameters:
+      affinityThreshold: 0.99
+      ttftSource: latencyPredictor
+      maxTTFTPenaltyMs: 5000
+  - type: prefix-cache-affinity-filter
+    name: loose-affinity-filter
+    parameters:
+      affinityThreshold: 0.8
+      ttftSource: latencyPredictor
+      maxTTFTPenaltyMs: 5000
+  - type: latency-scorer
+  - type: weighted-random-picker
+  - type: slo-headroom-tier-filter
+  - type: latency-slo-admitter
+schedulingProfiles:
+  - name: default
+    plugins:
+      - pluginRef: predicted-latency-producer
+      - pluginRef: strict-affinity-filter
+      - pluginRef: slo-headroom-tier-filter
+      - pluginRef: loose-affinity-filter
+      - pluginRef: latency-scorer
+      - pluginRef: weighted-random-picker

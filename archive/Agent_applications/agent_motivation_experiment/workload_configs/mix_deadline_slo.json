@@ -1,0 +1,8 @@
+{
+  "mix": {"chat": 1, "deepresearch": 1, "swe": 1},
+  "slo": {
+    "chat":         {"ttft_ms": 5000,   "tbt_ms": 50,  "out_len": 386},
+    "deepresearch": {"ttft_ms": 10000,  "tbt_ms": 100, "out_len": 275},
+    "swe":          {"e2e_ms": 30000,                   "out_len": 728}
+  }
+}

@@ -1,0 +1,191 @@
+arm,engine_rank,engine_port,minute,attainment_pct,rejected_pct,window_s,step_s,run,denominator,rule
+PolyServe,fleet,,33.0,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,33.1667,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,33.3333,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,33.5,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,33.6667,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,33.8333,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,34.0,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,34.1667,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,34.3333,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,34.5,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,34.6667,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,34.8333,,0.0,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,35.0,,7.1207,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,35.1667,,10.7492,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,35.3333,,21.0084,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,35.5,,10.4816,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,35.6667,,7.1186,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,35.8333,,5.2632,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,fleet,,36.0,,8.9431,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,33.0,,17.5,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,33.1667,,19.6653,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,33.3333,,30.1435,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,33.5,,11.7647,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,33.6667,,2.439,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,33.8333,,1.0309,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,34.0,,0.9132,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,34.1667,,7.1038,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,34.3333,,8.4746,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,34.5,,4.5455,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,34.6667,,27.7193,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,34.8333,,39.5973,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,35.0,,61.9632,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,35.1667,,60.3279,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,35.3333,,67.313,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,35.5,,77.6504,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,35.6667,,54.0816,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,35.8333,,64.3478,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+llm-d,fleet,,36.0,,80.2703,60.0,60.0,exp109r1,"ALL arrivals in that minute, fleet-wide; drawn on the left axis with its top as 100%",is_rejected in metrics.csv
+PolyServe,1,8000,33.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,33.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,33.3333,95.2941,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,33.5,80.7692,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,33.6667,81.3472,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,33.8333,70.4641,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,34.0,66.7969,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,34.1667,45.7143,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,34.3333,42.1053,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,34.5,39.7476,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,34.6667,42.4332,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,34.8333,36.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,35.0,33.0952,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,35.1667,29.3103,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,35.3333,29.471,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,35.5,27.7078,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,35.6667,29.0993,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,35.8333,27.1429,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,1,8000,36.0,29.6209,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,33.0,63.7555,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,33.1667,59.9165,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,33.3333,58.0435,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,33.5,46.9428,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,33.6667,43.8272,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,33.8333,37.2709,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,34.0,34.5733,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,34.1667,32.1839,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,34.3333,32.2738,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,34.5,32.6923,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,34.6667,34.2529,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,34.8333,36.6133,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,35.0,36.5672,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,35.1667,32.4645,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,35.3333,30.4245,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,35.5,29.7968,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,35.6667,31.1856,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,35.8333,28.3582,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,2,8001,36.0,27.9373,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,33.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,33.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,33.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,33.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,33.6667,88.1579,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,33.8333,89.4118,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,34.0,89.4118,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,34.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,34.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,34.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,34.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,34.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,35.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,35.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,35.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,35.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,35.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,35.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,3,8002,36.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,33.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,33.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,33.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,33.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,33.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,33.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,34.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,34.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,34.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,34.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,34.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,34.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,35.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,35.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,35.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,35.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,35.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,35.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+PolyServe,4,8003,36.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,33.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,33.1667,97.1014,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,33.3333,97.9275,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,33.5,97.7528,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,33.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,33.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,34.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,34.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,34.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,34.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,34.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,34.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,35.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,35.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,35.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,35.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,35.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,35.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,1,8002,36.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,33.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,33.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,33.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,33.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,33.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,33.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,34.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,34.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,34.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,34.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,34.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,34.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,35.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,35.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,35.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,35.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,35.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,35.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,2,8003,36.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,33.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,33.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,33.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,33.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,33.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,33.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,34.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,34.1667,92.4528,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,34.3333,91.5789,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,34.5,91.3043,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,34.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,34.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,35.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,35.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,35.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,35.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,35.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,35.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,3,8001,36.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,33.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,33.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,33.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,33.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,33.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,33.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,34.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,34.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,34.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,34.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,34.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,34.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,35.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,35.1667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,35.3333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,35.5,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,35.6667,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,35.8333,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)
+llm-d,4,8000,36.0,100.0,,90.0,30.0,exp109r1,"admitted requests dispatched to this instance, cutoffs excluded",ladder95 (results/aggregate_analysis/ladder95/verdicts)

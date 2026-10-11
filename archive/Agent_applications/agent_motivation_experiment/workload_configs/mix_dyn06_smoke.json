@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "Dynamic 1-hour trace: Azure-shaped arrival rate (10-50 req/s, 4 peaks) with",
+    "a mix schedule A -> C -> B -> A. Both knobs live in the trace csv, which is",
+    "replayed by --mode trace-replay: the runner reads `arrival_s`, this workload",
+    "reads `class` from the SAME file, paired by row index. There is deliberately",
+    "no `mix` block -- with a class plan the per-arrival classes are already fixed,",
+    "and a second declaration here could silently disagree with the trace.",
+    "Regenerate the trace with traces/dynamic/build_dynamic_mix_trace.py; its",
+    ".plan.json holds the per-segment targets and realised ratios.",
+    "",
+    "Pools are identical to mix_polyserve.json (EXP-21) on purpose. Replay is",
+    "byte-identical (`literal replay`), so after the first pass every prompt is a",
+    "prefix-cache hit either way; changing pool sizes would only break",
+    "comparability with EXP-14/17/21. Cycling over the hour: chat ~40x (1000",
+    "conversations), swe ~25x (1500 transcript calls), deepresearch none (60k).",
+    "",
+    "The SLO block is what the client packs into the OpenAI 'priority' field as",
+    "ttft_ms*1000 + tbt_ms; tbt_ms doubles as the PolyServe TIER KEY, so every",
+    "class states it explicitly. Values are EXP-17/21's, unchanged."
+  ],
+  "class_plan_file": "/work/traces/dynamic/canonical/dyn06_azure4d_smoke.csv",
+  "chat_config": {"num_conversations": 1000},
+  "deepresearch_config": {},
+  "swe_config": {"transcript_file": "/work/workloads/codingagent_request_level_poisson/data/transcript_swe_calls_mix1500.jsonl"},
+  "slo": {
+    "chat":         {"ttft_ms": 5000,  "tbt_ms": 50,  "out_len": 386},
+    "deepresearch": {"ttft_ms": 10000, "tbt_ms": 100, "out_len": 275},
+    "swe":          {"ttft_ms": 11800, "tbt_ms": 25,  "out_len": 728}
+  }
+}

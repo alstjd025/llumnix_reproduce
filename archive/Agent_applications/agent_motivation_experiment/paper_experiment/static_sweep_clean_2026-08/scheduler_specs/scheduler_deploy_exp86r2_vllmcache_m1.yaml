@@ -1,0 +1,178 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "1774"
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{"deployment.kubernetes.io/revision":"1770"},"labels":{"app":"scheduler","role":"scheduler"},"name":"scheduler","namespace":"llumnix"},"spec":{"progressDeadlineSeconds":600,"replicas":1,"revisionHistoryLimit":10,"selector":{"matchLabels":{"app":"scheduler"}},"strategy":{"rollingUpdate":{"maxSurge":"25%","maxUnavailable":"25%"},"type":"RollingUpdate"},"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":"2026-08-17T20:50:20-07:00","llumnix.dev/restartedAt":"1787025878.1249077"},"labels":{"app":"scheduler","role":"scheduler"}},"spec":{"containers":[{"args":["--port","8088","-v","4","--host","0.0.0.0","--llm-backend-discovery","redis","--discovery-redis-host","redis","--discovery-redis-port","6379","--cms-redis-host","redis","--cms-redis-port","6379","--cms-pull-status-interval-ms","500","--cms-pull-metadata-interval-ms","10000","--enable-full-mode-scheduling=true","--colocated-rescheduling-mode=true","--rescheduling-policies","neutral_load,neutral_failover","--rescheduling-neutral-load-threshold","0.003","--rescheduling-load-balance-threshold","0.1","--rescheduling-interval-ms","500","--admission-kv-usage-threshold","0","--scheduling-policy","vllm-cache","--ttft-slo","5000","--tpot-slo","50","--ttft-slo-dispatch-threshold","0.9","--tpot-slo-dispatch-threshold","0.9","--ttft-profiling-data-path","/profiling/ttft.json","--tpot-profiling-data-path","/profiling/tpot.json","--polyserve-tier-decode-tokens","25:494,50:428,100:985","--fluidserve-profile-path","/profiling/fluidserve.json","--fluidserve-class-budgets","25:e2e:30000,50:decode,100:decode","--fluidserve-horizon-steps","100","--fluidserve-z-safety","1.65","--fluidserve-enable-pend=true","--fluidserve-enable-shed=true","--fluidserve-enable-affinity=true","--fluidserve-enable-flux=true"],"command":["/exp07bin/scheduler-exp07"],"image":"llumnix-registry.cn-beijing.cr.aliyuncs.com/llumnix/scheduler:20260401-105706","imagePullPolicy":"Always","livenessProbe":{"failureThreshold":3,"httpGet":{"path":"/healthz","port":8088,"scheme":"HTTP"},"initialDelaySeconds":30,"periodSeconds":10,"successThreshold":1,"timeoutSeconds":1},"name":"scheduler","ports":[{"containerPort":8088,"name":"http","protocol":"TCP"}],"readinessProbe":{"failureThreshold":3,"httpGet":{"path":"/healthz","port":8088,"scheme":"HTTP"},"initialDelaySeconds":5,"periodSeconds":5,"successThreshold":1,"timeoutSeconds":1},"resources":{"limits":{"cpu":"8","memory":"4Gi"},"requests":{"cpu":"2","memory":"1Gi"}},"terminationMessagePath":"/dev/termination-log","terminationMessagePolicy":"File","volumeMounts":[{"mountPath":"/exp07bin","name":"exp07bin","readOnly":true},{"mountPath":"/profiling","name":"profiling-data","readOnly":true}]}],"dnsPolicy":"ClusterFirst","restartPolicy":"Always","schedulerName":"default-scheduler","securityContext":{},"terminationGracePeriodSeconds":300,"volumes":[{"hostPath":{"path":"/home/nxclab/llumnix_reproduce/bin","type":"Directory"},"name":"exp07bin"},{"configMap":{"defaultMode":420,"name":"llumnix-profiling"},"name":"profiling-data"}]}}}}
+  creationTimestamp: "2026-06-25T08:38:34Z"
+  generation: 1777
+  labels:
+    app: scheduler
+    role: scheduler
+  name: scheduler
+  namespace: llumnix
+  resourceVersion: "4032905"
+  uid: fd243fc9-3217-42c0-82c3-f8dee8138fd3
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: scheduler
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/restartedAt: "2026-08-17T21:34:24-07:00"
+        llumnix.dev/restartedAt: "1787025878.1249077"
+      labels:
+        app: scheduler
+        role: scheduler
+    spec:
+      containers:
+      - args:
+        - --port
+        - "8088"
+        - -v
+        - "4"
+        - --host
+        - 0.0.0.0
+        - --llm-backend-discovery
+        - redis
+        - --discovery-redis-host
+        - redis
+        - --discovery-redis-port
+        - "6379"
+        - --cms-redis-host
+        - redis
+        - --cms-redis-port
+        - "6379"
+        - --cms-pull-status-interval-ms
+        - "500"
+        - --cms-pull-metadata-interval-ms
+        - "10000"
+        - --enable-full-mode-scheduling=true
+        - --colocated-rescheduling-mode=true
+        - --rescheduling-policies
+        - neutral_load,neutral_failover
+        - --rescheduling-neutral-load-threshold
+        - "0.003"
+        - --rescheduling-load-balance-threshold
+        - "0.1"
+        - --rescheduling-interval-ms
+        - "500"
+        - --admission-kv-usage-threshold
+        - "0"
+        - --scheduling-policy
+        - vllm-cache
+        - --ttft-slo
+        - "5000"
+        - --tpot-slo
+        - "50"
+        - --ttft-slo-dispatch-threshold
+        - "0.9"
+        - --tpot-slo-dispatch-threshold
+        - "0.9"
+        - --ttft-profiling-data-path
+        - /profiling/ttft.json
+        - --tpot-profiling-data-path
+        - /profiling/tpot.json
+        - --polyserve-tier-decode-tokens
+        - 25:494,50:428,100:985
+        - --fluidserve-profile-path
+        - /profiling/fluidserve.json
+        - --fluidserve-class-budgets
+        - 25:e2e:30000,50:decode,100:decode
+        - --fluidserve-horizon-steps
+        - "100"
+        - --fluidserve-z-safety
+        - "1.65"
+        - --fluidserve-enable-pend=true
+        - --fluidserve-enable-shed=true
+        - --fluidserve-enable-affinity=true
+        - --fluidserve-enable-flux=true
+        command:
+        - /exp07bin/scheduler-exp07
+        image: llumnix-registry.cn-beijing.cr.aliyuncs.com/llumnix/scheduler:20260401-105706
+        imagePullPolicy: Always
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: 8088
+            scheme: HTTP
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 1
+        name: scheduler
+        ports:
+        - containerPort: 8088
+          name: http
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: 8088
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources:
+          limits:
+            cpu: "8"
+            memory: 4Gi
+          requests:
+            cpu: "2"
+            memory: 1Gi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /exp07bin
+          name: exp07bin
+          readOnly: true
+        - mountPath: /profiling
+          name: profiling-data
+          readOnly: true
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      terminationGracePeriodSeconds: 300
+      volumes:
+      - hostPath:
+          path: /home/nxclab/llumnix_reproduce/bin
+          type: Directory
+        name: exp07bin
+      - configMap:
+          defaultMode: 420
+          name: llumnix-profiling
+        name: profiling-data
+status:
+  availableReplicas: 1
+  conditions:
+  - lastTransitionTime: "2026-08-07T00:41:17Z"
+    lastUpdateTime: "2026-08-18T04:34:32Z"
+    message: ReplicaSet "scheduler-67975d9c7d" has successfully progressed.
+    reason: NewReplicaSetAvailable
+    status: "True"
+    type: Progressing
+  - lastTransitionTime: "2026-08-18T04:46:25Z"
+    lastUpdateTime: "2026-08-18T04:46:25Z"
+    message: Deployment has minimum availability.
+    reason: MinimumReplicasAvailable
+    status: "True"
+    type: Available
+  observedGeneration: 1777
+  readyReplicas: 1
+  replicas: 1
+  terminatingReplicas: 0
+  updatedReplicas: 1

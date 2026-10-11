@@ -1,6 +1,6 @@
 # llm-d router — Endpoint Picker (EPP) + Envoy in one pod.
 #
-# Path A of ms_dev/notes/llmd-baseline.md section 3: the EPP takes its endpoint
+# Path A of archive/llumnix_reproduce/ms_dev/notes/llmd-baseline.md section 3: the EPP takes its endpoint
 # inventory from a file instead of an InferencePool, so no Gateway API CRDs and
 # no gateway provider are needed. Envoy sits beside it and talks ext_proc over
 # localhost, which is what the upstream "standalone" chart does inside

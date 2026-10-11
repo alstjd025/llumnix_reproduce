@@ -33,7 +33,7 @@ of. It is also A0 in the admission taxonomy: there is no path here that refuses 
 request, so overload appears only as queueing and violated SLOs.
 
 TWO DEVIATIONS FROM THE ORIGINAL, both recorded in
-ms_dev/notes/vllm-router-baseline.md rather than left in code comments alone.
+archive/llumnix_reproduce/ms_dev/notes/vllm-router-baseline.md rather than left in code comments alone.
 
   1. THE TREE IS OVER TOKEN IDS, NOT CHARACTERS. The original stores raw text
      precisely to avoid tokenising; this scheduler never sees text, only
@@ -73,7 +73,7 @@ ms_dev/notes/vllm-router-baseline.md rather than left in code comments alone.
      it is false the addend is always zero and the stale-signal behaviour above
      returns silently, so the policy logs the flag on the startup line and logs
      an error naming this paragraph when it is off. Recorded in
-     ms_dev/notes/vllm-router-baseline.md section 3.1.
+     archive/llumnix_reproduce/ms_dev/notes/vllm-router-baseline.md section 3.1.
 
 THE CONSTANT THAT WOULD HAVE BEEN GOT WRONG. `cacheThreshold` is 0.3 in
 vllm-router and 0.7 in the SGLang original the fork came from. It is the switch
@@ -439,7 +439,7 @@ func newVllmCacheDispatchFullMode(p *options.SchedulerConfig) *vllmCacheDispatch
 			"is false, so the dispatches made since the last poll are not counted " +
 			"and every decision between two polls will read the same queue depth. " +
 			"This is the defect described in deviation 2 of vllmcache.go and in " +
-			"ms_dev/notes/vllm-router-baseline.md section 3.1. DO NOT MEASURE THIS ARM.")
+			"archive/llumnix_reproduce/ms_dev/notes/vllm-router-baseline.md section 3.1. DO NOT MEASURE THIS ARM.")
 	}
 	return policy
 }

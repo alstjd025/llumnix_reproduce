@@ -1,0 +1,37 @@
+{
+  "_comment": "EXP-123. mix_short_m1_t75.json with every FIRST-TOKEN budget halved and nothing else moved: ttft_ms chat 5000 -> 2500, deepresearch 10000 -> 5000, swe 7000 -> 3500. THIS FILE IS FOR FLUIDSERVE. tbt_ms stays 50 / 100 / 25 because in this file those three numbers are TIER KEYS and not budgets: fluidserve_profile.go:173 indexes the per-class output-length model by classes[].tpot_slo_ms, whose values in the deployed profile are 50 (chat), 100 (deepresearch) and 25 (swe), so writing a budget into this field would both collide chat's halved 25 with the swe tier key and send every profile lookup to the fallback. FluidServe's PER-TOKEN budgets arrive instead through --fluidserve-class-budgets 25:decode:38,50:decode:25,100:decode:50, exactly as in EXP-121. The FIRST-TOKEN budget has no flag at all: the client packs it as priority = ttft_ms*1000 + tbt_ms (workloads/swe_bench_coding/agent.py _priority, priority_mode=deadline), the gateway unpacks it in DecodePackedSlo and hands it to the scheduler as SchedulingRequest.TtftSloMs, and fluidserve.go:566 reads that per request. So a first-token budget can only be changed by changing this file, which is why this file exists and why the FluidServe arm's request stream is NOT byte-identical to EXP-121's: the packed priority integer differs, and nothing else does. THERE IS NO MEASURED DERIVATION FOR HALVING THE FIRST-TOKEN BUDGET. The factor of two that justifies the per-token halving comes from the crossover footprint T* = C(c_n + rho/R) / ((B - c0)s - C c_kv), in which the budget B appears only in the denominator and only as a per-token quantity; the first-token time under load is dominated by queueing, which is a policy outcome rather than a hardware property (measured on the hour trace: swe first-token p50 6,589 ms under FluidServe against 371 ms under PolyServe, same fleet, same 7 s budget). This arm is therefore a plausibility check on a tighter overall service objective, in the manner Scorpio and AdaGen relax deadlines for larger models without deriving the factor, and not a normalisation. SCORING MUST MOVE WITH IT: FS_CHAT_TBT_MS=25 FS_DR_TBT_MS=50 FS_SWE_TBT_MS=38 FS_CHAT_TTFT_S=2.5 FS_DR_TTFT_S=5 FS_SWE_TTFT_S=3.5, each of which exp22_fluidserve.py announces on import. Numbers scored this way must never sit in a table with numbers scored at first-token 5 / 10 / 7 s or at per-token 50 / 100 / 75 ms.",
+  "mix": {
+    "chat": 10,
+    "deepresearch": 2,
+    "swe": 1
+  },
+  "mean_input_tokens": {
+    "chat": 649,
+    "deepresearch": 4639,
+    "swe": 5557
+  },
+  "chat_config": {
+    "num_conversations": 10000
+  },
+  "deepresearch_config": {},
+  "swe_config": {
+    "transcript_file": "/work/workloads/codingagent_request_level_poisson/data/transcript_swe_short7k_mix1500.jsonl"
+  },
+  "slo": {
+    "chat": {
+      "ttft_ms": 2500,
+      "tbt_ms": 50,
+      "out_len": 386
+    },
+    "deepresearch": {
+      "ttft_ms": 5000,
+      "tbt_ms": 100,
+      "out_len": 275
+    },
+    "swe": {
+      "ttft_ms": 3500,
+      "tbt_ms": 25,
+      "out_len": 728
+    }
+  }
+}

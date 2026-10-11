@@ -52,7 +52,7 @@ const (
 	// while still meeting the latency budgets of the requests already on it.
 	// When no instance has enough, the request is held at the gateway instead of
 	// being committed to an engine, which keeps the placement decision open at
-	// no cost. See ms_dev/notes/fluidserve-implementation.md.
+	// no cost. See archive/llumnix_reproduce/ms_dev/notes/fluidserve-implementation.md.
 	SchedulingPolicyFluidserve = "fluidserve"
 
 	// SchedulingPolicyVllmCache is the vLLM router's default policy, cache_aware,
