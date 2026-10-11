@@ -163,6 +163,43 @@
 - 클론 직후 체크아웃된 기본 브랜치는 `feat/fluidserve`(08-06)이고, 최신 작업은 `feat/gate-cost-instrumentation`
   이다. 브랜치를 바꿔야 한다.
 
+### 2026-10-10 — 초기화된 컨테이너에서 환경 재구축, EXP-108 한 셀 재현 확인
+- 절차는 `RESTORE-2026-08-28.md`를 따랐다. 그 문서가 2026-08-28 이후에 생긴 것을 모르기 때문에 **빠진
+  단계가 둘** 있었고, 아래에 적는다. 백업 위치는 `/NHNHOME/storage/home_backup_2026-08-28/`(§1).
+- **git이 나르지 않아 백업에서 복원한 것** (`RESTORE-2026-08-28.md` §2.1의 목록 그대로): 생성된
+  `*.pb.go` 넷, `.git/modules/lib/sglang`과 `lib/sglang` 작업트리, `patches/vllm-sched/VLLM_VERSION.txt`,
+  실험 저장소의 `.venv`, swe transcript 둘(md5가 `data/README.md`의 값과 일치), 그리고 `traces/`의 git
+  미추적 파일 18개(`rsync --ignore-existing`, 한 시간 trace `dyn60_shift_m2Am1B_b1045.csv` 포함).
+- **`bin/`**: `scheduler-exp07` = `6dc9f035`(`tools/staging/scheduler-exp107t`에서, EXP-108·109가 쓴
+  바이너리), `gateway-exp10` = `0efb664a`(백업의 `bin/`). 제출 시점 배포본 `9e8f68b6`은
+  `tools/staging/scheduler-usec`와 md5가 같다.
+- **k3s**: `ms_dev/scripts/00` → `01` → `02` 스크립트를 그대로 실행했다(gcsudo 사용). NVIDIA Container
+  Toolkit은 apt 최신이라 6월의 1.19.1이 아니라 **1.20.1**이 들어갔다. GPU 8장 스케줄 가능.
+- **빠진 단계 ① — `03-deploy.sh`를 쓰지 않는다.** 6월의 `ms_dev/llumnix-deploy.patch`(Llama-3-8B, B200
+  2장용)가 지금 YAML에 정방향으로도 역방향으로도 깨끗이 적용되지 않는다. 대신
+  `deploy/group_deploy.sh llumnix neutral/full-mode-scheduling/load-balance`로 직접 배포했고, 배포 전에
+  렌더링한 매니페스트를 백업의 `cluster_state/`와 대조했다 — 엔진·redis·볼륨·이미지·환경변수는 같고,
+  다른 것은 `set_scheduler_profiling.py`가 조건마다 설정하는 플래그뿐이었다.
+- **빠진 단계 ② — `configmap/llumnix-model`을 만든다.** 2026-09-04부터 러너 템플릿이 이 ConfigMap에서
+  모델 이름과 엔진 포트 목록을 읽는다. 없으면 러너 파드가 `CreateContainerConfigError`로 멈추고 드라이버는
+  Job을 계속 기다린다(이번에 59분을 잃었다). `switch_model.py`의 모델 표 `llama31-70b-b200-tp2`에서 같은
+  내용을 만들었다(`switch_model.py --to`는 엔진과 게이트웨이까지 재시작하므로 ConfigMap만 적용).
+  확인은 `switch_model.py --verify llama31-70b-b200-tp2`.
+- 같은 사고에서 `tools/watch_experiment.sh`가 아무것도 보고하지 않은 결함 둘을 고쳤다(원본은
+  `watch_experiment.sh.pre-1010`): 결과 디렉토리 수를 세는 함수가 `pipefail`에서 "0\n0"을 내어 비교가 깨지던
+  것, 그리고 러너 파드가 스스로 빠져나올 수 없는 상태(ConfigMap 누락·이미지 pull 실패 등)를 보지 않던 것.
+- **재현 확인** (EXP-108 FluidServe 채택 구성 `fsv3capgnofrct75`, 35 req/s, 8분, 2반복, 규칙 `ladder95`):
+  모든 도착 대비 달성률 77.5 / 76.1(논문 75.4, 범위 74.6~76.2), admitted 99.7 / 99.9(99.8), 거절률
+  22.3 / 23.8%(22.7%), token goodput 13,818 / 13,643 tok/s(13,796). 차이가 반복 간 편차 안이다.
+  run은 `results/261010_0038_rpro1010r1_*`, `results/261010_0053_rpro1010r2_*`.
+  같은 세션에서 PolyServe(`polyservept75`, 같은 조건, 2반복): 모든 도착 대비 45.3 / 42.5(논문 43.7, 범위
+  43.3~44.1), admitted 50.7 / 48.0(50.3), 거절률 10.6 / 11.5%(10.5~10.8%), token goodput 9,818 / 9,475
+  (9,746). 강제 배치 0건·promotion 483 / 498건으로 EXP-106의 스위치가 적용된 것을 카운터로 확인했다
+  (기동 줄은 run 디렉토리에 수집되지 않는다). 한 시간 mix-shift trace의 FluidServe(같은 arm, 1회): 도착
+  98,243건, 모든 도착 대비 79.3(EXP-109 80.0 / 79.3), admitted 99.9(99.9 / 100.0), token goodput 11,591
+  (11,637 / 11,587), 클래스별 chat 83.6 / deepresearch 70.1 / swe 72.9(84.8·83.7 / 68.6·69.7 / 74.5·73.1).
+  run은 `results/261010_02{18,38}_rpro1010pr*`, `results/261010_0253_rpro1010hr1_*`.
+
 ## 3. 압축 아카이브에서 꺼내는 법
 
     L=/NHNHOME/storage/home_backup_2026-08-28/results_archive_2026-10-05   # 2026-10-05까지는 /NHNHOME/NXC_ROOT/NXC13/...
