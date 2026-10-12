@@ -63,6 +63,9 @@ def run_xxx(ctx):          # cluster 검사는 ctx가 None, run 검사는 dict(n
 
 **데이터 원천을 추가한다** — `sources/`에 모듈을 만들고 dict를 반환하는 함수를 둔다. 웹에 직접 의존하지 않게 한다.
 
+**논문 대조 항목을 추가한다** — `claims.yaml`. 그림 CSV가 있으면 `csv_sources`에 파일과 "CSV의 arm 이름 → run glob"만 적으면
+행마다 항목이 펼쳐진다. 본문 수치는 `claims`에 한 항목씩. ladder95 값만 넣는다(규칙이 다른 수치를 한 표에 섞지 않는다).
+
 **API를 추가한다** — `api/`에 모듈을 만들고 `router = APIRouter()`를 둔다. server.py는 고치지 않는다.
 응답 전에 `api.jsonable()`을 거친다(numpy 값과 NaN을 JSON으로 바꾼다).
 
@@ -98,7 +101,7 @@ def run_xxx(ctx):          # cluster 검사는 ctx가 None, run 검사는 dict(n
 |---|---|---|
 | 1 | 구조, ① 상태, ③ 결과(목록·상세·설정 비교) | 완료 — 재현 run 다섯의 점수가 evidence.md §8과 일치 |
 | 2 | ② 실시간(진행 중인 run과 드라이버 스크립트), 결정 분석 | 완료 — 2026-10-12 smoke run(`dash1012r1`, 35 req/s 4분)으로 확인. 끝난 뒤 대시보드 점수 = 명령줄 채점 |
-| 3 | ④ 비교(arm × 도착률, 반복 간 편차), ⑤ 논문 대조(`claims.yaml`) | |
+| 3 | ④ 비교(arm × 도착률, 반복 간 편차), ⑤ 논문 대조(`claims.yaml`) | 완료 — 재현 항목 넷이 일치. 논문 run은 SSD 데이터를 가져온 뒤 채워진다 |
 | 4 | FluidServe 내부 값 기록(스케줄러 /metrics, 실험 중에도 켠다 — 사용자 결정), ⑥ 실험 기록, run별 바이너리 md5·플래그 기록 | |
 
 **run 디렉토리에 없는 정보** — 그 run이 쓴 스케줄러 바이너리 md5와 플래그, FluidServe 내부 값(`scheduler_fluidserve_*`

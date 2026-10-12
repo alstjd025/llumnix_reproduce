@@ -86,3 +86,15 @@ export function cdf(el, { title, xname, q, series, marks = [], xmax }) {
   }
   return mount(el, opt);
 }
+
+// 가로축이 시간이 아닌 값(도착률 등)인 그래프. series: [{name, pts: [[x, y], ...], color, kind: "line"|"scatter"}]
+export function xyLines(el, { title, xname, yname, series }) {
+  const opt = base(title, yname);
+  opt.xAxis = { type: "value", name: xname, nameLocation: "middle", nameGap: 24, scale: true,
+    nameTextStyle: { fontSize: 11, color: css("--muted") }, axisLabel: { color: css("--muted") }, splitLine: { show: false } };
+  opt.yAxis.scale = true;
+  opt.tooltip = { trigger: "item", confine: true };
+  opt.series = series.map(s => ({ name: s.name, type: s.kind || "line", data: s.pts, color: s.color,
+    symbolSize: s.kind === "scatter" ? 6 : 5, showSymbol: true, lineStyle: { width: 1.6 }, itemStyle: s.kind === "scatter" ? { opacity: 0.55 } : undefined }));
+  return mount(el, opt);
+}

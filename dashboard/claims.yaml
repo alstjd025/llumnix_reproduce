@@ -1,0 +1,120 @@
+# 논문 대조 표의 정의. ⑤ 논문 대조 페이지가 읽는다.
+#
+# 항목 하나 = 논문(또는 그림의 CSV)에 실린 값 하나와, 그 값을 만든 run 집합. 대시보드는 그 run들을 이 서버에서 찾아
+# ladder95로 다시 채점한 값과 비교한다. 상태:
+#   일치         |다시 계산한 값 − 논문 값| ≤ tol
+#   차이         그보다 크다 (Δ를 같이 보여 준다)
+#   일부 run만   찾은 run 수가 기대한 반복 수보다 적다 (값은 찾은 것만으로 계산한다)
+#   데이터 없음  이 서버에 run이 없다 (논문 run 대부분은 맥 SSD에 있다 — project/reproduce.md)
+#   채점 대기    run은 있는데 아직 채점되지 않았다
+#
+# **ladder95 값만 넣는다.** 그림 15(지평 sweep)·그림 18(SLO 배수)은 평균 규칙이라 넣지 않는다
+# (evidence.md §3.2 — 규칙이 다른 수치를 한 표에 섞지 않는다).
+#
+# metric: score.json의 키(offered, admitted, rejected_pct, goodput_tok_s, …) 또는 클래스별 값
+#   per_class.<클래스>.<키>  (키: offered, admitted, rejected_pct, all_arrivals)
+#   all_arrivals = 성공 / 모든 도착(미완료 포함) — 그림 13의 "도착 대비 %"와 같은 분모
+# runs: results/ 아래 디렉토리 이름에 대한 glob. 여러 run이면 평균.
+# tol: 같은 run을 다시 채점하는 항목은 반올림 차이만(작은 값), 재현 run과 비교하는 항목은 반복·세션 간 편차.
+
+# 그림 CSV에서 자동으로 펼치는 항목. CSV의 행마다 항목 하나씩 생긴다.
+csv_sources:
+  - id: fig14
+    figure: "그림 14 — 정적 rate sweep(8분, Poisson 도착), 다섯 정책"
+    evidence: "evidence.md §4.10"
+    file: paper_figures/motivation_throughput_vs_goodput_4panel_t75_withfs.csv
+    key_columns: [arm, req_per_s]
+    n_column: n_repeats
+    metrics:
+      goodput_tok_s: {column: goodput_tok_s, tol: 1.0, label: "token goodput (tok/s)"}
+      admitted: {column: admitted_pct, tol: 0.05, label: "admitted 달성률 (%)"}
+      rejected_pct: {column: rejected_pct, tol: 0.05, label: "거절률 (%)"}
+    # CSV의 arm 이름 → run 디렉토리 glob. {rpm}은 req_per_s × 60.
+    runs:
+      FluidServe: "*_exp108r[12]_fsv3capgnofrct75_t75_rpm_{rpm}"
+      PolyServe: "*_exp108r[12]_polyservept75_t75fair_rpm_{rpm}"
+      Llumnix: "*_exp108r[12]_slot75_t75fair_rpm_{rpm}"
+      llm-d: "*_exp108r[12]_llmdslot75_t75fair_rpm_{rpm}"
+      vLLM-router: "*_exp77r[12]_vllmcache_m1_rpm_{rpm}"
+    # 그림이 EXP-108이 아닌 run을 쓴 칸(evidence.md §4.10: llm-d 10 req/s는 두 반복이 거절 0 % 대 42 %로 갈려
+    # EXP-110 반복 3·5로 대체, 사용자 결정 2026-09-02)
+    overrides:
+      "llm-d|10.0": "*_exp110r[35]_llmdslot75_t75fair_rpm_600"
+
+  - id: fig13
+    figure: "그림 13 — 한 시간 trace(Llama-70B)의 클래스별 결과"
+    evidence: "evidence.md §4.9"
+    file: paper_figures/class_latency_outcome_rows.csv
+    key_columns: [arm, repeat, cls]
+    run_column: run            # 행마다 run 이름이 적혀 있다 — 그 run 하나와 비교한다
+    metrics:
+      met: {column: met, tol: 0.05, label: "제때 끝난 요청 / 모든 도착 (%)", metric_by_cls: "per_class.{cls}.all_arrivals", metric_all: "all_arrivals"}
+
+claims:
+  # 본문·표에 직접 적힌 값. csv_sources로 덮이지 않는 것만.
+  - id: hour70_fs_token_goodput
+    figure: "그림 11(a) — 한 시간 trace, Llama-70B, FluidServe token goodput (두 반복 평균)"
+    evidence: "evidence.md §4.8 (EXP-109 표, 전 구간)"
+    paper: 11612
+    metric: goodput_tok_s
+    runs: "*_exp109r[12]_fsv3capgnofrct75_shift"
+    n: 2
+    tol: 1.0
+  - id: hour70_llmd_token_goodput
+    figure: "그림 11(a) — llm-d token goodput (두 반복 평균)"
+    evidence: "evidence.md §4.8"
+    paper: 8248
+    metric: goodput_tok_s
+    runs: "*_exp109r[12]_llmdslot75_shift"
+    n: 2
+    tol: 1.0
+  - id: hour70_ps_token_goodput
+    figure: "그림 11(a) — PolyServe token goodput (두 반복 평균)"
+    evidence: "evidence.md §4.8"
+    paper: 8582
+    metric: goodput_tok_s
+    runs: "*_exp109r[12]_polyservept75_shift"
+    n: 2
+    tol: 1.0
+  - id: hour70_slo_token_goodput
+    figure: "그림 11(a) — Llumnix* token goodput (두 반복 평균)"
+    evidence: "evidence.md §4.8"
+    paper: 6828
+    metric: goodput_tok_s
+    runs: "*_exp109r[12]_slot75_shift"
+    n: 2
+    tol: 1.0
+
+  # 2026-10-10 재현 확인. 논문과 다른 run이므로 tol은 반복·세션 간 편차(세션 간 최대 4.6점, 한 시간 trace 같은 arm 3.8점).
+  - id: repro_fs35_offered
+    figure: "재현 — 정적 35 req/s FluidServe, 모든 도착 기준 달성률 (논문 run: EXP-108 평균 75.4)"
+    evidence: "evidence.md §8"
+    paper: 75.4
+    metric: offered
+    runs: "*_rpro1010r[12]_fsv3capgnofrct75_t75_rpm_2100"
+    n: 2
+    tol: 4.6
+  - id: repro_ps35_offered
+    figure: "재현 — 정적 35 req/s PolyServe, 모든 도착 기준 달성률 (논문 run: EXP-108 평균 43.7)"
+    evidence: "evidence.md §8"
+    paper: 43.7
+    metric: offered
+    runs: "*_rpro1010pr[12]_polyservept75_t75fair_rpm_2100"
+    n: 2
+    tol: 4.6
+  - id: repro_fs35_goodput
+    figure: "재현 — 정적 35 req/s FluidServe token goodput (그림 14 값 13,796)"
+    evidence: "evidence.md §8, §4.10"
+    paper: 13796
+    metric: goodput_tok_s
+    runs: "*_rpro1010r[12]_fsv3capgnofrct75_t75_rpm_2100"
+    n: 2
+    tol: 500
+  - id: repro_hour_offered
+    figure: "재현 — 한 시간 trace FluidServe, 모든 도착 기준 달성률 (EXP-109 두 반복 80.0 / 79.3)"
+    evidence: "evidence.md §8"
+    paper: 79.65
+    metric: offered
+    runs: "*_rpro1010hr1_fsv3capgnofrct75_shift"
+    n: 1
+    tol: 3.8

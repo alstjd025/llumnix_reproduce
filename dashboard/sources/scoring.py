@@ -41,6 +41,7 @@ def _scorer_version():
             h.update(open(os.path.join(path("analysis"), f), "rb").read())
         except OSError:
             pass
+    h.update(open(__file__, "rb").read())   # 이 파일(요청 표·클래스별 값을 만드는 코드)이 바뀌어도 다시 채점한다
     h.update(json.dumps(CFG["scoring"], sort_keys=True).encode())
     return h.hexdigest()[:12]
 
@@ -110,6 +111,8 @@ def _work(run_dir, out_dir, frac, key):
         # 클래스별 세 분모. 정의는 score_run과 같다: 미완료(cutoff)는 둘 다에서 빠지고,
         # offered는 거절·오류를 위반으로 세고, admitted는 거절을 분모에서 뺀다.
         live = req[~req["cutoff"]]
+        # 모든 도착 기준(미완료 포함): 그림 13의 "도착 대비 %"와 같은 분모. 성공 = ladder95 통과이고 거절·오류·미완료가 아닌 것
+        met_all = req["ladder_ok"] & ~req["rejected"] & ~req["errored"] & ~req["cutoff"]
         per_class = {}
         for c, sub in live.groupby("class"):
             served = sub[~sub["rejected"]]
@@ -119,12 +122,14 @@ def _work(run_dir, out_dir, frac, key):
                 offered=float(100 * (~(miss | sub["rejected"] | sub["errored"])).mean()),
                 admitted=float(100 * served["ladder_ok"].mean()) if len(served) else None,
                 rejected_pct=float(100 * sub["rejected"].mean()),
+                all_arrivals=float(100 * met_all[req["class"] == c].mean()),
+                n_all=int((req["class"] == c).sum()),
             )
         span = float(req["rel"].max() - req["rel"].min()) if len(req) else 0.0
         nf, nlive = engines_ok(run_dir)
         out = {k: (None if isinstance(v, float) and not np.isfinite(v) else
                    (float(v) if isinstance(v, (np.floating, np.integer)) else v)) for k, v in res.items()}
-        out.update(per_class=per_class, n_cutoff=int(req["cutoff"].sum()), window_s=span,
+        out.update(per_class=per_class, all_arrivals=float(100 * met_all.mean()), n_cutoff=int(req["cutoff"].sum()), window_s=span,
                    achieved_rate=(len(req) / span if span > 0 else None), target_rate=rate_of(run_dir),
                    engine_files=nf, engines_advancing=nlive, rule=CFG["scoring"]["rule"],
                    # 요청 표의 rel은 첫 요청 시작 시각 기준이다. 서버 메트릭 그래프(수집기 시작 기준)와 맞추려면 이 값이 필요하다

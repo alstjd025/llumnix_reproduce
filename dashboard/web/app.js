@@ -5,11 +5,15 @@ import * as live from "./pages/live.js";
 import * as runs from "./pages/runs.js";
 import * as run from "./pages/run.js";
 import * as diff from "./pages/diff.js";
+import * as compare from "./pages/compare.js";
+import * as claims from "./pages/claims.js";
 
 const PAGES = [
   { route: /^#\/status$/, nav: "상태", href: "#/status", mod: status },
   { route: /^#\/live$/, nav: "실시간", href: "#/live", mod: live },
   { route: /^#\/runs$/, nav: "결과", href: "#/runs", mod: runs },
+  { route: /^#\/compare$/, nav: "비교", href: "#/compare", mod: compare },
+  { route: /^#\/claims$/, nav: "논문 대조", href: "#/claims", mod: claims },
   { route: /^#\/run\/(.+)$/, mod: run, keys: ["name"] },
   { route: /^#\/diff\/([^/]+)\/([^/]+)$/, mod: diff, keys: ["a", "b"] },
 ];
