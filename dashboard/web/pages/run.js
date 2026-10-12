@@ -1,7 +1,7 @@
 // ③ run 하나의 상세. 위에서부터: 점수 → 검사 → 엔진 시계열 → 스케줄러 결정 → 인스턴스별 클래스 구성 → 지연 분포 → 설정.
 // 시간축 그래프는 모두 같은 group이라 하나를 확대하면 나머지도 같이 움직인다.
 import { api, esc, fmt, badge, checkHtml } from "../lib/util.js";
-import { drawSeries, drawLatency } from "../lib/runviews.js";
+import { drawSeries, drawLatency, drawFluidServe, stackHtml } from "../lib/runviews.js";
 
 
 export async function render(el, { name }) {
@@ -26,12 +26,19 @@ export async function render(el, { name }) {
     <div class="grid g4" id="occ"></div>
     <h2>지연 분포와 결과 <span class="muted" style="font-weight:400;font-size:12px">— 클라이언트 측정, warm-up 60 s·drain 20 s 제외, 거절·오류 제외</span></h2>
     <div class="grid g2" id="lat"></div>
+    <h2>FluidServe 내부 값 <span class="muted" style="font-weight:400;font-size:12px">— 스케줄러 /metrics를 대시보드가 2초마다 기록한 것. run 디렉토리에는 없다</span></h2>
+    <div class="grid g2" id="fs"></div>
+    <h2>이 run이 쓴 스택 <span class="muted" style="font-weight:400;font-size:12px">— 실행 중인 바이너리 md5와 플래그, run 시작과 스케줄러 파드가 바뀔 때마다</span></h2>
+    <div id="stack"></div>
     <h2>run_config.json</h2><div class="panel"><details><summary>펼치기</summary><pre class="mono">${esc(JSON.stringify(d.config, null, 1))}</pre></details></div>`;
 
-  const [series, lat] = await Promise.all([
+  const [series, lat, fs] = await Promise.all([
     api(`/runs/${encodeURIComponent(name)}/series`).catch(e => ({ error: String(e) })),
     d.score_state === "scored" ? api(`/runs/${encodeURIComponent(name)}/latency`).catch(() => null) : null,
+    api(`/runs/${encodeURIComponent(name)}/fluidserve`).catch(() => null),
   ]);
+  drawFluidServe(body.querySelector("#fs"), fs);
+  body.querySelector("#stack").innerHTML = stackHtml(fs?.stack);
   drawSeries(body, series);
   drawLatency(body.querySelector("#lat"), lat);
 }

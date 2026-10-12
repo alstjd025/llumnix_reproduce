@@ -7,6 +7,7 @@ import * as run from "./pages/run.js";
 import * as diff from "./pages/diff.js";
 import * as compare from "./pages/compare.js";
 import * as claims from "./pages/claims.js";
+import * as experiments from "./pages/experiments.js";
 
 const PAGES = [
   { route: /^#\/status$/, nav: "상태", href: "#/status", mod: status },
@@ -14,6 +15,8 @@ const PAGES = [
   { route: /^#\/runs$/, nav: "결과", href: "#/runs", mod: runs },
   { route: /^#\/compare$/, nav: "비교", href: "#/compare", mod: compare },
   { route: /^#\/claims$/, nav: "논문 대조", href: "#/claims", mod: claims },
+  { route: /^#\/exps$/, nav: "실험 기록", href: "#/exps", mod: experiments },
+  { route: /^#\/exp\/(new|archive)\/(.+)$/, mod: experiments, keys: ["kind", "file"] },
   { route: /^#\/run\/(.+)$/, mod: run, keys: ["name"] },
   { route: /^#\/diff\/([^/]+)\/([^/]+)$/, mod: diff, keys: ["a", "b"] },
 ];
@@ -32,7 +35,7 @@ function navigate() {
     const params = {};
     (p.keys || []).forEach((k, i) => (params[k] = decodeURIComponent(m[i + 1])));
     document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("active", h.startsWith(a.getAttribute("href"))
-      || (a.getAttribute("href") === "#/runs" && /^#\/(run|diff)\//.test(h))));
+      || (a.getAttribute("href") === "#/runs" && /^#\/(run|diff)\//.test(h)) || (a.getAttribute("href") === "#/exps" && /^#\/exp\//.test(h))));
     Promise.resolve(p.mod.render(main, params)).then(c => (cleanup = c || null))
       .catch(e => { main.innerHTML = `<div class="panel">페이지 오류: ${e}</div>`; console.error(e); });
     return;

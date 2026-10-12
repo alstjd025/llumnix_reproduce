@@ -66,3 +66,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 .diff td.a { color: var(--fail); } .diff td.b { color: var(--ok); }
 .scroll { overflow-x: auto; }
 @media (max-width: 700px) { main { padding: 12px 16px; } .g2 { grid-template-columns: 1fr; } }
+.md { line-height: 1.6; overflow-x: auto; }
+.md h1 { font-size: 18px; } .md h2 { font-size: 16px; } .md h3 { font-size: 14px; }
+.md table { width: auto; margin: 8px 0; } .md td, .md th { border: 1px solid var(--line); position: static; }
+.md pre { background: var(--bg); padding: 8px; border-radius: 6px; overflow-x: auto; font: 12px var(--mono); }
+.md code { font: 12px var(--mono); background: var(--bg); padding: 0 3px; border-radius: 3px; }

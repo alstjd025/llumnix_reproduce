@@ -93,3 +93,43 @@ export function outcomeBars(box, d, note) {
       series: OUTCOME.filter(([k]) => d.outcome[c][k]).map(([k, label, color]) => ({ name: label, y: d.outcome[c][k], color })) });
   }
 }
+
+// FluidServe 내부 값(대시보드 기록기가 2초마다 남긴 것). 인스턴스별 선은 엔진 포트 이름이다.
+export function drawFluidServe(box, d) {
+  if (!d || !d.recorded) {
+    box.innerHTML = `<div class="panel muted">이 run에는 대시보드가 기록한 FluidServe 내부 값이 없다(기록기는 2026-10-12부터, 대시보드가 떠 있는 동안 FluidServe run에서만 기록한다).</div>`;
+    return;
+  }
+  const P = d.per_instance, ports = Object.keys(P.observed_step_ms || P.live_requests || {}).sort();
+  const nz = v => (v == null || v < 0 ? null : v);   // -1 = 그 인스턴스에 제약이 없다(처리 중인 요청이 없음)
+  const inst = (k, f = x => x) => ports.map((p, i) => ({ name: p, t: d.t, y: (P[k]?.[p] || []).map(f), color: ENGINE_COLORS[i] }));
+  const err = ports.map((p, i) => ({ name: p, t: d.t, color: ENGINE_COLORS[i],
+    y: (P.predicted_step_ms?.[p] || []).map((v, j) => { const o = P.observed_step_ms?.[p]?.[j]; return v != null && o > 0 ? (100 * (v - o)) / o : null; }) }));
+  timeLines(chartBox(box, "", "fs-obs"), { title: "실측 iteration 시간 (observed_step_ms)", yname: "ms", series: inst("observed_step_ms"), group: G,
+    marks: [{ y: 50, label: "50" }, { y: 75, label: "75" }, { y: 100, label: "100" }] });
+  timeLines(chartBox(box, "", "fs-pred"), { title: "예측 iteration 시간 (predicted_step_ms)", yname: "ms", series: inst("predicted_step_ms"), group: G });
+  timeLines(chartBox(box, "", "fs-err"), { title: "예측 오차 (예측 − 실측) / 실측", yname: "%", series: err, group: G, marks: [{ y: 0, label: "0" }] });
+  timeLines(chartBox(box, "", "fs-gate"), { title: "허용 속도 (gate_allowance_ms, 그 인스턴스의 가장 빡빡한 클래스 예산)", yname: "ms", series: inst("gate_allowance_ms", nz), group: G });
+  timeLines(chartBox(box, "", "fs-head"), { title: "headroom (더 받을 수 있는 토큰, headroom_tokens)", yname: "tokens", series: inst("headroom_tokens"), group: G });
+  timeLines(chartBox(box, "", "fs-live"), { title: "스케줄러가 추적하는 요청 수 (live_requests)", yname: "요청", series: inst("live_requests"), group: G });
+  const T = d.per_tier || {};
+  if (T.instcap_limit) timeLines(chartBox(box, "", "fs-cap"), { title: "클래스별 인스턴스 상한 (instcap_limit, −1 = 상한 없음)", yname: "인스턴스", group: G,
+    series: Object.entries(T.instcap_limit).map(([c, y]) => ({ name: c, t: d.t, y, color: CLASS_COLORS[c], step: true })) });
+  const dec = Object.entries(d.fleet || {}).filter(([k]) => k.startsWith("decisions_total"));
+  if (dec.length) timeLines(chartBox(box, "", "fs-dec"), { title: "결정 수 (decisions_total, 초당)", yname: "회/s", group: G,
+    series: dec.map(([k, y], i) => ({ name: k.replace("decisions_total", "").replace(/[\[\]]|decision=/g, ""), t: d.t,
+      y: y.map((v, j) => (j && v != null && y[j - 1] != null && d.t[j] > d.t[j - 1] && v >= y[j - 1] ? (v - y[j - 1]) / (d.t[j] - d.t[j - 1]) : null)),
+      color: ["#59a14f", "#edc948", "#e15759"][i % 3] })) });
+}
+
+// 그 run이 쓴 스택(대시보드 기록기가 run 시작과 스케줄러 파드가 바뀔 때마다 남긴 스냅샷)
+export function stackHtml(stack) {
+  const ss = stack?.snapshots || [];
+  if (!ss.length) return `<div class="panel muted">스택 스냅샷이 없다(2026-10-12부터, 대시보드가 떠 있는 동안 시작된 run만 기록된다). 이 run의 바이너리·플래그는 드라이버 로그에만 있다.</div>`;
+  return ss.map(s => `<div class="panel" style="margin-bottom:8px"><div><b>${new Date(s.t * 1000).toLocaleString("ko-KR")}</b>
+    ${s.error ? `<span class="muted">${esc(s.error)}</span>` : ""}</div>
+    <div class="mono">스케줄러 ${Object.entries(s.scheduler_md5 || {}).map(([p, m]) => `${esc(p)} /proc/1/exe ${esc((m || "?").slice(0, 8))}`).join(", ")}</div>
+    <div class="mono">게이트웨이 ${Object.entries(s.gateway_md5 || {}).map(([p, m]) => `${esc(p)} ${esc((m || "?").slice(0, 8))}`).join(", ")} · ${esc((s.gateway_command || []).join(" "))}</div>
+    <details><summary class="muted">스케줄러 인자 ${(s.scheduler_args || []).length}개 · 게이트웨이 인자 · 엔진 env</summary>
+    <pre class="mono">${esc((s.scheduler_args || []).join(" "))}\n\n${esc((s.gateway_args || []).join(" "))}\n\n${esc(JSON.stringify(s.engine_env || {}, null, 1))}</pre></details></div>`).join("");
+}

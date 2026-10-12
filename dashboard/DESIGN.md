@@ -102,9 +102,10 @@ def run_xxx(ctx):          # cluster 검사는 ctx가 None, run 검사는 dict(n
 | 1 | 구조, ① 상태, ③ 결과(목록·상세·설정 비교) | 완료 — 재현 run 다섯의 점수가 evidence.md §8과 일치 |
 | 2 | ② 실시간(진행 중인 run과 드라이버 스크립트), 결정 분석 | 완료 — 2026-10-12 smoke run(`dash1012r1`, 35 req/s 4분)으로 확인. 끝난 뒤 대시보드 점수 = 명령줄 채점 |
 | 3 | ④ 비교(arm × 도착률, 반복 간 편차), ⑤ 논문 대조(`claims.yaml`) | 완료 — 재현 항목 넷이 일치. 논문 run은 SSD 데이터를 가져온 뒤 채워진다 |
-| 4 | FluidServe 내부 값 기록(스케줄러 /metrics, 실험 중에도 켠다 — 사용자 결정), ⑥ 실험 기록, run별 바이너리 md5·플래그 기록 | |
+| 4 | FluidServe 내부 값 기록(스케줄러 /metrics, 실험 중에도 켠다 — 사용자 결정), ⑥ 실험 기록, run별 바이너리 md5·플래그 기록 | 완료 — smoke run `dash1012br1`에서 2초마다 기록(한 번에 약 7 KB, 한 시간 run에 약 13 MB), 스택 스냅샷 셋(재시작 중 파드 3→2→1개) |
 
 **run 디렉토리에 없는 정보** — 그 run이 쓴 스케줄러 바이너리 md5와 플래그, FluidServe 내부 값(`scheduler_fluidserve_*`
-약 60개: 예측·실측 iteration 시간, 허용 속도, 클래스별 cap)은 run 디렉토리에 남지 않는다. 러너 수집기
-(`llumnix_metrics.py`의 `SCHEDULER_METRICS`)가 정해진 목록만 남기기 때문이다. 측정 경로를 고치지 않고 단계 4에서
-대시보드가 별도로 기록한다.
+약 60종: 예측·실측 iteration 시간, 허용 속도, 클래스별 cap)은 run 디렉토리에 남지 않는다. 러너 수집기
+(`llumnix_metrics.py`의 `SCHEDULER_METRICS`)가 정해진 목록만 남기기 때문이다. 측정 경로를 고치지 않고 대시보드의
+기록기(`sources/recorder.py`)가 `<cache>/recorder/<run>/`에 따로 남긴다. **대시보드가 떠 있는 동안 시작된 run만** 기록되므로,
+실험을 걸기 전에 `./run.sh status`를 확인한다. 2026-10-12 이전 run에는 이 기록이 없다.

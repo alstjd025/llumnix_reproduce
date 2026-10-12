@@ -18,6 +18,7 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크 위에 **FluidServe**
 | `project/system.md` | 제출한 구성 그대로의 FluidServe: 결정 경로(파일:행), 논문 arm의 플래그 전체, 컴파일 기본값과의 차이, 알려진 결함 |
 | `project/evidence.md` | **수치를 적는 유일한 곳.** 논문 그림·표·본문 주장 → 실험 → run·반복 수 → 값, 같이 적어야 할 한계 |
 | `project/reproduce.md` | 환경 재구축 절차와 마지막 재현 확인 |
+| `dashboard/DESIGN.md` | 실험 대시보드(읽기 전용, `dashboard/run.sh start` → `ssh -L 8080:localhost:8080`): 클러스터 상태, 진행 중인 실험, run 점수(ladder95)·시계열, arm 비교, 논문 수치 대조. 검사·페이지를 추가하는 법 |
 
 **`archive/`는 2026-10-11 이전의 기록 전부다**(설계 문서, 시간순 구현 기록, EXP-01~140, 옛 그림).
 원래 경로를 그대로 보존해 `archive/<저장소>/<원래 경로>`에 있다. **필요할 때만, `archive/INDEX.md`부터

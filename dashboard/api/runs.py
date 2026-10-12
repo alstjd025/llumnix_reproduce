@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 import checks
 from api import jsonable
 from config import CFG, HERE
-from sources import dispatch, live, runs, scoring, timeseries
+from sources import dispatch, live, recorder, runs, scoring, timeseries
 
 router = APIRouter()
 _summary_lock = threading.Lock()
@@ -181,6 +181,35 @@ def diff(a: str, b: str):
     fa, fb = _flatten(ca), _flatten(cb)
     fa.update({f"(이름).{k}": v for k, v in runs.parse_name(a).items()})
     fb.update({f"(이름).{k}": v for k, v in runs.parse_name(b).items()})
+    def _snap(name_):
+        try:
+            return json.load(open(os.path.join(recorder.rec_dir(name_), "stack.json")))["snapshots"][-1]
+        except (OSError, ValueError, KeyError, IndexError):
+            return None
+    snaps = {a: _snap(a), b: _snap(b)}
+    for name_, f in ((a, fa), (b, fb)):
+        snap = snaps[name_]
+        f["(스택).기록"] = "있음" if snap else "없음 — 대시보드 기록기가 시작되기 전의 run"
+        # 한쪽에만 기록이 있으면 인자 수십 개가 전부 "다르다"로 나와 비교가 묻힌다. 둘 다 있을 때만 펼친다
+        if not (snaps[a] and snaps[b]):
+            continue
+        f["(스택).scheduler_md5"] = ",".join(sorted((m or "?")[:8] for m in snap.get("scheduler_md5", {}).values()))
+        f["(스택).gateway_md5"] = ",".join(sorted((m or "?")[:8] for m in snap.get("gateway_md5", {}).values()))
+        args = snap.get("scheduler_args", [])
+        i = 0
+        while i < len(args):
+            if args[i].startswith("--"):
+                if "=" in args[i]:
+                    k, v = args[i].split("=", 1)
+                elif i + 1 < len(args) and not args[i + 1].startswith("--"):
+                    k, v = args[i], args[i + 1]
+                    i += 1
+                else:
+                    k, v = args[i], "(플래그만)"
+                f[f"(스케줄러 인자).{k}"] = v
+            i += 1
+        for k, v in (snap.get("engine_env") or {}).items():
+            f[f"(엔진 env).{k}"] = v
     skip = {"created_at", "server_session_name", "server_session_remote_dir", "server_session_local_dir",
             "(이름).date", "(이름).time"}
     rows, same = [], 0
@@ -193,3 +222,41 @@ def diff(a: str, b: str):
         else:
             rows.append(dict(key=k, a=va, b=vb))
     return jsonable(dict(a=a, b=b, differ=rows, same=same))
+
+
+@router.get("/runs/{name}/fluidserve")
+def run_fluidserve(name):
+    """대시보드가 기록한 FluidServe 내부 값(sources/recorder.py). 인스턴스 번호는 엔진 포트로 바꾼다."""
+    d = _dir(name)
+    p = os.path.join(recorder.rec_dir(name), "fluidserve.jsonl")
+    stack = None
+    try:
+        stack = json.load(open(os.path.join(recorder.rec_dir(name), "stack.json")))
+    except (OSError, ValueError):
+        pass
+    if not os.path.exists(p):
+        return jsonable(dict(recorded=False, stack=stack))
+    sm = os.path.join(d, "server_metrics")
+    t0 = timeseries.run_t0(sm) or 0
+    inst_port = (dispatch.parse(d) or {}).get("inst_port", {})
+    rows = timeseries.tail(p)
+    t = [r["t"] - t0 for r in rows]
+    per_inst, per_tier, fleet = {}, {}, {}
+    keys = set()
+    for r in rows[-20:]:
+        keys.update(k for k in r if k not in ("t",))
+    for k in sorted(keys):
+        name_, _, lab = k.partition("|")
+        short = name_.replace("scheduler_fluidserve_", "")
+        ys = [r.get(k) for r in rows]
+        if lab.startswith("instance="):
+            inst = lab.split("=", 1)[1]
+            if inst_port and inst not in inst_port:
+                continue   # 재시작 전 인스턴스
+            per_inst.setdefault(short, {})[str(inst_port.get(inst, inst))] = ys
+        elif lab.startswith("tier="):
+            from config import class_of_tier
+            per_tier.setdefault(short, {})[class_of_tier(lab.split("=", 1)[1]) or lab] = ys
+        else:
+            fleet[short + (f"[{lab}]" if lab else "")] = ys
+    return jsonable(dict(recorded=True, t=t, per_instance=per_inst, per_tier=per_tier, fleet=fleet, stack=stack))

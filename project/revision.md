@@ -14,8 +14,14 @@
 - **재현**: EXP-108 정적 35 req/s(FluidServe·PolyServe 각 2회)와 EXP-109 한 시간 trace(FluidServe 1회)가 논문 값과
   반복 간 편차 안에서 일치(`evidence.md` 재현 확인 절).
 - **데이터**: 논문 run 대부분(EXP-108 이후)은 맥 SSD에만 있다. 가져오는 시점은 사용자가 정한다.
-- **다음**: 사용자가 리비전 전에 할 작업 하나를 지시할 예정이다(2026-10-12, compaction 직후). 그 다음 아래 확인
-  항목을 검토하고 리비전 범위를 정한다.
+- **실험 대시보드(2026-10-12, 사용자 요청)**: `dashboard/`, 브랜치 `feat/dashboard`(바깥 저장소). 읽기 전용 웹 페이지
+  여섯(상태, 실시간, 결과, 비교, 논문 대조, 실험 기록)을 127.0.0.1:8080에 띄운다 — `dashboard/run.sh start`, 노트북에서
+  `ssh -L 8080:localhost:8080`. 점수는 analysis_scripts의 ladder95 함수를 그대로 부르고, 재현 run 다섯의 값이
+  `evidence.md` §8과 같다(`dashboard/tests/test_known_runs.py`). 실험 중에는 스케줄러의 FluidServe 내부 값과 그 run이 쓴
+  바이너리 md5·플래그를 대시보드가 따로 기록한다(run 디렉토리에는 없는 값, 사용자 결정으로 실험 중에도 켠다).
+  설계·확장 방법은 `dashboard/DESIGN.md`. 검증용으로 4분 smoke run 둘(`dash1012r1`, `dash1012br1`, FluidServe 35 req/s)을
+  돌렸다 — 연구용 run이 아니므로 evidence.md에 넣지 않는다.
+- **다음**: 아래 확인 항목을 검토하고 리비전 범위를 정한다.
 
 ---
 

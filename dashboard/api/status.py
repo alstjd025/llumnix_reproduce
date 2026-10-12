@@ -6,7 +6,7 @@ from fastapi import APIRouter
 import checks
 from api import jsonable
 from config import CFG
-from sources import host, k8s
+from sources import host, k8s, recorder
 
 router = APIRouter()
 
@@ -32,6 +32,7 @@ def status():
         engines=host.engine_health(),
         pods=pod_rows,
         scheduler_args=args,
+        recorder=recorder.status(),
     ))
 
 

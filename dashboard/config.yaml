@@ -73,3 +73,9 @@ thresholds:
   rate_off_frac: 0.10        # 실제 도착률이 이름의 도착률에서 10% 넘게 벗어나면 경고 (run_health.py와 같다)
   min_requests: 200
   disk_free_gb_warn: 50
+
+# 단계 4: run 디렉토리에 남지 않는 FluidServe 내부 값과 스택 스냅샷을 대시보드가 따로 기록한다(sources/recorder.py).
+# 실험 중에도 켠다(2026-10-12 사용자 결정). 끄려면 enabled: false 후 ./run.sh restart.
+recorder:
+  enabled: true
+  interval_s: 2

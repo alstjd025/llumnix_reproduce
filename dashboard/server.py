@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 import api  # noqa: E402
 from config import CFG  # noqa: E402
-from sources import runs, scoring  # noqa: E402
+from sources import recorder, runs, scoring  # noqa: E402
 
 app = FastAPI(title="FluidServe experiments", docs_url="/api/docs")
 for m in pkgutil.iter_modules(api.__path__):
@@ -55,6 +55,7 @@ def _score_loop():
 def _start():
     os.makedirs(os.path.join(CFG["paths"]["cache"], "runs"), exist_ok=True)
     threading.Thread(target=_score_loop, daemon=True).start()
+    recorder.start()
 
 
 if __name__ == "__main__":
