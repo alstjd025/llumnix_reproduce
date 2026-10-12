@@ -83,6 +83,13 @@ def run_xxx(ctx):          # cluster 검사는 ctx가 None, run 검사는 dict(n
   인스턴스만 남긴다.
 - 스케줄러 로그 시각(glog)은 UTC이고 연도가 없다. 연도는 run 이름의 YYMMDD에서 가져온다.
 - `pkill -f <이름>`은 그 이름을 명령줄에 가진 셸 자신도 죽인다. 중지는 `run.sh stop`(pidfile의 프로세스 그룹)으로 한다.
+- 진행 중인 run의 결과는 `results/<run>/shards/`의 worker별 파일(metrics.p*.csv, tbt.p*.jsonl, request_ids.p*.jsonl)에 쌓이고
+  run이 끝날 때 합쳐진다. request_ids는 요청이 **끝날 때** 기록되므로, 진행 중에는 routing됐지만 기록이 없는 요청을
+  처리 중으로 센다(`dispatch.summarize(live_now=…)`).
+- 수집기는 엔진 재시작 직후부터 돌지만 러너는 처음 warmup_sec 동안 1 req/s만 보낸다. 실시간 검사는 이 구간과 측정이 끝난
+  뒤의 drain 구간에서 판정을 보류한다(`checks/live.py`의 `_phase`). 그러지 않으면 정상 run이 fail로 보인다.
+- 체인이 정상 종료했는지는 마지막 줄 형식이 드라이버마다 달라서("… CHAIN DONE", "[exp108] rep1 <arm> DONE") 마지막 다섯 줄 안의
+  DONE과 그 뒤의 ABORT/FAILED 유무로 판정한다.
 - 시스템의 오래된 `websockets` 패키지가 uvicorn과 맞지 않아 `ws="none"`으로 띄운다(웹소켓을 쓰지 않는다).
 
 ## 계획 (2026-10-12)
@@ -90,7 +97,7 @@ def run_xxx(ctx):          # cluster 검사는 ctx가 None, run 검사는 dict(n
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 | 구조, ① 상태, ③ 결과(목록·상세·설정 비교) | 완료 — 재현 run 다섯의 점수가 evidence.md §8과 일치 |
-| 2 | ② 실시간(진행 중인 run과 드라이버 스크립트), 결정 분석 | |
+| 2 | ② 실시간(진행 중인 run과 드라이버 스크립트), 결정 분석 | 완료 — 2026-10-12 smoke run(`dash1012r1`, 35 req/s 4분)으로 확인. 끝난 뒤 대시보드 점수 = 명령줄 채점 |
 | 3 | ④ 비교(arm × 도착률, 반복 간 편차), ⑤ 논문 대조(`claims.yaml`) | |
 | 4 | FluidServe 내부 값 기록(스케줄러 /metrics, 실험 중에도 켠다 — 사용자 결정), ⑥ 실험 기록, run별 바이너리 md5·플래그 기록 | |
 

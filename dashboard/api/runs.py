@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import threading
+import time
 
 import numpy as np
 from fastapi import APIRouter, HTTPException
@@ -10,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 import checks
 from api import jsonable
 from config import CFG, HERE
-from sources import dispatch, runs, scoring, timeseries
+from sources import dispatch, live, runs, scoring, timeseries
 
 router = APIRouter()
 _summary_lock = threading.Lock()
@@ -109,7 +110,8 @@ def run_series(name):
     t0 = timeseries.run_t0(sm)
     if t0 is None:
         return dict(t0=None)
-    disp = dispatch.summarize(d, t0)
+    running = runs.state_of(d)[0] == "running"
+    disp = dispatch.summarize(d, t0, live_now=time.time() if running else None)
     inst_port = (disp or {}).get("inst_port", {})
     engines = {}
     for port in CFG["kube"]["engine_ports"]:
@@ -117,8 +119,11 @@ def run_series(name):
         if s:
             s.pop("totals", None)
             engines[str(port)] = s
-    return jsonable(dict(t0=t0, engines=engines, gateway=timeseries.gateway_series(sm, t0),
-                         scheduler=timeseries.scheduler_series(sm, t0, inst_port), dispatch=disp))
+    out = dict(t0=t0, running=running, engines=engines, gateway=timeseries.gateway_series(sm, t0),
+               scheduler=timeseries.scheduler_series(sm, t0, inst_port), dispatch=disp)
+    if running:
+        out["interim"] = live.interim(d, t0)
+    return jsonable(out)
 
 
 @router.get("/runs/{name}/latency")

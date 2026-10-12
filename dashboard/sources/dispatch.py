@@ -12,6 +12,7 @@
 클래스는 task_id 접두어로 정하며, 그 규칙은 analysis_scripts의 class_of를 그대로 쓴다.
 """
 import calendar
+import glob
 import json
 import os
 import re
@@ -51,27 +52,51 @@ def _year(run_name):
         return 2026
 
 
-def parse(run_dir):
-    """run 하나의 로그 전체를 해석한다. 결과는 파일 크기·수정 시각이 같으면 재사용한다(진행 중인 run은 매번 다시 읽는다)."""
-    log = os.path.join(run_dir, "server_metrics", "scheduler_dispatch.log")
-    rid = os.path.join(run_dir, "request_ids.jsonl")
+class _State:
+    """run 하나의 로그·request_ids를 어디까지 읽었는지. 진행 중인 run은 늘어난 부분만 읽는다."""
+
+    def __init__(self):
+        self.off = {}          # 파일 경로 → 읽은 바이트 수
+        self.inst_port, self.routes, self.fs, self.req = {}, [], [], {}
+        self.lock = threading.Lock()
+
+
+def _new_lines(st, p):
     try:
-        key = (log, os.path.getsize(log), os.path.getmtime(log),
-               os.path.getsize(rid) if os.path.exists(rid) else 0)
+        size = os.path.getsize(p)
     except OSError:
+        return []
+    off = st.off.get(p, 0)
+    if size < off:      # 파일이 새로 쓰였다(병합 등) — 처음부터
+        off = 0
+    if size == off:
+        return []
+    with open(p, "rb") as f:
+        f.seek(off)
+        data = f.read()
+    end = data.rfind(b"\n") + 1   # 다 쓰이지 않은 마지막 줄은 다음 번에
+    st.off[p] = off + end
+    return data[:end].decode(errors="replace").splitlines()
+
+
+def parse(run_dir):
+    """run 하나의 결정 로그와 request_ids를 읽는다. 끝난 run은 request_ids.jsonl을, 진행 중인 run은
+    shards/request_ids.p*.jsonl을 읽는다(러너가 run이 끝날 때 shard를 합친다)."""
+    log = os.path.join(run_dir, "server_metrics", "scheduler_dispatch.log")
+    if not os.path.exists(log):
         return None
     with _lock:
-        if key in _cache:
-            _cache.move_to_end(key)
-            return _cache[key]
-    year = _year(os.path.basename(run_dir))
-    inst_port, routes, fs = {}, [], []
-    with open(log, errors="replace") as f:
-        for line in f:
+        st = _cache.pop(run_dir, None) or _State()
+        _cache[run_dir] = st
+        while len(_cache) > 8:
+            _cache.popitem(last=False)
+    with st.lock:
+        year = _year(os.path.basename(run_dir))
+        for line in _new_lines(st, log):
             if "utils.go" in line and "dispatch request" in line:
                 m = _UTILS.search(line)
                 if m:
-                    routes.append((_ts(line, year), m.group(1), m.group(2)))
+                    st.routes.append((_ts(line, year), m.group(1), m.group(2)))
             elif "fsplacement" in line:
                 m = _FS.search(line)
                 if m:
@@ -79,30 +104,30 @@ def parse(run_dir):
                         waited = float(m.group(3))
                     except ValueError:
                         waited = np.nan
-                    fs.append((_ts(line, year), m.group(1), int(m.group(2)), waited, m.group(4), m.group(5),
-                               m.group(6)))
+                    st.fs.append((_ts(line, year), m.group(1), int(m.group(2)), waited, m.group(4), m.group(5),
+                                  m.group(6)))
             elif "api_server_port" in line:
                 m = _CMS.search(line)
                 if m:
-                    inst_port[m.group(1)] = int(m.group(2))
-    req = {}
-    if os.path.exists(rid):
-        for line in open(rid):
-            try:
-                d = json.loads(line)
-            except ValueError:
-                continue
-            req[d["request_id"].removeprefix("cmpl-")] = (d.get("task_id"), d.get("start_time"), d.get("end_time"))
-    out = dict(inst_port=inst_port, routes=routes, fs=fs, req=req)
-    with _lock:
-        _cache[key] = out
-        while len(_cache) > 8:
-            _cache.popitem(last=False)
-    return out
+                    st.inst_port[m.group(1)] = int(m.group(2))
+        rid = os.path.join(run_dir, "request_ids.jsonl")
+        sources = [rid] if os.path.exists(rid) else sorted(glob.glob(os.path.join(run_dir, "shards", "request_ids.p*.jsonl")))
+        for p in sources:
+            for line in _new_lines(st, p):
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                st.req[d["request_id"].removeprefix("cmpl-")] = (d.get("task_id"), d.get("start_time"), d.get("end_time"))
+        return dict(inst_port=dict(st.inst_port), routes=list(st.routes), fs=list(st.fs), req=dict(st.req))
 
 
-def summarize(run_dir, t0, bin_s=10, occ_step_s=5):
-    """화면용 요약: 10초 단위 결정 수, 인스턴스별 클래스 구성, FluidServe의 대기 시간 분포."""
+def summarize(run_dir, t0, bin_s=10, occ_step_s=5, live_now=None):
+    """화면용 요약: 10초 단위 결정 수, 인스턴스별 클래스 구성, FluidServe의 대기 시간 분포.
+
+    live_now(epoch초)를 주면 진행 중인 run으로 본다. 그때는 routing됐는데 request_ids에 아직 없는 요청(러너는 요청이
+    끝날 때 기록한다)을 지금도 인스턴스에서 처리 중인 것으로 센다. 클래스는 FluidServe 결정 줄의 tier에서 가져오고,
+    결정 줄이 없는 정책이면 "?"로 둔다. 끝난 run에서는 그런 요청을 뺀다(run 경계에서 잘린 요청이다)."""
     p = parse(run_dir)
     if p is None:
         return None
@@ -142,19 +167,26 @@ def summarize(run_dir, t0, bin_s=10, occ_step_s=5):
     # 2. 인스턴스별 클래스 구성: routing 시각부터 그 요청이 끝난 시각(request_ids.end_time)까지 그 인스턴스에 있다고 본다.
     occ = None
     spans = []
+    tier_of = {x[1]: x[2] for x in p["fs"]} if live_now else {}
     for ts, r, inst in p["routes"]:
-        v = req.get(r)
-        if not v or ts is None or v[2] is None:
+        if ts is None:
             continue
-        spans.append((inst, class_of(v[0]), ts - t0, float(v[2]) - t0))
+        v = req.get(r)
+        if v and v[2] is not None:
+            spans.append((inst, class_of(v[0]), ts - t0, float(v[2]) - t0))
+        elif live_now:
+            spans.append((inst, class_of_tier(tier_of[r]) if r in tier_of else "?", ts - t0,
+                          live_now - t0 + occ_step_s))  # 끝 시각을 한 칸 뒤로: 마지막 격자점에서도 처리 중으로 센다
     if spans and t0:
         tmax = max(s[3] for s in spans)
+        if live_now:
+            tmax = min(tmax, live_now - t0)
         grid = np.arange(0, tmax + occ_step_s, occ_step_s)
         occ = {"t": grid.tolist(), "instances": {}}
         for inst in sorted({s[0] for s in spans}, key=lambda i: inst_port.get(i, 0)):
             name = str(inst_port.get(inst, inst))
             occ["instances"][name] = {}
-            for c in classes:
+            for c in classes + (["?"] if any(x[1] == "?" for x in spans) else []):
                 ss = [(a, b) for i, cc, a, b in spans if i == inst and cc == c]
                 if not ss:
                     occ["instances"][name][c] = [0] * len(grid)

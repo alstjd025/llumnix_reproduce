@@ -26,7 +26,10 @@ function timeAxis(xname = "run 시작 후 (분)") {
     axisPointer: { label: { formatter: p => minLabel(p.value) + "분" } }, splitLine: { show: false } };
 }
 
+// 같은 요소에 이미 그래프가 있으면 새로 만들지 않고 데이터만 바꾼다(실시간 갱신에서 확대 상태가 유지된다).
 function mount(el, opt, group) {
+  const old = echarts.getInstanceByDom(el);
+  if (old) { old.setOption(opt, { replaceMerge: ["series"] }); return old; }
   const c = echarts.init(el, null, { renderer: "canvas" });
   c.setOption(opt);
   if (group) { c.group = group; echarts.connect(group); }

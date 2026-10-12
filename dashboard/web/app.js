@@ -1,12 +1,14 @@
 // 페이지 등록과 이동. 새 페이지를 추가하려면 pages/에 모듈을 만들고 아래 PAGES에 한 줄을 더한다.
 // 페이지 모듈은 { render(el, params) }를 내보내고, 주기적으로 갱신한다면 정리 함수를 반환한다.
 import * as status from "./pages/status.js";
+import * as live from "./pages/live.js";
 import * as runs from "./pages/runs.js";
 import * as run from "./pages/run.js";
 import * as diff from "./pages/diff.js";
 
 const PAGES = [
   { route: /^#\/status$/, nav: "상태", href: "#/status", mod: status },
+  { route: /^#\/live$/, nav: "실시간", href: "#/live", mod: live },
   { route: /^#\/runs$/, nav: "결과", href: "#/runs", mod: runs },
   { route: /^#\/run\/(.+)$/, mod: run, keys: ["name"] },
   { route: /^#\/diff\/([^/]+)\/([^/]+)$/, mod: diff, keys: ["a", "b"] },
