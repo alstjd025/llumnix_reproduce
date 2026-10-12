@@ -16,6 +16,10 @@ RESULTS="$REPO/Agent_applications/agent_motivation_experiment/results"
 payload=$(cat 2>/dev/null || true)
 event=$(printf '%s' "$payload" | jq -r '.hook_event_name // "SessionStart"' 2>/dev/null || echo SessionStart)
 
+# PreCompact는 hookSpecificOutput을 받지 않는다(받으면 JSON 검증 오류로 훅이 실패한다, 2026-10-12).
+# compaction 직후에 SessionStart(source=compact)가 다시 돌면서 같은 내용을 넣으므로 여기서는 아무것도 내지 않는다.
+[ "$event" = "PreCompact" ] && exit 0
+
 {
   echo "# 지금 상태 (llumnix_reproduce) — 훅이 세션 시작·compaction 직전에 넣는다"
   echo
