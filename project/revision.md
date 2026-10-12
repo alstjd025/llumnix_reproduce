@@ -17,7 +17,7 @@
 
 | # | 무엇 | 왜 중요한가 | 근거 |
 |---|---|---|---|
-| R1 | **Figure 1(정책별 token goodput 대 admitted SLO 달성률 산점도, 거절률 표기)을 만든 스크립트가 저장소에 없다** | 서론의 첫 그림이고, 수치(거절률 llm-d 42%, FluidServe 21%, PolyServe 18%, Llumnix 39%, vLLM 0%)의 출처를 대야 한다 | `paper_figures/`와 archive 전체를 검색함. `intro_reject_goodput.pdf`는 다른 모양(선 그래프 두 패널)이다 |
+| R1 | ~~Figure 1을 만든 스크립트가 저장소에 없다~~ → **다른 사람이 만든 그림이라 이 저장소에 파일이 없는 것이 정상이다(2026-10-12 사용자 확인).** 수치 대조는 R26 | 해결 | 사용자 |
 | R2 | **Table 1(워크로드 프롬프트·응답 길이의 중앙값·P90·표준편차) 수치의 출처를 찾지 못했다** | 워크로드를 정의하는 표 | 저장소 전체에서 `556`, `1,580` 등을 검색함 |
 | R3 | **EXP-138(Figure 16·17이 쓰는 run `260914_0539_exp138r1_noaffnocaphour_shift`)은 실험 기록 파일이 없다** | affinity의 효과를 보이는 그림 둘의 근거가 기록 없이 1회(`r1`)뿐일 수 있다 | archive 전체에 `EXP-138` 언급 없음. 드라이버 `k8s/exp07/run_exp138_noaffnocap_hour.sh`만 있다 |
 | R4 | **논문은 한 시간 trace를 "production-derived Azure trace"라고 쓰는데, 옛 기록은 그 trace의 클래스 구성 이동을 "Azure 근거를 넘는 stress test"라고 적었다** | 평가의 주 워크로드를 어떻게 부르느냐의 정확성 문제 | `traces/dynamic/canonical/dyn60_shift_m2Am1B_b1045.csv`, 워크로드 설정의 `_comment`, archive의 EXP-93과 STATUS.md |

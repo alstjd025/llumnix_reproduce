@@ -235,3 +235,6 @@ AGENTS.md
 JITServe/
 sarathi-serve-niyama/
 Agent_applications/
+
+# Submitted paper under double-blind review: keep it out of git (2026-10-12)
+ms_dev/submitted_version/
