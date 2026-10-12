@@ -1,0 +1,75 @@
+# 대시보드 설정. 바뀔 수 있는 값은 전부 이 파일 하나에만 둔다.
+# 코드는 이 값을 config.CFG로 읽는다. 값을 고친 뒤에는 대시보드를 다시 띄운다(run.sh).
+
+server:
+  host: 127.0.0.1          # 바깥 인터페이스에 열지 않는다. 접속은 ssh -L 8080:localhost:8080
+  port: 8080
+
+paths:
+  repo: /home/nxclab/llumnix_reproduce
+  exp_root: /home/nxclab/llumnix_reproduce/Agent_applications/agent_motivation_experiment
+  results: /home/nxclab/llumnix_reproduce/Agent_applications/agent_motivation_experiment/results
+  analysis: /home/nxclab/llumnix_reproduce/Agent_applications/agent_motivation_experiment/analysis_scripts/request_level
+  excluded_runs: /home/nxclab/llumnix_reproduce/ms_dev/data/excluded_runs.tsv
+  deployed_scheduler: /home/nxclab/llumnix_reproduce/bin/scheduler-exp07
+  deployed_gateway: /home/nxclab/llumnix_reproduce/bin/gateway-exp10
+  chain_logs: /home/nxclab/tools          # 드라이버 연쇄 스크립트의 로그(*.log)가 쌓이는 곳
+  # 대시보드가 만드는 파일은 전부 여기에 쓴다. results/ 안에는 아무것도 쓰지 않는다.
+  cache: /home/nxclab/scratch/dashboard-cache
+  # 단계 4에서 쓸 디스크 사용량 감시 대상
+  disks: [/home/nxclab, /NHNHOME]
+
+kube:
+  namespace: llumnix
+  engine_pod: neutral-0          # vLLM 엔진 4대가 들어 있는 파드
+  engine_ports: [8000, 8001, 8002, 8003]
+  scheduler_deploy: scheduler
+  gateway_deploy: gateway
+  runner_job_prefix: bench-runner
+
+# 엔진·스케줄러·게이트웨이가 띄워져 있어야 할 상태. 드라이버의 check_stack과 같은 항목이다
+# (k8s/exp07/run_exp108_t75.sh). 실험마다 다르게 기대하는 값이 있으면 여기서 바꾼다.
+expected_stack:
+  gateway_command: /exp07bin/gateway-exp10   # 호스트에서 빌드한 게이트웨이. 레지스트리 이미지에는 우리 수정이 없다
+  migration: "0"                             # LLUMNIX_ENABLE_MIGRATION. migration은 정책 몰래 요청을 옮긴다
+  sched_extra_args: ""                       # 엔진 쪽 스케줄링 인자. 있으면 정책 비교가 오염된다
+  kv_admission_threshold: 0                  # --admission-kv-usage-threshold. 두 번째 admission 층이 생기면 안 된다
+
+# md5 앞 8자리 → 이름. 출처는 project/reproduce.md의 바이너리 표.
+known_binaries:
+  6dc9f035: "scheduler exp107t — EXP-108·109(논문 주 실험)와 2026-10-10 재현에 쓴 것"
+  9e8f68b6: "scheduler usec — 제출 시점 배포본(EXP-140의 마이크로초 계측 포함)"
+  063e1c85: "scheduler pre-exp140 백업"
+  0efb664a: "gateway exp10 — 2026-07-27 빌드"
+
+# arm 이름(run 디렉토리 이름의 네 번째 칸) → 화면에 쓰는 이름.
+# 이름 규칙은 CLAUDE.md의 "정책 이름은 이렇게 부른다" 표를 따른다.
+arms:
+  fsv3capgnofrct75: FluidServe
+  polyservept75: PolyServe
+  vllmcachet75: "vLLM*"
+  slot75: Llumnix SLO
+  llmdslot75: llm-d
+  loadbalance: Llumnix
+
+# 클래스별 SLO 예산(논문 Table 2). tier는 스케줄러 결정 로그의 tier= 값이 어느 클래스인지를 정한다
+# (--fluidserve-class-budgets 25:decode:75,50:decode,100:decode — tier 키는 예산이 아니라 클래스 이름표다).
+classes:
+  chat:         {ttft_s: 5,  tbt_ms: 50,  tier: 50,  color: "#4e79a7"}
+  deepresearch: {ttft_s: 10, tbt_ms: 100, tier: 100, color: "#f28e2b"}
+  swe:          {ttft_s: 7,  tbt_ms: 75,  tier: 25,  color: "#59a14f"}
+
+# 채점: 논문 주 규칙 ladder95를 analysis_scripts/request_level/deadline_ladder_attainment.py로 계산한다.
+scoring:
+  rule: ladder95
+  frac: 0.95
+  env: {FS_SWE_TBT_MS: "75", FS_SWE_TTFT_S: "7"}
+  workers: 2                 # 동시에 채점하는 run 수. 한 run에 약 7초, tbt_events.jsonl을 한 번 읽는다
+  # 이 시간 동안 run 디렉토리의 어떤 파일도 바뀌지 않았으면 run이 끝난 것으로 본다
+  settle_s: 120
+
+# 상태 검사의 문턱값. 근거는 각 검사 파일의 docstring.
+thresholds:
+  rate_off_frac: 0.10        # 실제 도착률이 이름의 도착률에서 10% 넘게 벗어나면 경고 (run_health.py와 같다)
+  min_requests: 200
+  disk_free_gb_warn: 50
