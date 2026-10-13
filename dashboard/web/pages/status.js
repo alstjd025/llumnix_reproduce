@@ -12,7 +12,7 @@ export async function render(el) {
     const w = worst(d.checks);
     const gpu = d.gpus.map(g => `<tr><td>${g.index}</td><td class="num">${fmt(g.util, 0)}%</td>
       <td class="num">${fmt(g.mem_used_mib / 1024, 0)} / ${fmt(g.mem_total_mib / 1024, 0)} GiB</td>
-      <td class="num">${fmt(g.power_w, 0)} W</td><td class="num">${fmt(g.temp_c, 0)} °C</td></tr>`).join("");
+      <td class="num">${fmt(g.power_w, 0)} / ${fmt(g.power_limit_w, 0)} W</td><td class="num">${fmt(g.temp_c, 0)} °C</td></tr>`).join("");
     const pods = d.pods.map(p => `<tr><td class="mono">${esc(p.name)}</td><td>${esc(p.phase)}</td><td>${p.ready}</td>
       <td class="num">${p.restarts}</td><td class="mono">${esc(p.started || "")}</td></tr>`).join("");
     const fs = d.scheduler_args.filter(a => a.startsWith("--")).length;
@@ -22,7 +22,7 @@ export async function render(el) {
       <h2>검사</h2>
       <div>${d.checks.map(c => checkHtml(c).replace("<details", `<details data-id="${c.id}"`)).join("")}</div>
       <div class="grid g2">
-        <div><h2>GPU</h2><div class="panel"><table><tr><th>#</th><th class="num">사용률</th><th class="num">메모리</th><th class="num">전력</th><th class="num">온도</th></tr>${gpu}</table></div></div>
+        <div><h2>GPU</h2><div class="panel"><table><tr><th>#</th><th class="num">사용률</th><th class="num">메모리</th><th class="num">전력 / 제한</th><th class="num">온도</th></tr>${gpu}</table></div></div>
         <div><h2>파드 (namespace llumnix)</h2><div class="panel scroll"><table><tr><th>이름</th><th>phase</th><th>ready</th><th class="num">재시작</th><th>시작</th></tr>${pods}</table></div></div>
       </div>
       <h2>스케줄러 deployment의 인자 (${fs}개 플래그)</h2>

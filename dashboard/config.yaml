@@ -26,6 +26,7 @@ kube:
   scheduler_deploy: scheduler
   gateway_deploy: gateway
   runner_job_prefix: bench-runner
+  engine_lws: neutral            # 엔진 leaderworkerset. 실험하지 않을 때는 0으로 줄이고 GPU를 Sionna에 넘긴다(ms_dev/scripts/gpu_idle.sh)
 
 # 엔진·스케줄러·게이트웨이가 띄워져 있어야 할 상태. 드라이버의 check_stack과 같은 항목이다
 # (k8s/exp07/run_exp108_t75.sh). 실험마다 다르게 기대하는 값이 있으면 여기서 바꾼다.
@@ -34,6 +35,7 @@ expected_stack:
   migration: "0"                             # LLUMNIX_ENABLE_MIGRATION. migration은 정책 몰래 요청을 옮긴다
   sched_extra_args: ""                       # 엔진 쪽 스케줄링 인자. 있으면 정책 비교가 오염된다
   kv_admission_threshold: 0                  # --admission-kv-usage-threshold. 두 번째 admission 층이 생기면 안 된다
+  gpu_power_limit_w: 1000                    # nvidia-smi power.limit. 같은 서버의 다른 프로젝트가 바꿨다 되돌리는 값이다(2026-10-13)
 
 # md5 앞 8자리 → 이름. 출처는 project/reproduce.md의 바이너리 표.
 known_binaries:

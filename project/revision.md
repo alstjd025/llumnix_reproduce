@@ -21,6 +21,10 @@
   바이너리 md5·플래그를 대시보드가 따로 기록한다(run 디렉토리에는 없는 값, 사용자 결정으로 실험 중에도 켠다).
   설계·확장 방법은 `dashboard/DESIGN.md`. 검증용으로 4분 smoke run 둘(`dash1012r1`, `dash1012br1`, FluidServe 35 req/s)을
   돌렸다 — 연구용 run이 아니므로 evidence.md에 넣지 않는다.
+- **GPU 운영(2026-10-13)**: 서버 공지에 따라 실험하지 않는 동안 GPU 8장을 Sionna 워크로드에 넘긴다 —
+  `ms_dev/scripts/gpu_idle.sh start|stop|status`. Sionna는 `~/NXC_GPU`(공유 경로 사본)와 `~/sionna/.venv`에 설치했고,
+  설치가 `~/.bashrc`에 `LD_LIBRARY_PATH` 한 줄을 더했다(원본 `/home/nxclab/tools/bin-backup/bashrc.pre-sionna`).
+  **2026-10-13 18:33부터 Sionna 모드**(엔진 0). 같은 날 17:10~17:37에는 powertest 프로젝트가 엔진을 내리고 GPU를 빌렸다.
 - **다음**: 아래 확인 항목을 검토하고 리비전 범위를 정한다.
 
 ---

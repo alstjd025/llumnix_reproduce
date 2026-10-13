@@ -33,6 +33,32 @@ def _restarts(p):
     return sum(cs.get("restartCount", 0) for cs in p.get("status", {}).get("containerStatuses", []) or [])
 
 
+@check("gpu_mode", "cluster", "GPU가 Llumnix 엔진에 있다 (Sionna 워크로드에 넘어가 있지 않다)",
+       "서버 공지(2026-10-13): 실험하지 않는 동안에는 GPU를 Sionna 워크로드에 넘긴다. 그때는 엔진이 0으로 줄어 있으므로 "
+       "실험을 걸면 안 된다. 되돌리는 것은 ms_dev/scripts/gpu_idle.sh stop(엔진 4대 응답·바이너리·GPU 온도까지 확인)")
+def gpu_mode(_):
+    n = host.sionna_workers()
+    lw = k8s.lws(KC.get("engine_lws", "neutral"))
+    rep = lw.get("spec", {}).get("replicas") if "error" not in lw else None
+    ev = [f"Sionna worker {n}개", f"엔진 leaderworkerset replicas={rep}"]
+    if n or rep == 0:
+        return Result("fail", "Sionna 모드 — 실험을 걸기 전에 ms_dev/scripts/gpu_idle.sh stop", ev)
+    return Result("ok", "엔진 모드 — GPU를 쓰지 않을 때는 ms_dev/scripts/gpu_idle.sh start", ev)
+
+
+@check("gpu_power_limit", "cluster", "GPU 전력 제한이 기대값이다",
+       "같은 서버의 다른 프로젝트(powertest)가 GPU를 빌려 쓰면서 전력 제한을 바꿨다 되돌린다(2026-10-13). 되돌리기가 "
+       "실패하면 측정 조건이 아무 표시 없이 바뀐다")
+def gpu_power_limit(_):
+    want = float(EXP.get("gpu_power_limit_w", 1000))
+    gs = host.gpus().get("gpus", [])
+    bad = [g for g in gs if abs(g.get("power_limit_w", want) - want) > 0.5]
+    ev = [f"GPU {g['index']}: {g.get('power_limit_w')} W" for g in gs]
+    if not gs:
+        return Result("na", "nvidia-smi 값을 읽지 못했다")
+    return Result("fail" if bad else "ok", f"{len(bad)}장이 {want:.0f} W가 아니다" if bad else f"8장 모두 {want:.0f} W", ev)
+
+
 @check("scheduler_pods", "cluster", "스케줄러 파드가 하나이고 정상이다",
        "새 바이너리가 기동 중 panic해 CrashLoopBackOff가 되어도 옛 파드는 Running으로 남아 클러스터가 정상으로 "
        "보인다. 드라이버는 이것을 느린 rollout과 구분하지 못했다(traps.md 함정 B)")

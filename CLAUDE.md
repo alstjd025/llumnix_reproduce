@@ -31,6 +31,11 @@ Llumnix(Go 컨트롤플레인: scheduler + gateway) 포크 위에 **FluidServe**
 - **사용자의 명시적 지시 없이는 어떤 파일도 삭제하지 않는다.** 결과 디렉토리, 소스, 산출물, 로그,
   폐기된 것처럼 보이는 run 전부. 지워야 한다고 생각되면 먼저 묻는다. 덮어쓰기, `git clean`, `rm -rf`,
   이름이 겹치는 출력 디렉토리에 쓰는 것도 같다. 정리는 지우는 것이 아니라 `archive/`로 옮기는 것이다.
+- **GPU를 실험에 쓰지 않는 동안에는 Sionna 워크로드를 돌린다(2026-10-13 서버 공지).** `ms_dev/scripts/gpu_idle.sh start`가
+  엔진(leaderworkerset `neutral`)을 0으로 줄이고 GPU 8장에 Sionna를 띄운다. **실험을 걸기 전에는 `gpu_idle.sh stop`** —
+  Sionna를 끄고 엔진을 되돌린 뒤 엔진 4대 응답, 스케줄러 바이너리 md5, GPU 전력 제한(1000 W), GPU 온도(35 °C 이하)까지
+  확인하고 끝난다(약 10분 이상). 대시보드 상태 페이지의 "GPU가 Llumnix 엔진에 있다" 검사가 이 상태를 보여 준다.
+  같은 GPU를 다른 프로젝트(`/home/nxclab/powertest`)도 빌려 쓰고, 그 실행기도 엔진을 0으로 줄였다가 되돌린다.
 - 큰 작업은 별도 브랜치에서 한다. 두 저장소에 각각 커밋한다.
 - **실험이 도는 동안 측정 경로를 건드리지 않는다**: `bin/`의 바이너리, 도는 드라이버 스크립트,
   `set_scheduler_profiling.py`, `workloads/`, `workload_configs/`, `run_experiment.py`. 소스는 고쳐도 되고

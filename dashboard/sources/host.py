@@ -12,17 +12,17 @@ _md5_cache = {}
 
 
 def gpus():
-    q = "index,name,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu"
+    q = "index,name,utilization.gpu,memory.used,memory.total,power.draw,temperature.gpu,power.limit"
     def f():
         out = subprocess.run(["nvidia-smi", f"--query-gpu={q}", "--format=csv,noheader,nounits"],
                              capture_output=True, text=True, timeout=10).stdout
         rows = []
         for line in out.strip().splitlines():
             p = [x.strip() for x in line.split(",")]
-            if len(p) != 7:
+            if len(p) != 8:
                 continue
             rows.append(dict(index=int(p[0]), name=p[1], util=float(p[2]), mem_used_mib=float(p[3]),
-                             mem_total_mib=float(p[4]), power_w=float(p[5]), temp_c=float(p[6])))
+                             mem_total_mib=float(p[4]), power_w=float(p[5]), temp_c=float(p[6]), power_limit_w=float(p[7])))
         return {"gpus": rows}
     return k8s.cached("gpus", 3, f)
 
@@ -79,3 +79,17 @@ def engine_health():
             res.append(dict(port=port, ok=ok, error=err if not ok else None))
         return {"ip": ip, "engines": res}
     return k8s.cached("engine_health", 5, f)
+
+
+def sionna_workers():
+    """Sionna 워크로드 worker 수(서버 공지: GPU를 연구에 쓰지 않는 동안 돌린다). 프로세스 명령줄로 센다."""
+    n = 0
+    for pid in os.listdir("/proc"):
+        if not pid.isdigit():
+            continue
+        try:
+            if b"/tmp/sionna_stress/worker.py" in open(f"/proc/{pid}/cmdline", "rb").read():
+                n += 1
+        except OSError:
+            pass
+    return n
