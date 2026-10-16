@@ -100,6 +100,18 @@ def _ratio_of_deltas(num, den):
     return out
 
 
+def _window_ratio(num, den, w):
+    """w점 창에서 (num의 증가) / (den의 증가). 누적값 두 개의 비를 창 단위로 낸다(토큰 가중 평균)."""
+    num, den = np.asarray(num, float), np.asarray(den, float)
+    out = np.full_like(num, np.nan)
+    for i in range(len(num)):
+        j = max(0, i - w)
+        dn, dd = num[i] - num[j], den[i] - den[j]
+        if np.isfinite(dn) and np.isfinite(dd) and dd > 0:
+            out[i] = dn / dd
+    return out
+
+
 def _clean(a):
     return [None if (x is None or (isinstance(x, float) and not np.isfinite(x))) else round(float(x), 4)
             for x in a]
@@ -140,9 +152,11 @@ def engine_series(sm_dir, port, t0, smooth=5):
     out["prefix_hit_pct"] = _clean(100 * _smooth(_ratio_of_deltas(col("vllm:prefix_cache_hits_total"),
                                                                   col("vllm:prefix_cache_queries_total")), 30))
     # 엔진이 보고한 토큰 사이 시간(ms). 30초 창의 (합의 증가 / 개수의 증가)라 그 창에서 나온 모든 토큰의 평균이다.
-    itl = _ratio_of_deltas(_smooth(col("vllm:inter_token_latency_seconds_sum"), 1),
-                           col("vllm:inter_token_latency_seconds_count"))
-    out["itl_ms"] = _clean(1000 * _smooth(itl, 30))
+    # 비율의 평균이 아니라 합의 비율로 낸다: 30초 창의 (합의 증가) / (개수의 증가). 1초마다 비율을 먼저 구해 평균하면
+    # preemption 등으로 토큰이 거의 나오지 않은 초의 큰 값이 같은 무게로 들어가 deepresearch 인스턴스에서 144~171 ms로
+    # 부풀었다(토큰 가중 값은 72~74 ms, 2026-10-16 확인).
+    out["itl_ms"] = _clean(1000 * _window_ratio(col("vllm:inter_token_latency_seconds_sum"),
+                                                col("vllm:inter_token_latency_seconds_count"), 30))
     # 마지막 값과 누적 합계: 표에 쓴다
     pre = col("vllm:num_preemptions_total")
     gen = col("vllm:generation_tokens_total")
