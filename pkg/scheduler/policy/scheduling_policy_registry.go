@@ -217,6 +217,9 @@ func newSloDispatchFullMode(p *options.SchedulerConfig) *sloDispatchPolicy {
 						sloMultiplier:       p.TpotSloDispatchThreshold,
 						threshold:           p.TpotSlo * p.TpotSloDispatchThreshold,
 						notSkipWhenFallback: true,
+						// --slo-incumbent-tpot-gate: also judge against the tightest
+						// TPOT budget resident on the instance (filters.go).
+						incumbentTpot: p.SloIncumbentTpotGate,
 					},
 				},
 				selectors: &metricBasedSelector{

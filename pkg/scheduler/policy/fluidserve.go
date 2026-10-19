@@ -3270,6 +3270,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		fluxCache: map[string]cachedFlux{},
 		tierArr:   map[int]*tierArrivalState{},
 	}
+	policy.registry.exactResidency = p.ExactResidency
 	policy.preRegisterCapMetrics()
 	policy.registry.SetPerInstanceDelay(cfg.perInstanceDelay)
 	if cfg.prefixAware {
@@ -3316,7 +3317,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		// inserted between classpin and budgets.
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
-		"chargehorizon=%d",
+		// exactresidency goes last, after everything the deployment script parses.
+		"chargehorizon=%d, exactresidency=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3331,7 +3333,8 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		p.FluidserveClassBudgets,
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
-		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon)
+		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
+		p.ExactResidency)
 
 	go policy.reportLoop()
 	return policy
@@ -3368,6 +3371,8 @@ func (p *fluidserveDispatchPolicy) reportLoop() {
 			metrics.Labels{{Name: "reason", Value: "survival"}}).Set(float64(bySurvival))
 		metrics.Gauge("scheduler_fluidserve_retired_total",
 			metrics.Labels{{Name: "reason", Value: "age"}}).Set(float64(byAge))
+		metrics.Gauge("scheduler_fluidserve_retired_total",
+			metrics.Labels{{Name: "reason", Value: "completion"}}).Set(float64(p.registry.completions()))
 		p.registry.logSummary()
 	}
 }

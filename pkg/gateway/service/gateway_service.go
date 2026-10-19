@@ -945,6 +945,15 @@ func (h *RequestStateManagementHooks) OnPostRequest(req *types.RequestContext) {
 			h.balancer.Release(req, &req.SchedulingCtx.SchedulingResults[i])
 		}
 	}
+	// --notify-completion: the response has ended either way, so the request no
+	// longer occupies its instance. Independent of the release logic above.
+	if h.gateway.config.NotifyCompletion {
+		if n, ok := h.balancer.(interface {
+			NotifyComplete(*types.RequestContext)
+		}); ok {
+			n.NotifyComplete(req)
+		}
+	}
 }
 
 func (h *RequestStateManagementHooks) OnPostDecodeFirstStreamResponse(req *types.RequestContext) {

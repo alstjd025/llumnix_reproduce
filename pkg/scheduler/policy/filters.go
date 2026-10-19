@@ -9,6 +9,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"llumnix/pkg/consts"
+	"llumnix/pkg/metrics"
 )
 
 func filter(
@@ -98,6 +99,15 @@ type metricBasedFilter struct {
 	perRequestSloMs     sloBudgetKind
 	sloMultiplier       float32
 	notSkipWhenFallback bool
+	// incumbentTpot (--slo-incumbent-tpot-gate, 2026-10-19) makes a TPOT filter
+	// judge against min(the request's own budget, the tightest TPOT budget among
+	// the requests resident on the instance), read from the residency tracker.
+	// Requests in one decode batch share its iteration time, so a looser request
+	// placed beside a tighter one is held to the tighter budget too; judging it
+	// by its own budget alone lets it break the residents. This is the form
+	// llm-d's predicted-latency filter (podMinTPOTSLO) and FluidServe's gate use.
+	// The residents' NOMINAL budgets are used, not their remaining allowance.
+	incumbentTpot bool
 }
 
 type sloBudgetKind int
@@ -119,12 +129,29 @@ func (f *metricBasedFilter) thresholdFor(instance *instanceViewScheduling) float
 	if f.perRequestSloMs == sloBudgetTpot {
 		ms = instance.schedulingCtx.requestTpotSloMs
 	}
-	if ms <= 0 {
-		return f.threshold
-	}
 	m := f.sloMultiplier
 	if m <= 0 {
 		m = 1
+	}
+	if f.incumbentTpot && f.perRequestSloMs == sloBudgetTpot {
+		if res := Residency().MinTpotSloMs(instance.GetInstanceId()); res > 0 {
+			own := float32(ms) * m
+			if ms <= 0 {
+				own = f.threshold
+			}
+			if tight := float32(res) * m; tight < own {
+				metrics.Counter("scheduler_slo_incumbent_gate_total",
+					metrics.Labels{{Name: "binding", Value: "resident"}}).Inc()
+				klog.V(5).Infof("slo incumbent gate: instance %s judged at resident %d ms (own %d ms)",
+					instance.GetInstanceId(), res, ms)
+				return tight
+			}
+		}
+		metrics.Counter("scheduler_slo_incumbent_gate_total",
+			metrics.Labels{{Name: "binding", Value: "own"}}).Inc()
+	}
+	if ms <= 0 {
+		return f.threshold
 	}
 	return float32(ms) * m
 }

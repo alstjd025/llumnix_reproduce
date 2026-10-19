@@ -343,6 +343,15 @@ type requestRegistry struct {
 	retiredByCount    int64
 	retiredBySurvival int64
 	retiredByAge      int64
+
+	// exactResidency (--exact-residency, 2026-10-19): a record leaves only when
+	// the gateway's completion notice for it has arrived (residency tracker),
+	// plus the engine-restart and age backstops. The two inferred departures --
+	// survival below fsRetireSurvival and trimming the earliest-dispatched
+	// records down to the engine's running count -- are not applied, because
+	// they keep the count right and the membership wrong (residency.go).
+	exactResidency      bool
+	retiredByCompletion int64
 }
 
 func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestRegistry {
@@ -543,6 +552,11 @@ func (r *requestRegistry) reconcile(
 			r.retiredByAge++
 			continue
 		}
+		if r.exactResidency && Residency().Completed(id) {
+			delete(recs, id)
+			r.retiredByCompletion++
+			continue
+		}
 		j := int(stepID - rec.stepAtDispatch - int64(rec.prefillSteps))
 		if j < 0 {
 			j = 0
@@ -620,7 +634,7 @@ func (r *requestRegistry) reconcile(
 		}
 		rec.lastJ = j
 		prof := r.lengths.forTier(rec.tier)
-		if prof != nil && prof.survivalAt(j) < fsRetireSurvival {
+		if !r.exactResidency && prof != nil && prof.survivalAt(j) < fsRetireSurvival {
 			delete(recs, id)
 			r.retiredBySurvival++
 			continue
@@ -630,7 +644,7 @@ func (r *requestRegistry) reconcile(
 
 	// Trim to the engine's count, dropping the requests furthest along first
 	// because those are the ones most likely to have completed.
-	if engineRunning >= 0 && len(entries) > engineRunning {
+	if !r.exactResidency && engineRunning >= 0 && len(entries) > engineRunning {
 		sort.Slice(entries, func(a, b int) bool { return entries[a].j > entries[b].j })
 		for i := 0; i < len(entries)-engineRunning; i++ {
 			delete(recs, entries[i].rec.id)
@@ -917,6 +931,12 @@ func (r *requestRegistry) instanceCount(instanceID string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.byInstance[instanceID])
+}
+
+func (r *requestRegistry) completions() int64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.retiredByCompletion
 }
 
 func (r *requestRegistry) counters() (byCount, bySurvival, byAge int64) {

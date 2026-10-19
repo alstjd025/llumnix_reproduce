@@ -30,6 +30,13 @@ type GatewayConfig struct {
 	// whether forward tokens to scheduler
 	ForwardTokens bool
 
+	// NotifyCompletion (2026-10-19): when a request's response has ended,
+	// successfully or not, send the scheduler a /complete notice so that it can
+	// keep an exact record of which requests are on which instance (scheduler
+	// --exact-residency, --slo-incumbent-tpot-gate). It does not replace or
+	// alter /release, so with the scheduler flags off nothing else changes.
+	NotifyCompletion bool
+
 	configManager *property.ConfigManager
 
 	EnableLogInput bool
@@ -70,6 +77,8 @@ func (c *GatewayConfig) AddConfigFlags(flags *pflag.FlagSet) {
 	flags.StringVar(&c.ServiceToken, "service-token", "", "service token")
 	flags.DurationVar(&c.WaitSchedulingTimeout, "wait-scheduling-timeout", 5000*time.Millisecond, "waiting timeout if no free token")
 	flags.DurationVar(&c.WaitSchedulingRetryInterval, "wait-scheduling-retry-interval", 1000*time.Millisecond, "retry interval while waiting free tokens")
+	flags.BoolVar(&c.NotifyCompletion, "notify-completion", false,
+		"send the scheduler a /complete notice when each request's response ends (exact residency tracking)")
 	flags.BoolVar(&c.ForwardTokens, "forward-tokens", true, "whether forward tokens to scheduler")
 
 	flags.BoolVar(&c.EnableLogInput, "enable-log-input", false, "enable log input or not")

@@ -348,6 +348,15 @@ func (p *DispatchPolicy) Schedule(request *types.SchedulingRequest) error {
 			}
 		}
 	}
+	if p.c.ExactResidency || p.c.SloIncumbentTpotGate {
+		// The placement half of the residency record; the completion half comes
+		// from the gateway's /complete notice. Recorded for every policy when
+		// either flag is on, so the tracker means the same thing whichever
+		// policy reads it.
+		for i := range schResults {
+			Residency().Place(request.Id, schResults[i].Id(), request.TpotSloMs)
+		}
+	}
 	request.SchedulingResult = schResults
 	return nil
 }

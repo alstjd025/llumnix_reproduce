@@ -177,3 +177,16 @@ func (bp *CompositeBalancer) Release(req *types.RequestContext, instance *types.
 		bp.remoteBalancer.Release(req, instance)
 	}
 }
+
+// NotifyComplete forwards a completion notice to the scheduler in the remote
+// balance modes; the local modes keep no scheduler-side state to update.
+func (bp *CompositeBalancer) NotifyComplete(req *types.RequestContext) {
+	if bp.balanceMode != RemoteBalancer && bp.balanceMode != PDRemoteBalancer {
+		return
+	}
+	if n, ok := bp.remoteBalancer.(interface {
+		NotifyComplete(*types.RequestContext)
+	}); ok {
+		n.NotifyComplete(req)
+	}
+}

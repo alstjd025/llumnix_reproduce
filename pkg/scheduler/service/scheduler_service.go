@@ -233,6 +233,30 @@ func (ss *SchedulerService) handleRelease(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleComplete accepts the gateway's notice that a request's response has
+// ended (successfully or not), sent when the gateway runs with
+// --notify-completion. It only updates the residency tracker, which FluidServe
+// (--exact-residency) and the slo policy (--slo-incumbent-tpot-gate) read; it
+// deliberately does not touch the CMS local accounts or LRS state that /release
+// manages, so turning it on changes nothing for any other policy.
+// URL: /complete
+func (ss *SchedulerService) handleComplete(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		klog.Errorf("io read err: %v", err)
+		return
+	}
+	var schReq types.SchedulingRequest
+	if err := json.Unmarshal(body, &schReq); err != nil || schReq.Id == "" {
+		klog.Warningf("invalid complete notice: %s", body)
+		http.Error(w, "invalid complete notice", http.StatusBadRequest)
+		return
+	}
+	policy.Residency().Complete(schReq.Id)
+	klog.V(4).Infof("complete notice for request %s", schReq.Id)
+	w.WriteHeader(http.StatusOK)
+}
+
 // handleReport accepts the request reported by the gateway
 // URL: /report
 func (ss *SchedulerService) handleReport(w http.ResponseWriter, r *http.Request) {
@@ -274,6 +298,8 @@ func (ss *SchedulerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ss.handleSchedule(w, r)
 	case "/release":
 		ss.handleRelease(w, r)
+	case "/complete":
+		ss.handleComplete(w, r)
 	case "/keepalive":
 		ss.handleKeepalive(w, r)
 	case "/report":

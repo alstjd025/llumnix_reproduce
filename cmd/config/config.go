@@ -259,6 +259,20 @@ type FullModeSchedulingConfig struct {
 	TpotSloDispatchThreshold    float32
 	TpotMigrateOutCeilThreshold float32
 
+	// Exact residency (2026-10-19). Both read the residency tracker, which the
+	// dispatch path fills on placement and the gateway's /complete notice
+	// (gateway --notify-completion) empties. Both default to false, which leaves
+	// every policy exactly as before.
+	//
+	// ExactResidency: FluidServe retires a registry record when its completion
+	// notice arrives, instead of inferring the departure from the class length
+	// distribution or by trimming to the engine's running count.
+	ExactResidency bool
+	// SloIncumbentTpotGate: the `slo` policy's TPOT filter judges an instance
+	// against min(the request's own TPOT budget, the tightest TPOT budget among
+	// the requests resident there) instead of the request's own budget alone.
+	SloIncumbentTpotGate bool
+
 	// PolyServe
 	PolyserveTierDecodeTokens string
 	PolyserveDecodeTokens     int
@@ -405,6 +419,12 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 	flags.Float32Var(&c.TpotSlo, "tpot-slo", consts.DefaultTpotSlo, "Llumnix tpot slo")
 	flags.Float32Var(&c.TpotSloDispatchThreshold, "tpot-slo-dispatch-threshold", consts.DefaultTpotSloDispatchThreshold, "Llumnix tpot slo dispatch threshold")
 	flags.Float32Var(&c.TpotMigrateOutCeilThreshold, "tpot-migrate-out-ceil-threshold", consts.DefaultTpotMigrateOutCeilThreshold, "Llumnix tpot migrate out ceil threshold")
+	flags.BoolVar(&c.ExactResidency, "exact-residency", false,
+		"FluidServe: retire a resident request on the gateway's completion notice (needs gateway --notify-completion) "+
+			"instead of inferring its departure")
+	flags.BoolVar(&c.SloIncumbentTpotGate, "slo-incumbent-tpot-gate", false,
+		"slo policy: judge an instance's predicted TPOT against min(own TPOT SLO, tightest TPOT SLO resident there) "+
+			"(needs gateway --notify-completion)")
 
 	flags.StringVar(&c.PolyserveTierDecodeTokens, "polyserve-tier-decode-tokens", "",
 		"PolyServe expected output length per SLO tier, as \"tpotSloMs:tokens,...\" "+

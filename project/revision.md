@@ -75,6 +75,13 @@
 | R28 | "Llumnix\*가 원래 Llumnix보다 낫다"는 옛 규칙으로 채점한 EXP-53에만 기대고, 부하 균등화 Llumnix는 논문 규칙으로 잰 적이 없다 | evidence.md | — |
 | R29 | 단일 반복인 그림·칸: Figure 1·4·5·17 전부, Figure 18의 0.9·1.1배 칸 전부와 1.3배의 PolyServe·Llumnix\* | evidence.md | evidence.md 각 그림 절 |
 
+### 2026-10-12 이후 리비전 작업 중에 나온 항목
+
+| # | 무엇 | 확인 | 근거 |
+|---|---|---|---|
+| R30 | **FluidServe의 처리 중인 요청 장부는 관측이 아니라 추정이다.** full-mode의 엔진 상태에는 running 요청의 ID가 없고(`cms.proto` `InstanceStatus`, 대기 요청 ID만 있다) 완료 신호도 없다. 장부(`fluidserve_registry.go` `reconcile`)는 클래스 출력 길이 분포로 "끝났을 것"을 판정하거나, 장부 수가 엔진의 running 수보다 많으면 **먼저 보낸 요청부터** 지운다. 그래서 수는 맞아도 누가 남았는지가 틀릴 수 있고(나중에 보낸 짧은 요청이 끝났는데 먼저 보낸 긴 요청을 지움), 그 인스턴스의 가장 빡빡한 예산(gate)이 틀린 집합에서 계산된다. demo1016r1(35 req/s 8분)에서 장부에서 빠진 13,078건 중 12,626건(96%)이 수 맞추기, 452건이 길이 분포 판정이었다. 논문은 처리 중인 요청을 추적한다고 서술한다 | 직접 대조(코드·계수) | `revision_scheduler` 브랜치에서 수정(아래 결정 기록) |
+| R31 | **Llumnix\*는 새 요청 자신의 TPOT 예산으로만 판정한다**(`filters.go` `thresholdFor`, 저장소가 07-28에 넣은 요청별 예산). 인스턴스에서 처리 중인 요청의 예산은 보지 않는다. llm-d(`podMinTPOTSLO`)와 FluidServe는 처리 중인 요청 중 가장 빡빡한 예산을 쓴다. 드라이버 `run_exp108_t75.sh`의 `slo` arm 주석("전역값 한 쌍")은 07-28 변경 전의 설명으로 낡았다 | 직접 대조 | `revision_scheduler`에 변형 추가 |
+
 ---
 
 ## 결정 기록
@@ -96,3 +103,20 @@
 - `CLAUDE.md`를 1,320줄에서 약 190줄로 줄였다. 실험 운영 함정 A~F와 판정 규칙 전문은 지우지 않고
   `.claude/skills/exp-run/traps.md`로 옮겼다. 세션 시작 훅은 이 파일의 "지금 상태" 절을 넣는다.
 - 새 실험 기록은 `Agent_applications/agent_motivation_experiment/experiments/`에 EXP-141부터 쓴다.
+
+### 2026-10-19 — 처리 중인 요청을 관측으로 추적한다 (브랜치 `revision_scheduler`)
+
+- **방식**: 게이트웨이가 요청의 응답이 끝날 때(성공·실패 모두) 스케줄러에 `/complete`를 보낸다(게이트웨이
+  `--notify-completion`). 엔진은 고치지 않는다 — 논문의 "without modifying the serving engine"을 유지하고, llm-d의 EPP와
+  Llumnix lite-mode가 쓰는 것과 같은 방식이다(사용자 결정, 엔진이 running ID를 보고하는 방식과 비교한 뒤).
+  기존 `/release`는 건드리지 않는다(다른 정책의 CMS local account에 영향을 주므로).
+- **장부의 구간**: 스케줄러가 보낸 순간부터 완료 통지까지. 엔진 대기열에 있는 요청도 포함(사용자 결정).
+  완료 통지가 배치 기록보다 먼저 와도 이기도록 완료를 5분 기억하고, 통지가 오지 않는 경우는 20분 나이 제한으로 지운다
+  (`pkg/scheduler/policy/residency.go`).
+- **FluidServe** `--exact-residency`: 장부에서 요청이 빠지는 것은 완료 통지(그리고 엔진 재시작, 나이 제한)뿐이다.
+  길이 분포 판정과 수 맞추기는 하지 않는다. 진행 토큰 수 j와 decode 시작 시각은 지금처럼 step 번호로 추정한다
+  (사용자 결정: 바꾸는 것을 "누가 처리 중인가" 하나로).
+- **Llumnix\* 변형** `--slo-incumbent-tpot-gate`: TPOT 필터의 기준을 0.9 × min(새 요청의 TPOT 예산, 그 인스턴스에서
+  처리 중인 요청들의 **명목** TPOT 예산 최솟값)으로 바꾼다. TTFT 필터와 한 단계 TPOT 예측은 그대로(사용자 결정).
+- 세 플래그 모두 기본 꺼짐이고, 꺼 두면 지금 동작과 같다. 단위 테스트 `residency_test.go`(옛 장부가 먼저 보낸 요청을
+  지우는 것도 재현한다). 실험(arm, 조건)은 아직 정하지 않았다.

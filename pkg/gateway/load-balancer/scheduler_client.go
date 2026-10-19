@@ -309,3 +309,45 @@ RETRY:
 		return
 	}
 }
+
+// NotifyComplete tells the scheduler that req's response has ended, so that its
+// residency record (which requests are on which instance) is exact rather than
+// inferred. Sent asynchronously: unlike Release, nothing waits on it, and a lost
+// notice is covered by the scheduler's age backstop. Same gateway/readiness
+// guard as Release.
+func (cb *SchedulerClient) NotifyComplete(req *types.RequestContext) {
+	if req == nil {
+		return
+	}
+	localEndpoint := cb.kac.GetLocalEndpoint().String()
+	if localEndpoint != req.SchedulingCtx.GatewayId || !cb.kac.IsRemoteReady() {
+		return
+	}
+	data, err := json.Marshal(&types.SchedulingRequest{Id: req.Id, GatewayId: localEndpoint})
+	if err != nil {
+		klog.Errorf("marshal complete notice error: %v", err)
+		return
+	}
+	url := fmt.Sprintf("http://%s/complete", cb.kac.GetRemoteEndpoint().String())
+	token := cb.config.ServiceToken
+	go func() {
+		for try := 0; try < 2; try++ {
+			httpReq, _ := http.NewRequest("POST", url, bytes.NewBuffer(data))
+			if len(token) > 0 {
+				httpReq.Header.Add("Authorization", token)
+			}
+			resp, err := cb.schClient.Do(httpReq)
+			if err == nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return
+				}
+				klog.Warningf("complete notice for request %s: status %d", req.Id, resp.StatusCode)
+				return
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		klog.Warningf("complete notice for request %s failed", req.Id)
+	}()
+}
