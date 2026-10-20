@@ -27,24 +27,21 @@
   `ms_dev/scripts/gpu_idle.sh start|stop|status`. Sionna는 `~/NXC_GPU`(공유 경로 사본)와 `~/sionna/.venv`에 설치했고,
   설치가 `~/.bashrc`에 `LD_LIBRARY_PATH` 한 줄을 더했다(원본 `/home/nxclab/tools/bin-backup/bashrc.pre-sionna`).
   **2026-10-13 18:33부터 Sionna 모드**(엔진 0). 같은 날 17:10~17:37에는 powertest 프로젝트가 엔진을 내리고 GPU를 빌렸다.
-- **EXP-141·142 진행 중 (2026-10-20, 바깥·안쪽 저장소 브랜치 `revision_scheduler`)**
-  - **EXP-141**(12:51~): Llumnix SLO(`slot75`), Llumnix SLO + 처리 중 기준(`slot75inc`), FluidServe(`fsv3capgnofrct75`),
-    FluidServe + 정확 장부(`fsexact`)를 정적 35 req/s 8분 × 3회(`exp141r1..3`). 체인 `/home/nxclab/scratch/exp141_main.sh`,
-    로그 `/home/nxclab/tools/exp141_main.log`. **한 시간 trace는 미뤘다**(사용자 결정) — 체인은 정적 3회 뒤 감시 스크립트가 멈춘다.
-  - **r1에서 찾은 것**: `fsexact`의 deepresearch admitted 99.9 → 62.6%(TTFT 초과 665건, 전부 인스턴스 8002). 원인 둘:
-    ① 진행 토큰 수 j가 "보낸 뒤 엔진 step 수"라 엔진 대기열의 요청도 토큰을 만드는 것으로 센다 — 옛 장부는 j가 큰 요청부터
-    지워 이 오차를 우연히 상쇄했고, 정확 장부에서는 outflow가 2.7배로 부풀어 8002의 KV 여유를 과대평가했다(R32).
-    ② 첫 토큰 마감이 feasibility에 없다(R9) — TTFT를 넘긴 926건 중 905건은 스케줄러 자신의 예상으로도 10 s를 넘었다.
-    상세는 EXP-141 기록 6절.
-  - **EXP-142**(EXP-141 정적 3회 직후 자동 시작, `/home/nxclab/scratch/exp141_then_142.sh`, 로그
-    `/home/nxclab/tools/exp142_chain.log`): 스케줄러를 `d2d6d184`(`--exact-progress` 추가 = A)로 바꾸고, 4분 smoke(대기 요청
-    구별 확인) 뒤 FluidServe(논문), + 정확 장부 + A(`fsexactprog`), + B 첫 토큰 마감 플래그(`fsexactprogdl`)를 35 req/s × 3회.
-    끝나면 Sionna를 켠다. 18:30 무렵 끝날 예정. 판정 규칙은 EXP-142 기록 3절.
-  - 바이너리: 게이트웨이 `590242b0`(원래 `0efb664a`는 `tools/bin-backup/gateway-exp10.pre-exp141`), 스케줄러 EXP-141은
-    `33e7cc10`, EXP-142는 `d2d6d184`(원래 `6dc9f035`는 `tools/bin-backup/scheduler-exp07.pre-exp141`).
-  - **다른 프로젝트(powertest)의 실험이 10-21 01:50에 예약**되어 있다. 두 체인 모두 그 전에 끝나도록 했다.
-- **다음**: EXP-141(네 arm, 3회)과 EXP-142를 각 기록 3절의 규칙으로 판정한다. 그 다음 미룬 한 시간 trace(드라이버
-  `run_exp141_hour.sh`, 고친 구성으로 할지 결정 필요), 그리고 아래 확인 항목을 검토해 리비전 범위를 정한다.
+- **EXP-141·142·143 끝 (2026-10-20, 바깥·안쪽 저장소 브랜치 `revision_scheduler`, 23:35부터 다시 Sionna 모드)**
+  - **EXP-141**(정적 35 req/s × 3회): 정확 장부(`fsexact`)는 모든 도착 기준 "차이 없음"(75.8 대 77.3)이지만 deepresearch admitted
+    64.0%로 무너졌다 — 원인은 진행 토큰 수 j가 엔진 대기열의 요청도 세는 것(R32)과 첫 토큰 마감이 feasibility에 없는 것(R9).
+    Llumnix SLO + 처리 중 기준(`slot75inc`)은 admitted 38.3 → 25.8로 **나빠졌다**(Q2-a 예상과 반대). 상세는 EXP-141 기록 6절.
+  - **EXP-142**(정적 3회, 스케줄러 `3251836a`): 엔진 대기 요청 제외(`--exact-progress`, `fsexactprog`)로 deepresearch가 96.0%까지
+    회복했으나 판정 기준 98에 못 미쳤다. 여기에 첫 토큰 마감 조건(`fsexactprogdl`)을 더하면 deepresearch 100.0, 모든 도착 75.6으로
+    논문 구성(76.2)과 구별되지 않는다. 첫 시도는 엔진 요청 ID 형식(`cmpl-<id>-0`)을 처리하지 못해 smoke에서 멈췄다(기록 5절).
+  - **EXP-143**(한 시간 trace, arm마다 1회): 원본 두 arm이 논문 그림 1(EXP-109 반복 2)과 goodput 1% 안팎으로 맞았다. 처리 중 기준은
+    여기서는 Llumnix SLO를 **개선했다**(모든 도착 27.9 → 44.0) — 정적 실험과 반대 방향이고 원인은 아직 안 봤다. 고친 FluidServe는
+    76.5 대 78.6으로 구별할 수 없고 deepresearch 95.6.
+  - 바이너리: `bin/`에 지금 스케줄러 `3251836a`, 게이트웨이 `590242b0`. 논문 run의 것(스케줄러 `6dc9f035`, 게이트웨이 `0efb664a`)은
+    `tools/bin-backup/*.pre-exp141`. 소스는 그 뒤 UUID ID 처리를 한 번 더 고쳤다(`41a667f`, 아직 빌드·배포 안 함).
+- **다음**: ① EXP-142 r2·r3에서 deepresearch가 실패한 원인(엔진 대기 요청 제외만 켰을 때). ② 처리 중 기준이 정적에서는 나쁘고
+  한 시간 trace에서는 좋은 이유. ③ 클러스터 HBM pool 아이디어(chat 인스턴스 KV 60%가 비어 있음)의 측정 — 2026-10-20 대화에서
+  재사용률을 재는 실험부터 하자고 제안했다(결정 안 됨). ④ 아래 확인 항목을 검토해 리비전 범위를 정한다.
 
 ---
 
