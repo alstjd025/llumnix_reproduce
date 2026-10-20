@@ -25,15 +25,24 @@
   `ms_dev/scripts/gpu_idle.sh start|stop|status`. Sionna는 `~/NXC_GPU`(공유 경로 사본)와 `~/sionna/.venv`에 설치했고,
   설치가 `~/.bashrc`에 `LD_LIBRARY_PATH` 한 줄을 더했다(원본 `/home/nxclab/tools/bin-backup/bashrc.pre-sionna`).
   **2026-10-13 18:33부터 Sionna 모드**(엔진 0). 같은 날 17:10~17:37에는 powertest 프로젝트가 엔진을 내리고 GPU를 빌렸다.
-- **EXP-141 진행 중 (2026-10-20 12:51 시작, 바깥·안쪽 저장소 브랜치 `revision_scheduler`)**: 처리 중인 요청을 게이트웨이
-  완료 통지로 정확히 추적(R30)하고, Llumnix SLO를 처리 중인 요청의 가장 빡빡한 TPOT 예산으로 판정하게 한 변형(R31)을 잰다.
-  arm 넷 — Llumnix SLO(`slot75`), Llumnix SLO + 처리 중 기준(`slot75inc`), FluidServe(`fsv3capgnofrct75`), FluidServe + 정확
-  장부(`fsexact`). 정적 35 req/s 8분 × 3회(`exp141r1..3`) → 한 시간 trace × 1회(`exp141hr1`) → Sionna 자동 재시작. 20:45 무렵
-  끝날 예정. 체인 `/home/nxclab/scratch/exp141_main.sh`, 로그 `/home/nxclab/tools/exp141_main.log`. 바이너리: 스케줄러
-  `33e7cc10`(`bin/`, 원래 `6dc9f035`는 `tools/bin-backup/scheduler-exp07.pre-exp141`), 게이트웨이 `590242b0`(원래 `0efb664a`는
-  `tools/bin-backup/gateway-exp10.pre-exp141`). 1단계(새 빌드 확인 77.3%, smoke 둘, 장부 키 버그 수정)는 EXP-141 기록 6절.
-  **다른 프로젝트(powertest)의 실험이 10-21 01:50에 예약**되어 있어 체인이 그 전에 끝나도록 했다.
-- **다음**: EXP-141 결과를 판정하고(기록 3절의 규칙), 아래 확인 항목을 검토해 리비전 범위를 정한다.
+- **EXP-141·142 진행 중 (2026-10-20, 바깥·안쪽 저장소 브랜치 `revision_scheduler`)**
+  - **EXP-141**(12:51~): Llumnix SLO(`slot75`), Llumnix SLO + 처리 중 기준(`slot75inc`), FluidServe(`fsv3capgnofrct75`),
+    FluidServe + 정확 장부(`fsexact`)를 정적 35 req/s 8분 × 3회(`exp141r1..3`). 체인 `/home/nxclab/scratch/exp141_main.sh`,
+    로그 `/home/nxclab/tools/exp141_main.log`. **한 시간 trace는 미뤘다**(사용자 결정) — 체인은 정적 3회 뒤 감시 스크립트가 멈춘다.
+  - **r1에서 찾은 것**: `fsexact`의 deepresearch admitted 99.9 → 62.6%(TTFT 초과 665건, 전부 인스턴스 8002). 원인 둘:
+    ① 진행 토큰 수 j가 "보낸 뒤 엔진 step 수"라 엔진 대기열의 요청도 토큰을 만드는 것으로 센다 — 옛 장부는 j가 큰 요청부터
+    지워 이 오차를 우연히 상쇄했고, 정확 장부에서는 outflow가 2.7배로 부풀어 8002의 KV 여유를 과대평가했다(R32).
+    ② 첫 토큰 마감이 feasibility에 없다(R9) — TTFT를 넘긴 926건 중 905건은 스케줄러 자신의 예상으로도 10 s를 넘었다.
+    상세는 EXP-141 기록 6절.
+  - **EXP-142**(EXP-141 정적 3회 직후 자동 시작, `/home/nxclab/scratch/exp141_then_142.sh`, 로그
+    `/home/nxclab/tools/exp142_chain.log`): 스케줄러를 `d2d6d184`(`--exact-progress` 추가 = A)로 바꾸고, 4분 smoke(대기 요청
+    구별 확인) 뒤 FluidServe(논문), + 정확 장부 + A(`fsexactprog`), + B 첫 토큰 마감 플래그(`fsexactprogdl`)를 35 req/s × 3회.
+    끝나면 Sionna를 켠다. 18:30 무렵 끝날 예정. 판정 규칙은 EXP-142 기록 3절.
+  - 바이너리: 게이트웨이 `590242b0`(원래 `0efb664a`는 `tools/bin-backup/gateway-exp10.pre-exp141`), 스케줄러 EXP-141은
+    `33e7cc10`, EXP-142는 `d2d6d184`(원래 `6dc9f035`는 `tools/bin-backup/scheduler-exp07.pre-exp141`).
+  - **다른 프로젝트(powertest)의 실험이 10-21 01:50에 예약**되어 있다. 두 체인 모두 그 전에 끝나도록 했다.
+- **다음**: EXP-141(네 arm, 3회)과 EXP-142를 각 기록 3절의 규칙으로 판정한다. 그 다음 미룬 한 시간 trace(드라이버
+  `run_exp141_hour.sh`, 고친 구성으로 할지 결정 필요), 그리고 아래 확인 항목을 검토해 리비전 범위를 정한다.
 
 ---
 
@@ -89,6 +98,7 @@
 |---|---|---|---|
 | R30 | **FluidServe의 처리 중인 요청 장부는 관측이 아니라 추정이다.** full-mode의 엔진 상태에는 running 요청의 ID가 없고(`cms.proto` `InstanceStatus`, 대기 요청 ID만 있다) 완료 신호도 없다. 장부(`fluidserve_registry.go` `reconcile`)는 클래스 출력 길이 분포로 "끝났을 것"을 판정하거나, 장부 수가 엔진의 running 수보다 많으면 **먼저 보낸 요청부터** 지운다. 그래서 수는 맞아도 누가 남았는지가 틀릴 수 있고(나중에 보낸 짧은 요청이 끝났는데 먼저 보낸 긴 요청을 지움), 그 인스턴스의 가장 빡빡한 예산(gate)이 틀린 집합에서 계산된다. demo1016r1(35 req/s 8분)에서 장부에서 빠진 13,078건 중 12,626건(96%)이 수 맞추기, 452건이 길이 분포 판정이었다. 논문은 처리 중인 요청을 추적한다고 서술한다 | 직접 대조(코드·계수) | `revision_scheduler` 브랜치에서 수정(아래 결정 기록) |
 | R31 | **Llumnix\*는 새 요청 자신의 TPOT 예산으로만 판정한다**(`filters.go` `thresholdFor`, 저장소가 07-28에 넣은 요청별 예산). 인스턴스에서 처리 중인 요청의 예산은 보지 않는다. llm-d(`podMinTPOTSLO`)와 FluidServe는 처리 중인 요청 중 가장 빡빡한 예산을 쓴다. 드라이버 `run_exp108_t75.sh`의 `slo` arm 주석("전역값 한 쌍")은 07-28 변경 전의 설명으로 낡았다 | 직접 대조 | `revision_scheduler`에 변형 추가 |
+| R32 | **FluidServe의 진행 토큰 수 j는 "보낸 뒤 엔진 step 수"라 엔진 대기열·preemption 중인 요청도 토큰을 만드는 것으로 센다**(`fluidserve_registry.go` `reconcile`, `system.md` 8.4). 그 j로 KV outflow(곧 끝나서 나갈 KV)를 예측한다. 논문 구성에서는 장부를 엔진 running 수에 맞추며 j가 큰 요청부터 지우는 추정이 이 오차를 우연히 상쇄했다. 장부만 정확히 하면(EXP-141 `fsexact`) 메모리가 한계인 인스턴스의 outflow가 2.7배, 투영 KV가 실제보다 21% 낮아져 deepresearch를 과하게 받고 TTFT가 무너진다. 엔진이 매 상태마다 보내는 대기 요청 ID로 고친 `--exact-progress`를 EXP-142에서 잰다. 논문 식 2(KV 투영)의 정확성 서술과 직결된다 | EXP-141 r1 직접 분석 | EXP-141 기록 6절, EXP-142 |
 
 ---
 
