@@ -18,7 +18,7 @@ os.environ.setdefault("PYTHONPYCACHEPREFIX", "/home/nxclab/scratch/pycache")
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
-from fastapi.responses import FileResponse  # noqa: E402
+from fastapi.responses import HTMLResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
 import api  # noqa: E402
@@ -35,18 +35,36 @@ app.mount("/static", StaticFiles(directory=os.path.join(HERE, "web")), name="sta
 
 
 @app.middleware("http")
-async def _revalidate_static(request, call_next):
-    """web/ 파일에 Cache-Control이 없으면 브라우저가 수정 시각으로 신선도를 추정해 고친 JS를 몇 시간씩 다시 받지 않는다
-    (2026-10-20 메모 칸이 새로고침 전까지 보이지 않았다). no-cache = 매번 ETag로 확인하고, 바뀌지 않았으면 304."""
+async def _cache_headers(request, call_next):
+    """/static/: 매번 ETag로 확인(no-cache). /s/<버전>/: 주소가 버전마다 다르므로 오래 cache해도 된다."""
     resp = await call_next(request)
     if request.url.path.startswith("/static/"):
         resp.headers["Cache-Control"] = "no-cache"
+    elif request.url.path.startswith("/s/"):
+        resp.headers["Cache-Control"] = "max-age=86400, immutable"
     return resp
+
+
+# 화면 파일의 주소에 이번 기동의 버전을 넣는다(/s/<버전>/app.js). 페이지 모듈은 서로 상대 경로로 import하므로 전부 새 주소가
+# 되고, 브라우저가 예전 주소로 받아 둔 cache는 쓰이지 않는다. Cache-Control만으로는 header가 붙기 전에 받아 둔 파일을
+# 브라우저가 계속 신선하다고 보는 경우가 남는다(2026-10-20: 강력 새로고침 전까지 새 열이 안 보였다).
+# 버전 = web/ 아래 파일들의 가장 최근 수정 시각. 화면을 고친 뒤 run.sh restart 하면 바뀐다.
+def _web_version():
+    newest = 0.0
+    for root, _, files in os.walk(os.path.join(HERE, "web")):
+        for f in files:
+            newest = max(newest, os.path.getmtime(os.path.join(root, f)))
+    return str(int(newest))
+
+
+WEB_VERSION = _web_version()
+app.mount(f"/s/{WEB_VERSION}", StaticFiles(directory=os.path.join(HERE, "web")), name="versioned")
 
 
 @app.get("/")
 def index():
-    return FileResponse(os.path.join(HERE, "web", "index.html"), headers={"Cache-Control": "no-store"})
+    html = open(os.path.join(HERE, "web", "index.html"), encoding="utf-8").read().replace('"/static/', f'"/s/{WEB_VERSION}/')
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
 def _score_loop():

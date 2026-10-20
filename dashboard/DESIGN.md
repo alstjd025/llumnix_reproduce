@@ -76,6 +76,9 @@ def run_xxx(ctx):          # cluster 검사는 ctx가 None, run 검사는 dict(n
 반환), `web/app.js`의 `PAGES`에 한 줄을 더한다. 그래프는 `lib/charts.js`의 `timeLines`·`timeBars`·`cdf`만 쓴다.
 시간축 그래프에 같은 `group`을 주면 확대·커서가 같이 움직인다.
 
+**화면 파일의 주소** — `index.html`이 부르는 파일은 `/s/<버전>/…`로 나간다(버전 = 기동 때 `web/` 파일의 최근 수정 시각).
+화면을 고치면 `./run.sh restart`로 버전을 바꿔야 브라우저가 새 파일을 받는다(브라우저 cache를 피하는 방법이 이것뿐이었다, 2026-10-20).
+
 **바꾼 뒤 확인** — `./run.sh restart`, `tests/test_known_runs.py`, 그리고 화면을 바꿨으면
 `PLAYWRIGHT_BROWSERS_PATH=/home/nxclab/tools/pw-browsers /home/nxclab/tools/dashboard-venv/bin/python tests/screenshot.py <디렉토리> '#/runs'`
 (콘솔 오류가 있으면 종료 코드 1).
