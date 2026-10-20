@@ -34,6 +34,16 @@ for m in pkgutil.iter_modules(api.__path__):
 app.mount("/static", StaticFiles(directory=os.path.join(HERE, "web")), name="static")
 
 
+@app.middleware("http")
+async def _revalidate_static(request, call_next):
+    """web/ 파일에 Cache-Control이 없으면 브라우저가 수정 시각으로 신선도를 추정해 고친 JS를 몇 시간씩 다시 받지 않는다
+    (2026-10-20 메모 칸이 새로고침 전까지 보이지 않았다). no-cache = 매번 ETag로 확인하고, 바뀌지 않았으면 304."""
+    resp = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/")
 def index():
     return FileResponse(os.path.join(HERE, "web", "index.html"), headers={"Cache-Control": "no-store"})
