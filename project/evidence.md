@@ -117,6 +117,13 @@ request goodput       : 제때인 요청 수 ÷ 분석 창(초)   (거절·미�
   1 % 남짓 작다 — 분석 구간을 59.25분에서 자른 값일 수 있으나 확인 못 함). ⚠ **vLLM\*의 y(약 24 %)는 admitted 45.4 %와
   다르다.** 그 arm은 도착의 52 %가 한 시간 안에 끝나지 않았는데(`class_latency_outcome_rows.csv`: 미완 51.7~52.3 %),
   미완을 위반으로 세면 21.6~21.8 %라 24 %와도 맞지 않는다. ⚠ Llumnix*의 39 %는 어느 반복의 반올림과도 다르다.
+- **해결 (2026-10-20)**: 사용자가 그린 스크립트를 넣었다 — 안쪽 `paper_figures/figure1_scripts/scatter/fig_goodput_vs_attainment.py`,
+  입력은 같은 폴더 `data/verdicts/`의 EXP-109 요청별 ladder95 판정(다섯 arm × 2반복), 그림에는 **반복 2만** 그린다. 사본을 돌려 얻은
+  반복 2 값: FluidServe 11,458 tok/s / 99.96 % / 거절 20.9 %, llm-d 8,491 / 97.95 / 42.4, PolyServe 8,527 / 65.16 / 18.0,
+  Llumnix* 6,814 / 47.11 / 39.4, vLLM* 2,815 / 24.22 / 0.0 — PDF에서 읽은 점·거절률과 모두 맞는다. 위 표의 EXP-109 열과 다른 이유:
+  ① x는 0~59.25분 구간의 제때 도착한 출력 토큰/초다(위 표는 다른 구간). ② y는 met / (도착 − 거절)이고 **끝나지 않은 요청을
+  admitted이면서 실패로 센다** — vLLM*의 24 %가 이것이다(미완을 분모에서 빼면 45.4 %). ③ Llumnix* 거절률은 이 계산으로 39.4 %라
+  39 %가 맞다. 남은 일: 그림이 반복 하나만 쓴다는 것, vLLM* 점의 정의를 본문에 적을지.
 - **같이 적을 것**: vLLM*은 거절 0 %인 대신 **도착의 52 %가 끝나지 않았다**(EXP-109 §5 ⑤). 반복 하나의 점이다.
   **개정 때 할 일**: 그림을 EXP-109 CSV에서 그리는 스크립트를 만들고(두 반복을 다 표시), vLLM* 점의 정의를 정한다.
 
@@ -421,8 +428,8 @@ request goodput       : 제때인 요청 수 ÷ 분석 창(초)   (거절·미�
 |---|---|---|---|
 | 초록 | "up to 3.67× the request goodput on production-derived traces" | §4.8, 8B 절반 예산 대 Llumnix* | ✓ (두 반복 평균) |
 | 초록 | "up to 3.11× the token goodput on synthetic workloads" | §4.10, 45 req/s 대 Llumnix* | ✓ |
-| 그림 1 | 거절률 llm-d 42 %, FluidServe 21 %, PolyServe 18 %, Llumnix 39 %, vLLM 0 % | §4.1, EXP-109 반복 2 | ⚠ 스크립트 없음, Llumnix 39 %는 39.9 % |
-| 그림 1 | 축 값(점 위치) | §4.1 | ⚠ 네 점은 반복 2와 맞음, vLLM*의 y 24 % 불일치 |
+| 그림 1 | 거절률 llm-d 42 %, FluidServe 21 %, PolyServe 18 %, Llumnix 39 %, vLLM 0 % | §4.1, EXP-109 반복 2 | ✓ 스크립트 `figure1_scripts/scatter`로 재계산해 일치(2026-10-20) |
+| 그림 1 | 축 값(점 위치) | §4.1 | ✓ 다섯 점 모두 일치. vLLM*의 y 24 %는 미완 요청을 admitted·실패로 센 값 |
 | 서론 | "1.42–3.11× on synthetic workloads" (vLLM 포함 문장) | §4.10 | ✗ 범위는 vLLM* 제외, 35 req/s 이상 |
 | 서론 | "1.10–4.04× on the Azure trace" | §4.8 | ⚠ 70B만 확인(1.41~4.29), 전체 범위 미확인 |
 | 서론 | "99.8–100% SLO attainment among admitted requests" | §4.9, §4.10 | ✓ 정적 99.75~99.91, 70B 한 시간 99.9~100.0 (8B ⚠) |
