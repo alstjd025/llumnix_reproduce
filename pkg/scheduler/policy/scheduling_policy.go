@@ -353,8 +353,18 @@ func (p *DispatchPolicy) Schedule(request *types.SchedulingRequest) error {
 		// from the gateway's /complete notice. Recorded for every policy when
 		// either flag is on, so the tracker means the same thing whichever
 		// policy reads it.
-		for i := range schResults {
-			Residency().Place(request.Id, schResults[i].Id(), request.TpotSloMs)
+		// Keyed by the instance view's id -- the id filters see through
+		// GetInstanceId() -- not by LLMInstance.Id(), which is an endpoint-style
+		// name ("<ip>_instance<n>_<m>") that no filter ever looks up. Keying by the
+		// latter left the incumbent gate reading an empty record on every
+		// instance (EXP-141 smoke, 2026-10-20: 178,948 judgements, none bound by
+		// a resident).
+		for _, group := range selectedInstances {
+			for _, inst := range group {
+				if inst != nil {
+					Residency().Place(request.Id, inst.GetInstanceId(), request.TpotSloMs)
+				}
+			}
 		}
 	}
 	request.SchedulingResult = schResults
