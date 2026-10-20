@@ -71,3 +71,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 .md table { width: auto; margin: 8px 0; } .md td, .md th { border: 1px solid var(--line); position: static; }
 .md pre { background: var(--bg); padding: 8px; border-radius: 6px; overflow-x: auto; font: 12px var(--mono); }
 .md code { font: 12px var(--mono); background: var(--bg); padding: 0 3px; border-radius: 3px; }
+
+.note-box textarea { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--mono); background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; resize: vertical; }
+.note-box .toolbar { margin-top: 6px; }

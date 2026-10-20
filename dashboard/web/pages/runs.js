@@ -4,6 +4,7 @@ import { api, esc, fmt, badge, worst, ago } from "../lib/util.js";
 const COLS = [
   { k: "name", t: "run", f: r => `<a href="#/run/${encodeURIComponent(r.name)}" class="mono">${esc(r.name)}</a>` },
   { k: "session", t: "세션" },
+  { k: "memo", t: "메모", f: r => r.memo ? `<span class="muted" title="${esc(r.memo)}">${esc(r.memo.slice(0, 40))}${r.memo.length > 40 ? "…" : ""}</span>` : "" },
   { k: "arm_label", t: "arm", f: r => `${esc(r.arm_label || "")}${r.arm_label !== r.arm ? `<div class="muted mono">${esc(r.arm || "")}</div>` : ""}` },
   { k: "rate", t: "req/s", num: true, f: r => fmt(r.rate, 1) },
   { k: "duration_min", t: "분", num: true, f: r => fmt(r.duration_min, 0) },
@@ -55,7 +56,10 @@ export async function render(el) {
   });
   q.addEventListener("input", draw);
   cmp.addEventListener("click", () => { const [a, b] = [...sel]; location.hash = `#/diff/${encodeURIComponent(a)}/${encodeURIComponent(b)}`; });
-  const load = async () => { rows = await api("/runs"); draw(); };
+  const load = async () => {
+    const [rs, notes] = await Promise.all([api("/runs"), api("/notes").catch(() => ({}))]);
+    rows = rs.map(r => ({ ...r, memo: notes.run?.[r.name]?.first || "" })); draw();
+  };
   await load();
   const t = setInterval(load, 20000);
   return () => clearInterval(t);

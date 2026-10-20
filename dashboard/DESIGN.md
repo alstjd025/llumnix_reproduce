@@ -17,7 +17,10 @@ cd /home/nxclab/llumnix_reproduce/dashboard
 
 ## 지키는 원칙
 
-1. **읽기만 한다.** kubectl은 `get`·`logs`와 `exec … md5sum /proc/1/exe`만 실행할 수 있다(`sources/k8s.py`가 다른 명령을
+1. **읽기만 한다 — 사용자 메모 하나만 예외다.** run·실험마다 사용자가 남기는 메모(2026-10-20 사용자 요청)는
+   `config.yaml`의 `paths.notes`(= 바깥 저장소 `project/notes/`)에 Markdown 파일 하나씩으로 쓴다(`runs/<run 이름>.md`,
+   `exp/<기록 파일 이름>.md`, `sources/notes.py`, `api/notes.py`, 화면은 `web/lib/notes.js`). 메모를 비워도 파일은 지우지 않고,
+   다른 탭에서 먼저 바뀐 메모는 덮어쓰지 않는다(409). git 커밋·push는 사용자가 한다. 그 밖에는 — kubectl은 `get`·`logs`와 `exec … md5sum /proc/1/exe`만 실행할 수 있다(`sources/k8s.py`가 다른 명령을
    예외로 막는다). 결과 디렉토리(`results/`) 안에는 아무것도 쓰지 않는다. 측정 경로의 파일(`bin/`, `workloads/`,
    `run_experiment.py` 등)은 읽기만 한다. 실험을 시작·중지하는 기능은 넣지 않는다(2026-10-12 사용자 결정).
 2. **수치는 논문과 같은 코드에서 나온다.** 채점은 `analysis_scripts/request_level/deadline_ladder_attainment.py`의

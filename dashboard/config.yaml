@@ -14,6 +14,9 @@ paths:
   deployed_scheduler: /home/nxclab/llumnix_reproduce/bin/scheduler-exp07
   deployed_gateway: /home/nxclab/llumnix_reproduce/bin/gateway-exp10
   chain_logs: /home/nxclab/tools          # 드라이버 연쇄 스크립트의 로그(*.log)가 쌓이는 곳
+  # 사용자 메모(2026-10-20 사용자 요청). 대시보드가 파일을 쓰는 유일한 저장소 경로다 — git에 커밋해 보존한다.
+  # run 메모는 runs/<run 이름>.md, 실험 메모는 exp/<기록 파일 이름>.md
+  notes: /home/nxclab/llumnix_reproduce/project/notes
   # 대시보드가 만드는 파일은 전부 여기에 쓴다. results/ 안에는 아무것도 쓰지 않는다.
   cache: /home/nxclab/scratch/dashboard-cache
   # 단계 4에서 쓸 디스크 사용량 감시 대상

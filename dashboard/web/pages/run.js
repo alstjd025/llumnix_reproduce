@@ -2,6 +2,7 @@
 // 시간축 그래프는 모두 같은 group이라 하나를 확대하면 나머지도 같이 움직인다.
 import { api, esc, fmt, badge, checkHtml } from "../lib/util.js";
 import { drawSeries, drawLatency, drawFluidServe, stackHtml } from "../lib/runviews.js";
+import { noteBox } from "../lib/notes.js";
 
 
 export async function render(el, { name }) {
@@ -16,6 +17,7 @@ export async function render(el, { name }) {
       <span>${esc(info.arm_label || "")} <span class="muted mono">${esc(info.arm || "")}</span></span>
       <span class="muted">세션 ${esc(info.session || "")} · ${info.rate ? fmt(info.rate, 1) + " req/s" : "trace"} · ${d.config?.duration_min ? fmt(d.config.duration_min, 0) + "분" : "길이는 trace가 정한다"} · ${esc(d.config?.workload || "")}</span>
       ${info.excluded?.length ? badge("warn", "제외 목록: " + info.excluded.join(" / ")) : ""}</div>
+    <h2>메모 <span class="muted" style="font-weight:400;font-size:12px">— project/notes/runs/에 파일로 남는다</span></h2><div id="r-note"></div>
     ${scoreHtml(d)}
     <h2>검사</h2><div>${(d.checks || []).map(c => checkHtml(c)).join("") || '<span class="muted">채점이 끝나면 나온다</span>'}</div>
     <h2>엔진 <span class="muted" style="font-weight:400;font-size:12px">— 러너 수집기가 1초마다 기록한 vLLM 메트릭. 선 하나가 엔진 하나(포트)</span></h2>
@@ -32,6 +34,7 @@ export async function render(el, { name }) {
     <div id="stack"></div>
     <h2>run_config.json</h2><div class="panel"><details><summary>펼치기</summary><pre class="mono">${esc(JSON.stringify(d.config, null, 1))}</pre></details></div>`;
 
+  noteBox(body.querySelector("#r-note"), "run", name);
   const [series, lat, fs] = await Promise.all([
     api(`/runs/${encodeURIComponent(name)}/series`).catch(e => ({ error: String(e) })),
     d.score_state === "scored" ? api(`/runs/${encodeURIComponent(name)}/latency`).catch(() => null) : null,
