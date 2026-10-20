@@ -51,6 +51,9 @@ arms:
   polyservept75: PolyServe
   vllmcachet75: "vLLM*"
   slot75: Llumnix SLO
+  # EXP-141 (2026-10-20). 원본 arm의 이름은 기존 run과 그림이 쓰는 이름이라 그대로 두고, 새 arm에만 무엇이 다른지를 붙인다.
+  fsexact: FluidServe + 정확 장부
+  slot75inc: Llumnix SLO + 처리 중 기준
   llmdslot75: llm-d
   loadbalance: Llumnix
 
