@@ -83,7 +83,16 @@ start() {
 stop() {
   if [ "$(workers)" -gt 0 ]; then
     say "Sionna를 끈다"
-    "$SIONNA_DIR/stop_sionna_rt.sh" || "$SIONNA_DIR/stop_sionna_rt.sh" --force || die "Sionna 프로세스가 남아 있다"
+    # 종료 스크립트는 신호를 보낸 뒤 1~2초만 보고 "남아 있다"고 실패한다. worker는 GPU 메모리를 내려놓느라
+    # 몇 초 더 걸리므로(2026-10-20 실제로 이것 때문에 체인이 멈췄다) 그 판정을 믿지 않고 직접 기다린다.
+    "$SIONNA_DIR/stop_sionna_rt.sh" >/dev/null 2>&1 || true
+    for i in $(seq 1 30); do [ "$(workers)" -eq 0 ] && break; sleep 2; done
+    if [ "$(workers)" -gt 0 ]; then
+      "$SIONNA_DIR/stop_sionna_rt.sh" --force >/dev/null 2>&1 || true
+      for i in $(seq 1 30); do [ "$(workers)" -eq 0 ] && break; sleep 2; done
+    fi
+    [ "$(workers)" -eq 0 ] || die "Sionna worker $(workers)개가 2분이 지나도 남아 있다"
+    say "Sionna 종료 확인"
   else
     say "Sionna가 돌고 있지 않다"
   fi

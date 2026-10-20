@@ -528,6 +528,63 @@ GATEWAY_CAPACITY = {
 }
 
 
+# EXP-141 (2026-10-19). Exact residency: the scheduler keeps a record of which
+# requests are on which instance, filled at placement and emptied by the
+# gateway's completion notice. These flags are NOT --fluidserve-* and so are not
+# covered by drop_flags; they are written only when their variable is exactly
+# "1" and REMOVED otherwise, so (a) one arm's setting cannot survive into the
+# next and (b) a binary built before they existed never sees them (an unknown
+# flag is a start-up crash, not a warning).
+RESIDENCY_FLAGS = {
+    "FS_EXACT_RESIDENCY": "--exact-residency",
+    "SLO_INCUMBENT_TPOT_GATE": "--slo-incumbent-tpot-gate",
+}
+# The field each flag lands in, as printed in main.go's start-up config dump.
+RESIDENCY_FIELDS = {
+    "--exact-residency": "ExactResidency",
+    "--slo-incumbent-tpot-gate": "SloIncumbentTpotGate",
+}
+GATEWAY_NOTIFY_ENV = "GW_NOTIFY_COMPLETION"
+GATEWAY_NOTIFY_FLAG = "--notify-completion"
+
+
+def remove_flag(args, name):
+    """Drop every occurrence of a flag (either form) from an argv list."""
+    out, i = [], 0
+    while i < len(args):
+        cur = args[i]
+        if cur == name:
+            i += 2 if i + 1 < len(args) and not args[i + 1].startswith("-") else 1
+            continue
+        if cur.startswith(name + "="):
+            i += 1
+            continue
+        out.append(cur)
+        i += 1
+    return out
+
+
+def verify_residency(logs):
+    """Compare the residency flags the process read against what was asked."""
+    import re
+    m = re.search(r"scheduler config: &\{(.*)", logs)
+    dump = m.group(1) if m else ""
+    bad = 0
+    for env_key, flag in RESIDENCY_FLAGS.items():
+        want = os.environ.get(env_key) == "1"
+        field = RESIDENCY_FIELDS[flag]
+        g = re.search(field + r":(true|false)", dump)
+        got = None if g is None else g.group(1) == "true"
+        if got is None and not want:
+            continue  # a binary that predates the flag runs it as off
+        if got != want:
+            print(f"  MISMATCH: {field} read as {got}, asked {want} ({env_key})")
+            bad = 1
+        else:
+            print(f"  verified: {field}={str(got).lower()}")
+    return bad
+
+
 def kubectl(*args, check=True, stdin=None):
     r = subprocess.run(["kubectl", "-n", NS, *args], capture_output=True,
                        text=True, input=stdin)
@@ -725,6 +782,12 @@ def main():
     if unset:
         print("  ablations left at the compiled default (env unset): "
               + " ".join(sorted(unset)))
+    for env_key, flag in RESIDENCY_FLAGS.items():
+        if os.environ.get(env_key) == "1":
+            args = set_flag(args, flag, "true")
+            print(f"  residency: {flag}=true")
+        else:
+            args = remove_flag(args, flag)
     c["args"] = args
 
     vols = spec.setdefault("volumes", [])
@@ -789,6 +852,8 @@ def main():
     # within seconds of the pod becoming ready.
     full = kubectl("logs", target, check=False)
     if verify_effective(a.policy, full, args) != 0:
+        return 1
+    if verify_residency(full) != 0:
         return 1
 
     if set_gateway(a.policy, a.timeout) != 0:
@@ -1164,6 +1229,9 @@ def gateway_want(policy, env=None):
         was = want.get(flag)
         want[flag] = f"{digits}ms"
         notes.append(f"{name}={want[flag]} overrides {flag} (policy default {was})")
+    if env.get(GATEWAY_NOTIFY_ENV) == "1":
+        want[GATEWAY_NOTIFY_FLAG] = "true"
+        notes.append(f"{GATEWAY_NOTIFY_ENV}=1, completion notices on")
     return want, notes
 
 
@@ -1185,6 +1253,9 @@ def set_gateway(policy, timeout):
     c = d["spec"]["template"]["spec"]["containers"][0]
     args = list(c.get("args", []))
     before = list(args)
+    if GATEWAY_NOTIFY_FLAG not in want:
+        # Removed rather than left: same reasons as RESIDENCY_FLAGS.
+        args = remove_flag(args, GATEWAY_NOTIFY_FLAG)
     for k, v in want.items():
         args = set_flag(args, k, v)
     if args == before:
