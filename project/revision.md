@@ -9,8 +9,10 @@
   다시 확인했다. 리비전 중 틀린 곳이 보이면 바로 고친다.
 - 제출 논문 PDF `ms_dev/submitted_version/`은 git에서 뺐다(`.gitignore`, 사용자 결정). 텍스트 추출본은
   `/home/nxclab/scratch/paper.txt`(`pdftotext -layout`, 두 단이 섞여 있다).
-- **클러스터**: 2026-10-10에 다시 세웠다. k3s + Llumnix(Llama-3.1-70B × 4, TP=2), 스케줄러 `6dc9f035`, 게이트웨이
-  `0efb664a`. llm-d 스택은 아직 안 세웠다. 도는 실험 없음.
+- **클러스터**: 2026-10-10에 다시 세웠다. k3s + Llumnix(Llama-3.1-70B × 4, TP=2). llm-d 스택은 아직 안 세웠다.
+  **2026-10-20부터 `bin/`의 바이너리가 바뀌었다**(아래 EXP-141·142 줄) — 논문 run의 바이너리(스케줄러 `6dc9f035`, 게이트웨이
+  `0efb664a`)는 `/home/nxclab/tools/bin-backup/*.pre-exp141`. 같은 GPU를 쓰는 다른 프로젝트(powertest)가 엔진을 내렸다
+  올리고 Sionna를 끄고 켠다.
 - **재현**: EXP-108 정적 35 req/s(FluidServe·PolyServe 각 2회)와 EXP-109 한 시간 trace(FluidServe 1회)가 논문 값과
   반복 간 편차 안에서 일치(`evidence.md` 재현 확인 절).
 - **데이터**: 논문 run 대부분(EXP-108 이후)은 맥 SSD에만 있다. 가져오는 시점은 사용자가 정한다.
