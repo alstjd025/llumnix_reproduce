@@ -25,7 +25,15 @@
   `ms_dev/scripts/gpu_idle.sh start|stop|status`. Sionna는 `~/NXC_GPU`(공유 경로 사본)와 `~/sionna/.venv`에 설치했고,
   설치가 `~/.bashrc`에 `LD_LIBRARY_PATH` 한 줄을 더했다(원본 `/home/nxclab/tools/bin-backup/bashrc.pre-sionna`).
   **2026-10-13 18:33부터 Sionna 모드**(엔진 0). 같은 날 17:10~17:37에는 powertest 프로젝트가 엔진을 내리고 GPU를 빌렸다.
-- **다음**: 아래 확인 항목을 검토하고 리비전 범위를 정한다.
+- **EXP-141 진행 중 (2026-10-20 12:51 시작, 바깥·안쪽 저장소 브랜치 `revision_scheduler`)**: 처리 중인 요청을 게이트웨이
+  완료 통지로 정확히 추적(R30)하고, Llumnix SLO를 처리 중인 요청의 가장 빡빡한 TPOT 예산으로 판정하게 한 변형(R31)을 잰다.
+  arm 넷 — Llumnix SLO(`slot75`), Llumnix SLO + 처리 중 기준(`slot75inc`), FluidServe(`fsv3capgnofrct75`), FluidServe + 정확
+  장부(`fsexact`). 정적 35 req/s 8분 × 3회(`exp141r1..3`) → 한 시간 trace × 1회(`exp141hr1`) → Sionna 자동 재시작. 20:45 무렵
+  끝날 예정. 체인 `/home/nxclab/scratch/exp141_main.sh`, 로그 `/home/nxclab/tools/exp141_main.log`. 바이너리: 스케줄러
+  `33e7cc10`(`bin/`, 원래 `6dc9f035`는 `tools/bin-backup/scheduler-exp07.pre-exp141`), 게이트웨이 `590242b0`(원래 `0efb664a`는
+  `tools/bin-backup/gateway-exp10.pre-exp141`). 1단계(새 빌드 확인 77.3%, smoke 둘, 장부 키 버그 수정)는 EXP-141 기록 6절.
+  **다른 프로젝트(powertest)의 실험이 10-21 01:50에 예약**되어 있어 체인이 그 전에 끝나도록 했다.
+- **다음**: EXP-141 결과를 판정하고(기록 3절의 규칙), 아래 확인 항목을 검토해 리비전 범위를 정한다.
 
 ---
 
