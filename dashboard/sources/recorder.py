@@ -103,7 +103,17 @@ def _loop():
         try:
             if t0 - _state["checked"] > 10:   # 진행 중인 run 찾기는 10초마다(디렉토리를 훑어야 해서)
                 rs = runs.list_runs()
-                act = next((r["name"] for r in rs if r["state"] == "running"), None)
+                # 수집기가 지금도 쓰고 있는 run만 진행 중으로 본다(gateway.jsonl이 15초 안에 바뀜). "2분 동안 파일이 안
+                # 바뀌면 끝" 기준을 쓰면, run이 끝난 뒤 2분 동안 다음 조건의 스케줄러 값이 이 run에 기록된다
+                # (2026-10-20 exp141r1 FluidServe run에 63개가 잘못 들어갔다).
+                act = None
+                for r in rs:
+                    if r["state"] != "running":
+                        continue
+                    gw = os.path.join(runs.run_dir(r["name"]), "server_metrics", "gateway.jsonl")
+                    if os.path.exists(gw) and t0 - os.path.getmtime(gw) < 15:
+                        act = r["name"]
+                        break
                 _state["checked"] = t0
                 if act != _state["active"]:
                     _state.update(active=act, sched_pod=None, samples=0)

@@ -240,10 +240,16 @@ def run_fluidserve(name):
     t0 = timeseries.run_t0(sm) or 0
     inst_port = (dispatch.parse(d) or {}).get("inst_port", {})
     rows = timeseries.tail(p)
+    # 수집기가 기록한 구간 밖의 표본은 이 run의 것이 아니다(기록기가 예전에 run이 끝난 뒤 2분 동안 다음 조건의 값을
+    # 이어 적었다). 그 구간으로 자른다.
+    gw = timeseries.tail(os.path.join(sm, "gateway.jsonl"))
+    if gw:
+        lo, hi = gw[0]["t"], gw[-1]["t"]
+        rows = [r for r in rows if lo - 5 <= r["t"] <= hi + 5]
     t = [r["t"] - t0 for r in rows]
     per_inst, per_tier, fleet = {}, {}, {}
     keys = set()
-    for r in rows[-20:]:
+    for r in rows:   # 모든 표본에서 키를 모은다(마지막 몇 개만 보면 그 순간 비어 있던 인스턴스가 통째로 빠진다)
         keys.update(k for k in r if k not in ("t",))
     for k in sorted(keys):
         name_, _, lab = k.partition("|")
