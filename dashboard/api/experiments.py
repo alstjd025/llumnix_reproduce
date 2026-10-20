@@ -13,7 +13,10 @@ def list_exps():
     out = []
     for e in experiments.list_experiments():
         e = dict(e)
-        e["n_runs"] = sum(experiments.run_matches(e, r) for r in rs)
+        mine = [r for r in rs if experiments.run_matches(e, r)]
+        e["n_runs"] = len(mine)
+        ts = [r["start_ts"] for r in mine if r.get("start_ts")]
+        e["first_ts"], e["last_ts"] = (min(ts), max(ts)) if ts else (None, None)
         out.append(e)
     return jsonable(out)
 
@@ -28,7 +31,7 @@ def one(kind: str, f: str):
     for r in runs.list_runs():
         if not experiments.run_matches(e, r):
             continue
-        row = dict(name=r["name"], arm_label=r["arm_label"], rate=r.get("rate"), state=r["state"], excluded=r["excluded"])
+        row = dict(name=r["name"], arm_label=r["arm_label"], rate=r.get("rate"), state=r["state"], excluded=r["excluded"], start_ts=r.get("start_ts"))
         if r["state"] == "done":
             st, sc = scoring.status(r["name"], runs.run_dir(r["name"]))
             row["score_state"] = st

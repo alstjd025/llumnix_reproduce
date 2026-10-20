@@ -83,6 +83,19 @@ def state_of(d, now=None):
     return "incomplete", age
 
 
+def start_ts(d):
+    """수집기(server_metrics/gateway.jsonl) 첫 줄의 t. 없으면 run_config.json의 수정 시각."""
+    try:
+        with open(os.path.join(d, "server_metrics", "gateway.jsonl"), encoding="utf-8") as f:
+            return float(json.loads(f.readline())["t"])
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    try:
+        return os.path.getmtime(os.path.join(d, "run_config.json"))
+    except OSError:
+        return None
+
+
 def run_config(d):
     try:
         return json.load(open(os.path.join(d, "run_config.json")))
@@ -105,6 +118,10 @@ def list_runs():
         st, age = state_of(d, now)
         info = parse_name(n)
         info.update(name=n, state=st, idle_s=age, excluded=exclusion_reasons(n, excl))
+        # 실험 시각: 이름의 날짜·시각은 러너 파드의 시계(UTC-7)라서 쓰지 않고, 수집기가 처음 남긴 epoch 시각을 쓴다.
+        # 끝 시각은 디렉토리 안 파일의 마지막 수정 시각. 화면은 브라우저의 시간대로 보여 준다.
+        info["start_ts"] = start_ts(d)
+        info["end_ts"] = now - age
         cfg = run_config(d)
         if cfg:
             info["duration_min"] = cfg.get("duration_min")

@@ -1,8 +1,10 @@
 // ③ 결과: run 목록. 글자로 거르고, 열 머리를 누르면 정렬하고, 두 개를 고르면 설정을 비교한다.
-import { api, esc, fmt, badge, worst, ago } from "../lib/util.js";
+import { api, esc, fmt, badge, worst, ago, when, resizableColumns } from "../lib/util.js";
 
 const COLS = [
   { k: "name", t: "run", f: r => `<a href="#/run/${encodeURIComponent(r.name)}" class="mono">${esc(r.name)}</a>` },
+  { k: "start_ts", t: "시작", num: true, f: r => `<span class="mono">${when(r.start_ts)}</span>`, tip: "수집기가 처음 기록한 시각(브라우저 시간대)" },
+  { k: "len_min", t: "걸린 분", num: true, f: r => fmt(r.len_min, 0), tip: "시작부터 디렉토리의 마지막 수정까지(엔진 재시작·warmup·drain 포함)" },
   { k: "session", t: "세션" },
   { k: "memo", t: "메모", f: r => r.memo ? `<span class="muted" title="${esc(r.memo)}">${esc(r.memo.slice(0, 40))}${r.memo.length > 40 ? "…" : ""}</span>` : "" },
   { k: "arm_label", t: "arm", f: r => `${esc(r.arm_label || "")}${r.arm_label !== r.arm ? `<div class="muted mono">${esc(r.arm || "")}</div>` : ""}` },
@@ -47,6 +49,7 @@ export async function render(el) {
       rs.map(r => `<tr class="${r.excluded?.length ? "excluded" : ""}"><td><input type="checkbox" data-n="${esc(r.name)}" ${sel.has(r.name) ? "checked" : ""}></td>
         ${COLS.map(c => `<td class="${c.num ? "num" : ""}">${c.f ? c.f(r) : esc(r[c.k] ?? "")}</td>`).join("")}</tr>`).join("");
     cmp.disabled = sel.size !== 2;
+    resizableColumns(tbl, "runs");
   };
   tbl.addEventListener("click", e => {
     const th = e.target.closest("th[data-k]");
@@ -58,7 +61,7 @@ export async function render(el) {
   cmp.addEventListener("click", () => { const [a, b] = [...sel]; location.hash = `#/diff/${encodeURIComponent(a)}/${encodeURIComponent(b)}`; });
   const load = async () => {
     const [rs, notes] = await Promise.all([api("/runs"), api("/notes").catch(() => ({}))]);
-    rows = rs.map(r => ({ ...r, memo: notes.run?.[r.name]?.first || "" })); draw();
+    rows = rs.map(r => ({ ...r, memo: notes.run?.[r.name]?.first || "", len_min: r.start_ts && r.end_ts ? (r.end_ts - r.start_ts) / 60 : null })); draw();
   };
   await load();
   const t = setInterval(load, 20000);

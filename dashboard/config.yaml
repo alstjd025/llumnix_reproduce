@@ -46,6 +46,10 @@ known_binaries:
   9e8f68b6: "scheduler usec — 제출 시점 배포본(EXP-140의 마이크로초 계측 포함)"
   063e1c85: "scheduler pre-exp140 백업"
   0efb664a: "gateway exp10 — 2026-07-27 빌드"
+  33e7cc10: "scheduler EXP-141 — 정확 장부·처리 중 기준(revision_scheduler)"
+  d2d6d184: "scheduler EXP-142 첫 시도 — 엔진 대기 요청 제외(ID 형식 결함 있음)"
+  3251836a: "scheduler EXP-142 두 번째 시도·EXP-143 — 엔진 대기 요청 제외(ID 끝 -0 처리)"
+  590242b0: "gateway EXP-141~ — 완료 통지(--notify-completion)"
 
 # arm 이름(run 디렉토리 이름의 네 번째 칸) → 화면에 쓰는 이름.
 # 이름 규칙은 CLAUDE.md의 "정책 이름은 이렇게 부른다" 표를 따른다.

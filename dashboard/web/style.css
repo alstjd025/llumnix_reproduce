@@ -74,3 +74,6 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .note-box textarea { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--mono); background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px; resize: vertical; }
 .note-box .toolbar { margin-top: 6px; }
+.col-grip { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 2; }
+.col-grip:hover { background: var(--accent); opacity: .35; }
+table.resized th, table.resized td { overflow: hidden; text-overflow: ellipsis; }
