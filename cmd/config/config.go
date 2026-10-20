@@ -272,6 +272,11 @@ type FullModeSchedulingConfig struct {
 	// against min(the request's own TPOT budget, the tightest TPOT budget among
 	// the requests resident there) instead of the request's own budget alone.
 	SloIncumbentTpotGate bool
+	// ExactProgress (2026-10-20): FluidServe counts a resident's progress only
+	// over engine steps it was not in the engine's waiting queue (from the
+	// engine status's waiting_requests ids), and leaves waiting residents out
+	// of the expected KV outflow.
+	ExactProgress bool
 
 	// PolyServe
 	PolyserveTierDecodeTokens string
@@ -422,6 +427,9 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 	flags.BoolVar(&c.ExactResidency, "exact-residency", false,
 		"FluidServe: retire a resident request on the gateway's completion notice (needs gateway --notify-completion) "+
 			"instead of inferring its departure")
+	flags.BoolVar(&c.ExactProgress, "exact-progress", false,
+		"FluidServe: count a resident's progress only over steps it was not in the engine's waiting queue, "+
+			"and leave waiting residents out of the expected KV outflow")
 	flags.BoolVar(&c.SloIncumbentTpotGate, "slo-incumbent-tpot-gate", false,
 		"slo policy: judge an instance's predicted TPOT against min(own TPOT SLO, tightest TPOT SLO resident there) "+
 			"(needs gateway --notify-completion)")

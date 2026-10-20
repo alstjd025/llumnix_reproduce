@@ -1156,8 +1156,19 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 			st.NumUncomputedTokensSchedulerRunningPrefills+
 			view.cmsView.NumUncomputedTokensInflightDispatchPrefillRequests))
 
+	p.registry.noteWaiting(f.id, st.WaitingRequests)
 	f.live = p.registry.reconcile(f.id, int(st.SchedulerRunningToDecodeRequestsNum),
 		f.stepID, nowMs)
+	if p.registry.exactProgress {
+		w := 0
+		for i := range f.live {
+			if f.live[i].waiting {
+				w++
+			}
+		}
+		metrics.Gauge("scheduler_fluidserve_waiting_residents",
+			metrics.Labels{{Name: "instance", Value: f.id}}).Set(float64(w))
+	}
 
 	// Prefill the instance will carry over the horizon, not just what is queued
 	// at this instant.
@@ -1382,6 +1393,11 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 func (p *fluidserveDispatchPolicy) expectedOutflow(live []liveRequest, horizon int) float64 {
 	mean, variance := 0.0, 0.0
 	for _, r := range live {
+		if r.waiting {
+			// Queued or preempted: it is not decoding, so it cannot finish
+			// within the horizon from where it stands (--exact-progress).
+			continue
+		}
 		prof := p.lengths.forTier(r.tier)
 		if prof == nil {
 			continue
@@ -3271,6 +3287,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		tierArr:   map[int]*tierArrivalState{},
 	}
 	policy.registry.exactResidency = p.ExactResidency
+	policy.registry.exactProgress = p.ExactProgress
 	policy.preRegisterCapMetrics()
 	policy.registry.SetPerInstanceDelay(cfg.perInstanceDelay)
 	if cfg.prefixAware {
@@ -3318,7 +3335,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3334,7 +3351,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency)
+		p.ExactResidency, p.ExactProgress)
 
 	go policy.reportLoop()
 	return policy

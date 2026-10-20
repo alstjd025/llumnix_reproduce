@@ -157,15 +157,27 @@ type dispatchRecord struct {
 	// class average and measure something else.
 	oracleTokens int
 	lastJ        int
+
+	// --exact-progress (2026-10-20). Steps this request spent in the engine's
+	// waiting queue (not decoding), and the step at which that was last checked.
+	// j subtracts them, so a queued or preempted request does not appear to
+	// produce a token on every engine step.
+	stalledSteps int64
+	lastStepSeen int64
+	waitingNow   bool
 }
 
 // liveRequest is the per-request view the decision path consumes.
 type liveRequest struct {
-	id          string
-	tier        int
-	j           int     // output tokens produced so far
-	kvTokens    float64 // prompt + produced, before reconciliation scaling
-	remaining   float64 // expected output tokens still to come
+	id        string
+	tier      int
+	j         int     // output tokens produced so far
+	kvTokens  float64 // prompt + produced, before reconciliation scaling
+	remaining float64 // expected output tokens still to come
+	// waiting: the engine reported this request in its waiting queue at the
+	// last status (--exact-progress). It is not decoding, so it cannot release
+	// KV within the horizon and is left out of the expected outflow.
+	waiting     bool
 	allowanceMs float64 // time per remaining token that still meets the budget
 	// nominalMs is the per-token budget the tier starts with, independent of
 	// how this particular request has fared. The live allowance moves as a
@@ -352,6 +364,51 @@ type requestRegistry struct {
 	// they keep the count right and the membership wrong (residency.go).
 	exactResidency      bool
 	retiredByCompletion int64
+
+	// exactProgress (--exact-progress, 2026-10-20): progress j counts only the
+	// engine steps a request was NOT in the engine's waiting queue. Without it j
+	// is "steps since dispatch", which credits queued and preempted requests with
+	// a token per step; with exact residency those requests stay in the registry,
+	// look nearly finished, and inflate the expected KV outflow (EXP-141 r1:
+	// outflow 2.7x on the memory-bound instance, deep-research TTFT misses).
+	exactProgress bool
+	// waitingNow[instanceID] is the set of request ids the engine last reported
+	// as waiting, trimmed to registry ids. Set by noteWaiting before reconcile.
+	waitingNow map[string]map[string]struct{}
+}
+
+// trimEngineRequestID turns an id as the engine reports it ("cmpl-<uuid>",
+// possibly with a "+<suffix>") into the id the scheduler placed. Same rule as
+// cms.trimRequestID.
+func trimEngineRequestID(id string) string {
+	for _, pre := range []string{"chatcmpl-", "cmpl-"} {
+		if strings.HasPrefix(id, pre) {
+			id = strings.TrimPrefix(id, pre)
+			break
+		}
+	}
+	if i := strings.Index(id, "+"); i >= 0 {
+		id = id[:i]
+	}
+	return id
+}
+
+// noteWaiting records which requests the engine reports as waiting on an
+// instance. Only read when exactProgress is on.
+func (r *requestRegistry) noteWaiting(instanceID string, engineIDs []string) {
+	if !r.exactProgress {
+		return
+	}
+	set := make(map[string]struct{}, len(engineIDs))
+	for _, id := range engineIDs {
+		set[trimEngineRequestID(id)] = struct{}{}
+	}
+	r.mu.Lock()
+	if r.waitingNow == nil {
+		r.waitingNow = map[string]map[string]struct{}{}
+	}
+	r.waitingNow[instanceID] = set
+	r.mu.Unlock()
 }
 
 func newRequestRegistry(lengths *lengthModel, budgets *classBudgets) *requestRegistry {
@@ -557,7 +614,22 @@ func (r *requestRegistry) reconcile(
 			r.retiredByCompletion++
 			continue
 		}
-		j := int(stepID - rec.stepAtDispatch - int64(rec.prefillSteps))
+		if r.exactProgress {
+			if rec.lastStepSeen == 0 {
+				rec.lastStepSeen = rec.stepAtDispatch
+			}
+			_, isWaiting := r.waitingNow[instanceID][id]
+			if stepID > rec.lastStepSeen {
+				// The state seen now is taken to have held since the last
+				// status: a coarse attribution at the status interval (0.5 s).
+				if isWaiting {
+					rec.stalledSteps += stepID - rec.lastStepSeen
+				}
+				rec.lastStepSeen = stepID
+			}
+			rec.waitingNow = isWaiting
+		}
+		j := int(stepID - rec.stepAtDispatch - int64(rec.prefillSteps) - rec.stalledSteps)
 		if j < 0 {
 			j = 0
 		}
@@ -828,6 +900,7 @@ func (r *requestRegistry) liveViewLocked(rec *dispatchRecord, j int, nowMs int64
 		allowanceMs:  allowance,
 		nominalMs:    r.nominalAllowanceLocked(rec.tier),
 		oracleTokens: rec.oracleTokens,
+		waiting:      rec.waitingNow,
 	}
 }
 

@@ -538,11 +538,14 @@ GATEWAY_CAPACITY = {
 RESIDENCY_FLAGS = {
     "FS_EXACT_RESIDENCY": "--exact-residency",
     "SLO_INCUMBENT_TPOT_GATE": "--slo-incumbent-tpot-gate",
+    # EXP-141 follow-up (2026-10-20): progress that skips engine-queued steps.
+    "FS_EXACT_PROGRESS": "--exact-progress",
 }
 # The field each flag lands in, as printed in main.go's start-up config dump.
 RESIDENCY_FIELDS = {
     "--exact-residency": "ExactResidency",
     "--slo-incumbent-tpot-gate": "SloIncumbentTpotGate",
+    "--exact-progress": "ExactProgress",
 }
 GATEWAY_NOTIFY_ENV = "GW_NOTIFY_COMPLETION"
 GATEWAY_NOTIFY_FLAG = "--notify-completion"

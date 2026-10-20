@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"llumnix/pkg/cms"
 	"llumnix/pkg/consts"
@@ -132,4 +133,48 @@ func TestExactResidencyRetiresOnlyOnCompletion(t *testing.T) {
 	live = old.reconcile("e0", 1, 1300, now+5000)
 	assert.Len(t, live, 1)
 	assert.Equal(t, "late", live[0].id)
+}
+
+func TestExactProgressFreezesQueuedRequests(t *testing.T) {
+	res := Residency()
+	res.reset()
+	defer res.reset()
+
+	r := testRegistry(t)
+	r.exactResidency = true
+	r.exactProgress = true
+	now := int64(1_000_000)
+	// One prefill chunk; dispatched at engine step 1000.
+	r.onDispatch("e0", "q", 50, 1000, 8192, 1000, now, 0, 0, 0)
+
+	// The engine reports it waiting (with its id decorated the way the engine
+	// decorates ids) for 200 steps: no progress, and it is marked waiting.
+	r.noteWaiting("e0", []string{"cmpl-q+0"})
+	live := r.reconcile("e0", 0, 1100, now+1000)
+	require.Len(t, live, 1)
+	assert.True(t, live[0].waiting)
+	assert.Equal(t, 0, live[0].j)
+	live = r.reconcile("e0", 0, 1200, now+2000)
+	assert.Equal(t, 0, live[0].j)
+
+	// It leaves the queue: progress counts only the steps since.
+	r.noteWaiting("e0", nil)
+	live = r.reconcile("e0", 1, 1300, now+3000)
+	assert.False(t, live[0].waiting)
+	assert.Equal(t, 1300-1000-1-200, live[0].j)
+
+	// Without the flag the same history credits every step since dispatch.
+	old := testRegistry(t)
+	old.exactResidency = true
+	old.onDispatch("e0", "q", 50, 1000, 8192, 1000, now, 0, 0, 0)
+	old.noteWaiting("e0", []string{"cmpl-q"})
+	live = old.reconcile("e0", 0, 1200, now+2000)
+	assert.Equal(t, 1200-1000-1, live[0].j)
+	assert.False(t, live[0].waiting)
+}
+
+func TestTrimEngineRequestID(t *testing.T) {
+	assert.Equal(t, "abc", trimEngineRequestID("cmpl-abc"))
+	assert.Equal(t, "abc", trimEngineRequestID("chatcmpl-abc+3"))
+	assert.Equal(t, "abc", trimEngineRequestID("abc"))
 }
