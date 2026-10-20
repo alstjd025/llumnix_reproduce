@@ -173,10 +173,20 @@ func TestExactProgressFreezesQueuedRequests(t *testing.T) {
 	assert.False(t, live[0].waiting)
 }
 
+func TestNoteWaitingMatchesVLLMCompletionIDs(t *testing.T) {
+	r := testRegistry(t)
+	r.exactProgress = true
+	// vLLM 0.12 /v1/completions reports a single-prompt request as "cmpl-<id>-0".
+	// A UUID whose last group is all digits must still match as itself.
+	r.noteWaiting("e0", []string{"cmpl-4b418342-8d56-43b6-9f4a-a9b4c40f1705-0", "cmpl-4b418342-8d56-43b6-9f4a-123456789012"})
+	_, a := r.waitingNow["e0"]["4b418342-8d56-43b6-9f4a-a9b4c40f1705"]
+	_, b := r.waitingNow["e0"]["4b418342-8d56-43b6-9f4a-123456789012"]
+	assert.True(t, a)
+	assert.True(t, b)
+}
+
 func TestTrimEngineRequestID(t *testing.T) {
 	assert.Equal(t, "abc", trimEngineRequestID("cmpl-abc"))
 	assert.Equal(t, "abc", trimEngineRequestID("chatcmpl-abc+3"))
 	assert.Equal(t, "abc", trimEngineRequestID("abc"))
-	// What vLLM 0.12 /v1/completions actually reports for a single-prompt request.
-	assert.Equal(t, "cdaf9ca1881f16ff91474d939cb2a23a", trimEngineRequestID("cmpl-cdaf9ca1881f16ff91474d939cb2a23a-0"))
 }

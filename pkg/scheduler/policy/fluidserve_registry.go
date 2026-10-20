@@ -390,16 +390,6 @@ func trimEngineRequestID(id string) string {
 	if i := strings.Index(id, "+"); i >= 0 {
 		id = id[:i]
 	}
-	// vLLM's /v1/completions handler names each prompt of a request
-	// "cmpl-<X-Request-Id or body request_id>-<prompt index>" (serving_completion.py,
-	// request_id_item), so a single-prompt request reaches the engine as
-	// "cmpl-<id>-0". The gateway's ids are hex strings without '-', so a trailing
-	// "-<digits>" is that index, not part of the id.
-	if i := strings.LastIndex(id, "-"); i >= 0 && i < len(id)-1 {
-		if _, err := strconv.Atoi(id[i+1:]); err == nil {
-			id = id[:i]
-		}
-	}
 	return id
 }
 
@@ -411,7 +401,20 @@ func (r *requestRegistry) noteWaiting(instanceID string, engineIDs []string) {
 	}
 	set := make(map[string]struct{}, len(engineIDs))
 	for _, id := range engineIDs {
-		set[trimEngineRequestID(id)] = struct{}{}
+		id = trimEngineRequestID(id)
+		set[id] = struct{}{}
+		// vLLM's /v1/completions handler names each prompt of a request
+		// "cmpl-<X-Request-Id or body request_id>-<prompt index>"
+		// (serving_completion.py, request_id_item), so a single-prompt request
+		// reaches the engine as "cmpl-<id>-0". The gateway's ids are UUIDs, whose
+		// last group can itself be all digits, so both forms go in the set
+		// rather than always cutting a numeric tail: the extra entry matches no
+		// other record.
+		if i := strings.LastIndex(id, "-"); i > 0 && i < len(id)-1 {
+			if _, err := strconv.Atoi(id[i+1:]); err == nil {
+				set[id[:i]] = struct{}{}
+			}
+		}
 	}
 	r.mu.Lock()
 	if r.waitingNow == nil {
