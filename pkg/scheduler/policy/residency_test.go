@@ -149,7 +149,7 @@ func TestExactProgressFreezesQueuedRequests(t *testing.T) {
 
 	// The engine reports it waiting (with its id decorated the way the engine
 	// decorates ids) for 200 steps: no progress, and it is marked waiting.
-	r.noteWaiting("e0", []string{"cmpl-q+0"})
+	r.noteWaiting("e0", []string{"cmpl-q-0"})
 	live := r.reconcile("e0", 0, 1100, now+1000)
 	require.Len(t, live, 1)
 	assert.True(t, live[0].waiting)
@@ -177,4 +177,6 @@ func TestTrimEngineRequestID(t *testing.T) {
 	assert.Equal(t, "abc", trimEngineRequestID("cmpl-abc"))
 	assert.Equal(t, "abc", trimEngineRequestID("chatcmpl-abc+3"))
 	assert.Equal(t, "abc", trimEngineRequestID("abc"))
+	// What vLLM 0.12 /v1/completions actually reports for a single-prompt request.
+	assert.Equal(t, "cdaf9ca1881f16ff91474d939cb2a23a", trimEngineRequestID("cmpl-cdaf9ca1881f16ff91474d939cb2a23a-0"))
 }
