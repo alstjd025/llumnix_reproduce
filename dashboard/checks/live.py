@@ -40,7 +40,9 @@ def live_chain(ctx):
     top = ch[0]
     ev = [f"{c['name']}: {c['state']} (pid {', '.join(str(p['pid']) for p in c['pids']) or '없음'})" for c in ch[:5]]
     if top["state"] == "died":
-        return Result("fail", f"{top['name']}: 프로세스가 없는데 체인 종료 표시도 없다 — 중간에 죽었다", ev + top["tail"][-8:])
+        return Result("fail", f"{top['name']}: 프로세스가 없는데 체인 종료 표시도 ABORT 줄도 없다 — 중간에 죽었다", ev + top["tail"][-8:])
+    if top["state"] == "aborted":
+        return Result("fail", f"{top['name']}: 스크립트가 자기 검사에 걸려 스스로 멈췄다(ABORT/FAILED) — 원인을 봐야 한다", ev + top["tail"][-8:])
     if top["marks"].get("abort") or top["marks"].get("failed"):
         bad = (top["marks"].get("abort") or []) + (top["marks"].get("failed") or [])
         return Result("warn", f"{top['name']}: 로그에 ABORT/FAILED 줄이 있다", ev + bad)

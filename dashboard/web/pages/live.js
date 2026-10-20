@@ -35,10 +35,10 @@ export async function render(el) {
     $("#lv-checks").innerHTML = `<div class="toolbar">${badge(worst(d.checks))}</div>` + d.checks.map(c => checkHtml(c)).join("");
     $("#lv-chains").querySelectorAll("details[open]").forEach(x => openChains.add(x.dataset.log));
     $("#lv-chains").innerHTML = d.chains.length ? d.chains.map((c, i) => {
-      const st = { running: "ok", done: "na", died: "fail" }[c.state];
+      const st = { running: "ok", done: "na", aborted: "fail", died: "fail" }[c.state];
       const bad = [...(c.marks.abort || []), ...(c.marks.failed || [])];
       return `<div class="check ${st}"><details data-log="${esc(c.log)}" ${openChains.has(c.log) || (i === 0 && !openChains.size) ? "open" : ""}>
-        <summary>${badge(st, { running: "살아 있음", done: "끝남", died: "죽음" }[c.state])} <b class="mono">${esc(c.name)}</b>
+        <summary>${badge(st, { running: "살아 있음", done: "끝남", aborted: "스스로 멈춤", died: "죽음" }[c.state])} <b class="mono">${esc(c.name)}</b>
           <span class="muted">마지막 기록 ${ago(c.idle_s)}${c.pids.length ? " · pid " + c.pids.map(p => p.pid).join(", ") : ""}</span>
           ${bad.length ? badge("warn", "ABORT/FAILED 줄 " + bad.length) : ""}</summary>
         ${c.pids.length ? `<div class="why mono">${c.pids.map(p => esc(p.cmd)).join("<br>")}</div>` : ""}

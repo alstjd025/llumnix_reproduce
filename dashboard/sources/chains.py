@@ -79,8 +79,12 @@ def list_chains(hours=24):
             state = "running"
         elif finished:
             state = "done"
+        elif any(MARKERS["abort"].search(ln) or MARKERS["failed"].search(ln) for ln in last):
+            # 프로세스가 없고 마지막 다섯 줄에 ABORT/FAILED가 있다 = 스크립트가 자기 검사에 걸려 스스로 멈췄다.
+            # 갑자기 죽은 것(아무 표시 없이 끝남)과 구별한다(2026-10-20 EXP-142 smoke 검사가 멈춘 것이 "죽음"으로 보였다).
+            state = "aborted"
         else:
-            # 프로세스가 없는데 마지막 줄에 체인 종료 표시가 없다 = 중간에 죽었다
+            # 프로세스가 없는데 마지막 줄에 종료 표시도 ABORT도 없다 = 중간에 죽었다(kill, OOM, 셸 종료)
             state = "died"
         out.append(dict(log=p, name=os.path.basename(p), mtime=mt, idle_s=now - mt, state=state,
                         pids=[dict(pid=k, cmd=v[:300]) for k, v in alive.items()],
