@@ -26,6 +26,7 @@
 | 실험 결과 run (2026-08-27까지, 1,296개) | Lustre `/NHNHOME/storage/home_backup_2026-08-28/results_priority/results/` |
 | 실험 결과 run (전부 1,841개, **EXP-108 이후 545개는 여기에만**) | 사용자의 맥 외장 SSD `/Volumes/volume1/nxc13_backup_2026-09-23/` |
 | 토큰별 타이밍(`tbt_events.jsonl`)·agent 로그 | Lustre `.../home_backup_2026-08-28/results_archive_2026-10-05/` (zstd 압축) |
+| 리비전 실험 EXP-141·142·143 run 31개(2026-10-20, tbt·agent 로그 포함 44 GB), 그 run들의 대시보드 스케줄러 기록, Figure 1 입력 CSV | Lustre `/NHNHOME/share/nxclab_backup_1024/` (`results/`, `dashboard_recorder/`, `figure1_data/`, 확인 기록 `MANIFEST.txt`). 원본은 이 기계에도 그대로 있다 |
 
 **논문 그림을 다시 그리거나 다시 채점하려면 EXP-108 이후 run을 맥 SSD에서 가져와야 한다**(2026-10-11 현재
 아직 안 가져왔다). 꺼내는 명령은 `archive/llumnix_reproduce/ms_dev/scripts/clean_backup_scripts/README.md` §3.

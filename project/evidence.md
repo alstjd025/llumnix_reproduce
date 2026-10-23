@@ -564,11 +564,13 @@ run(이 기계의 `Agent_applications/agent_motivation_experiment/results/`에 �
 
 ## 9. 데이터 위치 — 그림을 다시 그리려면
 
-- **이 기계에는 위 다섯 재현 run밖에 없다.** 2026-10-06 컨테이너 초기화로 run 디렉토리가 전부 사라졌다. 사본:
+- **이 기계에는 위 다섯 재현 run과 2026-10-20 리비전 실험(EXP-141~143) run밖에 없다.** 2026-10-06 컨테이너 초기화로 run 디렉토리가 전부 사라졌다. 사본:
   - 맥 외장 SSD `/Volumes/volume1/nxc13_backup_2026-09-23/`: run 1,841개 전부. 단 **`tbt_events.jsonl`(토큰별 도착 시각)과
     `agent_logs`는 빠져 있다.**
   - Lustre `/NHNHOME/storage/home_backup_2026-08-28/`: `results_priority/`(2026-08-28 백업, 1,296개 — **그 날짜 뒤의 EXP-108~140은
     여기 없다**), `results_archive_2026-10-05/`(tbt·agent_logs, zstd), `tbt_archive_2026-09-10/`(tbt 140개).
+  - Lustre `/NHNHOME/share/nxclab_backup_1024/`(2026-10-24): 리비전 실험 EXP-141·142·143의 run 31개 전부(tbt·agent 로그 포함),
+    그 run들의 대시보드 스케줄러 기록, Figure 1 입력 CSV. 파일 수·바이트·주요 파일 md5를 원본과 대조했다(`MANIFEST.txt`).
   - 근거: `archive/llumnix_reproduce/ms_dev/scripts/clean_backup_scripts/README.md` §1.
 - **값만 필요하면 run이 필요 없다**: `paper_figures/*.csv`가 그려진 값 전부다(그림 11 시계열과 그림 1 제외).
 - **그림 스크립트를 그대로 다시 돌리려면** ladder95 판정 캐시 `results/aggregate_analysis/ladder95/`(와 `ladder95_halved/`)가
