@@ -3286,6 +3286,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		fluxCache: map[string]cachedFlux{},
 		tierArr:   map[int]*tierArrivalState{},
 	}
+	activeRegistry.Store(policy.registry)
 	policy.registry.exactResidency = p.ExactResidency
 	policy.registry.exactProgress = p.ExactProgress
 	policy.preRegisterCapMetrics()

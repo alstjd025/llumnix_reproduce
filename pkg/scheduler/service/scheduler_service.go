@@ -304,6 +304,14 @@ func (ss *SchedulerService) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ss.handleKeepalive(w, r)
 	case "/report":
 		ss.handleReport(w, r)
+	case "/debug/fluidserve-registry":
+		snap := policy.FluidserveRegistrySnapshot()
+		if snap == nil {
+			http.Error(w, "no FluidServe policy", http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(snap)
 	case "/healthz":
 		w.WriteHeader(http.StatusOK)
 	case "/metrics":

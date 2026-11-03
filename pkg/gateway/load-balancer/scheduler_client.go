@@ -320,7 +320,17 @@ func (cb *SchedulerClient) NotifyComplete(req *types.RequestContext) {
 		return
 	}
 	localEndpoint := cb.kac.GetLocalEndpoint().String()
-	if localEndpoint != req.SchedulingCtx.GatewayId || !cb.kac.IsRemoteReady() {
+	// EXP-145: these two returns used to be silent, so a notice that was never
+	// sent left no trace and its registry record could not be told apart from
+	// one the scheduler failed to retire. Logged at warning level: the gateway
+	// runs at -v 3 and these should be rare.
+	if localEndpoint != req.SchedulingCtx.GatewayId {
+		klog.Warningf("complete notice for request %s skipped: gateway %s != scheduled-by %s",
+			req.Id, localEndpoint, req.SchedulingCtx.GatewayId)
+		return
+	}
+	if !cb.kac.IsRemoteReady() {
+		klog.Warningf("complete notice for request %s skipped: scheduler not ready", req.Id)
 		return
 	}
 	data, err := json.Marshal(&types.SchedulingRequest{Id: req.Id, GatewayId: localEndpoint})

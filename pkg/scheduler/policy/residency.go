@@ -126,6 +126,19 @@ func (t *residencyTracker) Completed(requestID string) bool {
 
 // MinTpotSloMs is the tightest per-token budget among the requests resident on
 // instanceID, in milliseconds, or 0 when none is resident or none carries one.
+// CompletedIDs returns the requests whose completion notice arrived in the
+// last residencyTombstoneMs, with the arrival time. Read-only; used by the
+// /debug/fluidserve-registry endpoint (EXP-145).
+func (t *residencyTracker) CompletedIDs() map[string]int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make(map[string]int64, len(t.completed))
+	for id, at := range t.completed {
+		out[id] = at
+	}
+	return out
+}
+
 func (t *residencyTracker) MinTpotSloMs(instanceID string) int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
