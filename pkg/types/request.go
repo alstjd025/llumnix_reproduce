@@ -235,6 +235,14 @@ type SchedulingContext struct {
 	// the gateway that borrowed the resources is recorded here to ensure correct return.
 	GatewayId string
 
+	// SchedulerEndpoint is the address (pod IP:port) of the scheduler that made
+	// this placement, read from the /schedule response. The completion notice
+	// goes there: /schedule and /complete otherwise both go to the scheduler
+	// Service over different pooled connections, and while a replaced scheduler
+	// pod is still alive a notice can land on it instead of on the scheduler
+	// that holds the request (EXP-145).
+	SchedulerEndpoint string
+
 	// whether to schedule the request
 	NotNeedScheduling bool
 }

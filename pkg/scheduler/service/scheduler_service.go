@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"time"
 
@@ -35,6 +36,10 @@ type SchedulerService struct {
 
 	// Prometheus metrics handler for /metrics endpoint
 	prometheusHandler *metrics.PrometheusHandler
+
+	// selfEndpoint is this pod's IP:port, returned on every /schedule response
+	// so the gateway can send that request's completion notice here (EXP-145).
+	selfEndpoint string
 }
 
 func NewSchedulerService(c *options.SchedulerConfig) *SchedulerService {
@@ -45,7 +50,9 @@ func NewSchedulerService(c *options.SchedulerConfig) *SchedulerService {
 		lrsClient:         lrsClient,
 		schedulingPolicy:  policy.NewSchedulingPolicy(c.SchedulingPolicy, c, lrsClient),
 		prometheusHandler: metrics.NewPrometheusHandler(),
+		selfEndpoint:      selfEndpoint(c.Port),
 	}
+	klog.Infof("scheduler self endpoint for completion notices: %q", ss.selfEndpoint)
 
 	if c.ColocatedReschedulingMode {
 		ss.reschedulingPolicy = policy.NewReschedulingPolicy(c)
@@ -118,8 +125,31 @@ func (ss *SchedulerService) handleKeepalive(w http.ResponseWriter, r *http.Reque
 
 // handleSchedule returns the instance of the backend service with the minimum load.
 // URL: /schedule
+// SchedulerEndpointHeader carries the scheduling pod's own address on /schedule
+// responses (see types.SchedulingContext.SchedulerEndpoint).
+const SchedulerEndpointHeader = "X-Llumnix-Scheduler-Endpoint"
+
+// selfEndpoint returns the first non-loopback IPv4 address of this pod with the
+// service port, or "" if none is found (the gateway then keeps using the
+// Service address, as before).
+func selfEndpoint(port int) string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() && ipn.IP.To4() != nil {
+			return fmt.Sprintf("%s:%d", ipn.IP.String(), port)
+		}
+	}
+	return ""
+}
+
 func (ss *SchedulerService) handleSchedule(w http.ResponseWriter, r *http.Request) {
 	tStart := time.Now()
+	if ss.selfEndpoint != "" {
+		w.Header().Set(SchedulerEndpointHeader, ss.selfEndpoint)
+	}
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {

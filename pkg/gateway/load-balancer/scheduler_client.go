@@ -145,6 +145,11 @@ func (cb *SchedulerClient) doSchedule(req *types.RequestContext) (types.Scheduli
 	}
 
 	defer resp.Body.Close()
+	// Remember which scheduler pod made this placement, so the completion
+	// notice reaches the scheduler that holds the request (EXP-145).
+	if ep := resp.Header.Get("X-Llumnix-Scheduler-Endpoint"); ep != "" {
+		req.SchedulingCtx.SchedulerEndpoint = ep
+	}
 
 	var body []byte
 	body, err = io.ReadAll(resp.Body)
@@ -338,10 +343,18 @@ func (cb *SchedulerClient) NotifyComplete(req *types.RequestContext) {
 		klog.Errorf("marshal complete notice error: %v", err)
 		return
 	}
-	url := fmt.Sprintf("http://%s/complete", cb.kac.GetRemoteEndpoint().String())
+	serviceURL := fmt.Sprintf("http://%s/complete", cb.kac.GetRemoteEndpoint().String())
+	// First try the scheduler pod that made the placement; fall back to the
+	// Service address (the pre-EXP-145 behaviour) if that pod is unknown or the
+	// first try fails.
+	urls := []string{serviceURL, serviceURL}
+	if ep := req.SchedulingCtx.SchedulerEndpoint; ep != "" {
+		urls[0] = fmt.Sprintf("http://%s/complete", ep)
+	}
 	token := cb.config.ServiceToken
 	go func() {
 		for try := 0; try < 2; try++ {
+			url := urls[try]
 			httpReq, _ := http.NewRequest("POST", url, bytes.NewBuffer(data))
 			if len(token) > 0 {
 				httpReq.Header.Add("Authorization", token)
