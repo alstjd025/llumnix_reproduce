@@ -325,18 +325,17 @@ func (cb *SchedulerClient) NotifyComplete(req *types.RequestContext) {
 		return
 	}
 	localEndpoint := cb.kac.GetLocalEndpoint().String()
-	// EXP-145: these two returns used to be silent, so a notice that was never
-	// sent left no trace and its registry record could not be told apart from
-	// one the scheduler failed to retire. Logged at warning level: the gateway
-	// runs at -v 3 and these should be rare.
+	// No gateway-id or readiness check here, unlike Release. A completion
+	// notice is keyed by request id and travels over plain HTTP, not over the
+	// keepalive connection. Both checks used to drop notices silently: when the
+	// scheduler pod the keepalive was attached to went away, the reconnect gave
+	// this gateway a new local address, so every request scheduled before the
+	// reconnect and finishing after it failed the gateway-id comparison and its
+	// residency record never left (EXP-146 A: all stale records were scheduled
+	// before and finished after the old scheduler pod's exit).
 	if localEndpoint != req.SchedulingCtx.GatewayId {
-		klog.Warningf("complete notice for request %s skipped: gateway %s != scheduled-by %s",
-			req.Id, localEndpoint, req.SchedulingCtx.GatewayId)
-		return
-	}
-	if !cb.kac.IsRemoteReady() {
-		klog.Warningf("complete notice for request %s skipped: scheduler not ready", req.Id)
-		return
+		klog.V(3).Infof("complete notice for request %s: gateway address changed since scheduling (%s -> %s); sending anyway",
+			req.Id, req.SchedulingCtx.GatewayId, localEndpoint)
 	}
 	data, err := json.Marshal(&types.SchedulingRequest{Id: req.Id, GatewayId: localEndpoint})
 	if err != nil {
