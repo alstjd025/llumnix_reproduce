@@ -297,6 +297,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveClassBudgets           string
 	FluidserveHorizonSteps           int
 	FluidserveChargeHorizon          int
+	FluidserveShadowHorizon          int
 	FluidserveZSafety                float64
 	FluidserveTtftSafetyMs           int
 	FluidserveEnablePend             bool
@@ -500,6 +501,11 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"seconds because decode growth is then exactly one token per request per "+
 			"iteration, and because iteration time is itself a function of the occupancy "+
 			"being controlled.")
+	flags.IntVar(&c.FluidserveShadowHorizon, "fluidserve-shadow-horizon", 0,
+		"FluidServe diagnostics: when positive, re-judge every candidate on the same state "+
+			"with the planning horizon replaced by this value -- in all three places it enters "+
+			"and in each alone -- and count where the verdict would differ "+
+			"(scheduler_fluidserve_shadow_*). Decisions are unchanged. Zero, the default, is off.")
 	flags.IntVar(&c.FluidserveChargeHorizon, "fluidserve-charge-horizon", 0,
 		"Iterations of future decode an ARRIVING request is charged for, when that "+
 			"has to differ from --fluidserve-horizon-steps. Zero, the default, means "+

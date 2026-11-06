@@ -102,6 +102,11 @@ type fluidserveConfig struct {
 	// be set independently of the planning horizon. Zero means follow
 	// horizonSteps, which is every configuration measured before 2026-09-14.
 	chargeHorizon int
+	// shadowHorizon, when positive, re-judges every candidate on the same state
+	// with the horizon replaced by this value, in each of the places it enters
+	// separately, and counts where the verdict would differ. Nothing it computes
+	// reaches a decision. See fluidserve_shadow.go.
+	shadowHorizon int
 	zSafety       float64
 	ttftSafetyMs  float64
 	// Ablation switches. These select which mechanism is in play, they are not
@@ -347,8 +352,12 @@ type instanceFlux struct {
 	// reasoning is at the assignment. This comment said "the sum of the two"
 	// until 2026-08-25 and that wording produced one wrong diagnosis.
 	effectivePrefill float64
-	chunk            float64
-	stepID           int64
+	// The two inputs arrivingPrefill was built from, kept so the shadow judge
+	// (fluidserve_shadow.go) can rebuild it at another horizon on the same state.
+	prefillDuty   float64
+	horizonPaceMs float64
+	chunk         float64
+	stepID        int64
 
 	live []liveRequest
 	// gateAllowance sets what this instance may take on: the tightest NOMINAL
@@ -1224,8 +1233,10 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	// capacity model already caps the prefill-carrying share of the horizon at
 	// one: an engine cannot absorb more than one chunk per iteration however
 	// much arrives.
-	horizonMs := float64(p.cfg.horizonSteps) * p.paceMs(f.id, f.kvLogical, f.nDecode)
-	f.arrivingPrefill = p.carriedPrefillTokens(p.prefillDutyOf(f.id), horizonMs, f.chunk)
+	f.horizonPaceMs = p.paceMs(f.id, f.kvLogical, f.nDecode)
+	f.prefillDuty = p.prefillDutyOf(f.id)
+	horizonMs := float64(p.cfg.horizonSteps) * f.horizonPaceMs
+	f.arrivingPrefill = p.carriedPrefillTokens(f.prefillDuty, horizonMs, f.chunk)
 	f.effectivePrefill = math.Max(f.pendingPrefill, f.arrivingPrefill)
 
 	// The pace the instance is delivering right now. It is needed before the
@@ -1446,6 +1457,10 @@ type candidate struct {
 	flux     *instanceFlux
 	view     *instanceViewScheduling
 	feasible bool
+	// shadow is the verdict of the shadow judge per variant (fluidserve_shadow.go);
+	// shadowOn says whether it was computed.
+	shadow   [nShadowVariants]bool
+	shadowOn bool
 	// share is the fraction of the requests on this instance that belong to the
 	// arriving request's class. It orders the FEASIBLE set only.
 	share float64
@@ -1596,6 +1611,9 @@ func (s *fluidserveSelector) selectInstance(
 		// fallback bug surface and applyInstanceCap refuses to empty the list,
 		// but an empty slice panics at cands[0] below, so guard it once here.
 		return nil
+	}
+	if p.cfg.shadowHorizon > 0 {
+		p.shadowCountDecision(cands, req)
 	}
 	// Would the projection have changed what happens to THIS request, as opposed
 	// to what one instance looked like? Two different answers count separately:
@@ -2301,6 +2319,9 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	metrics.Counter("scheduler_fluidserve_flux_evaluations_total",
 		metrics.Labels{{Name: "level", Value: "candidate"}}).Inc()
 
+	if p.cfg.shadowHorizon > 0 {
+		p.shadowJudgeCandidate(f, req, &c, newPending)
+	}
 	return c
 }
 
@@ -3206,6 +3227,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	cfg := fluidserveConfig{
 		horizonSteps:   p.FluidserveHorizonSteps,
 		chargeHorizon:  p.FluidserveChargeHorizon,
+		shadowHorizon:  p.FluidserveShadowHorizon,
 		zSafety:        p.FluidserveZSafety,
 		ttftSafetyMs:   float64(p.FluidserveTtftSafetyMs),
 		enablePend:     p.FluidserveEnablePend,
@@ -3336,7 +3358,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v, exactprogress=%v",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3352,7 +3374,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency, p.ExactProgress)
+		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon)
 
 	go policy.reportLoop()
 	return policy
