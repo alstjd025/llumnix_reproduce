@@ -50,6 +50,10 @@ known_binaries:
   d2d6d184: "scheduler EXP-142 첫 시도 — 엔진 대기 요청 제외(ID 형식 결함 있음)"
   3251836a: "scheduler EXP-142 두 번째 시도·EXP-143 — 엔진 대기 요청 제외(ID 끝 -0 처리)"
   590242b0: "gateway EXP-141~ — 완료 통지(--notify-completion)"
+  3a1d2354: "scheduler EXP-146~148 — 통지를 배치한 스케줄러 파드로 직접(c0fb7ab), UUID 대기 ID 처리"
+  f674aa25: "gateway EXP-146 — 통지를 배치한 스케줄러 파드로 직접"
+  05745270: "gateway EXP-147~ — 파드 직접 통지 + keepalive 재연결 후에도 통지(5dec8d6)"
+  783a574e: "scheduler EXP-149 — 3a1d2354 + horizon shadow 판정(83299fb)"
 
 # arm 이름(run 디렉토리 이름의 네 번째 칸) → 화면에 쓰는 이름.
 # 이름 규칙은 CLAUDE.md의 "정책 이름은 이렇게 부른다" 표를 따른다.
@@ -67,6 +71,8 @@ arms:
   fsexactprogh25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 25
   fsexactprogh50: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 50
   fsexactprogh200: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 200
+  # EXP-149 (2026-11-06). horizon 100으로 결정하고, 같은 상태에서 horizon 25로 다시 판정한 결과를 카운터로만 남김
+  fsexactprogshadow25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 25 shadow 판정
   llmdslot75: llm-d
   loadbalance: Llumnix
 
