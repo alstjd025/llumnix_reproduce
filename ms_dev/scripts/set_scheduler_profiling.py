@@ -364,6 +364,9 @@ FLUIDSERVE_ABLATIONS = {
     # estimate -- so moving it cannot ablate any one of them. Only on a binary
     # that defines it (12faf17f or later).
     "FS_CHARGE_HORIZON": "--fluidserve-charge-horizon",
+    # EXP-149. Diagnostics only: re-judge every candidate at this horizon on the
+    # same state and count where the verdict differs. Decisions are unchanged.
+    "FS_SHADOW_HORIZON": "--fluidserve-shadow-horizon",
     "FS_Z": "--fluidserve-z-safety",
     # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
     # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.
@@ -940,6 +943,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-prefill-full-iteration", "prefillfulliter"),
         ("--fluidserve-prefill-resident-queue", "prefillresidentq"),
         ("--fluidserve-arrival-horizons", "arrivalhorizons"),
+        ("--fluidserve-shadow-horizon", "shadowhorizon"),
     ]
     bad = []
     for flag, key in checks:
