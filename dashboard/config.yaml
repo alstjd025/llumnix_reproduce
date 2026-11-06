@@ -63,6 +63,10 @@ arms:
   slot75inc: Llumnix SLO + 처리 중 기준
   fsexactprog: FluidServe + 정확 장부 + 엔진 대기 요청 제외
   fsexactprogdl: FluidServe + 정확 장부 + 엔진 대기 요청 제외 + 첫 토큰 마감 조건
+  # EXP-148 (2026-11-06). fsexactprog에서 계획 horizon만 바꾼 arm
+  fsexactprogh25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 25
+  fsexactprogh50: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 50
+  fsexactprogh200: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 200
   llmdslot75: llm-d
   loadbalance: Llumnix
 
