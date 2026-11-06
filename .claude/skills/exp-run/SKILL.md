@@ -224,6 +224,15 @@ kubectl -n llumnix exec "$POD" -- rm -rf /work/results/<dir>
 
 ## 6. Judging results
 
+- **Judge every metric separately (user rule, 2026-11-06).** Tabulate all-arrivals,
+  admitted, rejection rate, and per class (chat, deepresearch, swe) both admitted and
+  all-arrivals. Each metric "differs" only if its mean difference exceeds
+  max(floor, either condition's repeat range); floors are 2 points static / 4 points
+  hour trace for all-arrivals, rejection rate and per-class all-arrivals, and 1 point
+  for admitted and per-class admitted (admitted sits near 100 with repeat ranges of
+  0.0-0.3, and 98 vs 100 matters). State which metrics differ and which do not;
+  never call two conditions "no different" from all-arrivals alone -- EXP-142 had
+  equal all-arrivals while deep research admitted was 96 vs 100.
 - **Never judge from one measurement per condition.** Within-session spread on
   this workload is 1.4–3.3 points and reaches 6 at 80 req/s; between sessions it
   reaches 4.6. A difference smaller than the spread is "no difference".
