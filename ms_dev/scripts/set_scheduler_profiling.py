@@ -367,6 +367,9 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-149. Diagnostics only: re-judge every candidate at this horizon on the
     # same state and count where the verdict differs. Decisions are unchanged.
     "FS_SHADOW_HORIZON": "--fluidserve-shadow-horizon",
+    # EXP-151. The pace estimate's horizon (queued prefill chunks / h), apart from
+    # the planning horizon. Zero or unset follows --fluidserve-horizon-steps.
+    "FS_PACE_HORIZON": "--fluidserve-pace-horizon",
     "FS_Z": "--fluidserve-z-safety",
     # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
     # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.
@@ -944,6 +947,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-prefill-resident-queue", "prefillresidentq"),
         ("--fluidserve-arrival-horizons", "arrivalhorizons"),
         ("--fluidserve-shadow-horizon", "shadowhorizon"),
+        ("--fluidserve-pace-horizon", "pacehorizon"),
     ]
     bad = []
     for flag, key in checks:

@@ -107,8 +107,14 @@ type fluidserveConfig struct {
 	// separately, and counts where the verdict would differ. Nothing it computes
 	// reaches a decision. See fluidserve_shadow.go.
 	shadowHorizon int
-	zSafety       float64
-	ttftSafetyMs  float64
+	// paceHorizon is the horizon the pace estimate uses -- the denominator of
+	// the prefill-carrying share of iterations (queued chunks / h) in meanStepMs
+	// and the pace ceiling, and the window over which arriving prefill is
+	// anticipated -- when it has to differ from horizonSteps. Zero means follow
+	// horizonSteps, which is every configuration measured before 2026-11-08.
+	paceHorizon  int
+	zSafety      float64
+	ttftSafetyMs float64
 	// Ablation switches. These select which mechanism is in play, they are not
 	// quantities to tune.
 	enablePend bool
@@ -1235,7 +1241,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	// much arrives.
 	f.horizonPaceMs = p.paceMs(f.id, f.kvLogical, f.nDecode)
 	f.prefillDuty = p.prefillDutyOf(f.id)
-	horizonMs := float64(p.cfg.horizonSteps) * f.horizonPaceMs
+	horizonMs := float64(p.paceHorizonSteps()) * f.horizonPaceMs
 	f.arrivingPrefill = p.carriedPrefillTokens(f.prefillDuty, horizonMs, f.chunk)
 	f.effectivePrefill = math.Max(f.pendingPrefill, f.arrivingPrefill)
 
@@ -1244,7 +1250,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	// fail by admitting another one, and should therefore not be able to close
 	// the instance to everything else.
 	f.meanStep = p.capacity.meanStepMs(f.id, f.kvLogical, f.nDecode, f.effectivePrefill,
-		f.chunk, p.cfg.horizonSteps)
+		f.chunk, p.paceHorizonSteps())
 
 	floor := p.capacity.floorStepMs(f.id)
 	f.tightestAllowance = math.Inf(1)
@@ -1356,7 +1362,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 
 	f.capKv = p.capacity.maxKvForAllowance(
 		f.id, f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
-		f.effectivePrefill, f.chunk, p.cfg.horizonSteps)
+		f.effectivePrefill, f.chunk, p.paceHorizonSteps())
 
 	// Physical capacity, converted into the logical units everything else is in.
 	// The ratio is measured rather than assumed because prefix-cache sharing
@@ -2021,6 +2027,18 @@ func (p *fluidserveDispatchPolicy) costOf(req *fluidserveRequest) float64 {
 	return float64(req.promptTokens) + growth
 }
 
+// paceHorizonSteps is the horizon the pace estimate divides queued prefill by
+// (--fluidserve-pace-horizon, EXP-151). EXP-149/150 measured, on the same
+// instance state, that this denominator is what most of the planning horizon's
+// effect on feasibility comes from, so it is separable from the projection
+// and the charge.
+func (p *fluidserveDispatchPolicy) paceHorizonSteps() int {
+	if p.cfg.paceHorizon > 0 {
+		return p.cfg.paceHorizon
+	}
+	return p.cfg.horizonSteps
+}
+
 func (p *fluidserveDispatchPolicy) evaluate(
 	f *instanceFlux, view *instanceViewScheduling, req *fluidserveRequest) candidate {
 
@@ -2076,7 +2094,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		memKv = f.kvLogical + cost
 	}
 	c.meanBefore = f.meanStep
-	c.meanAfter = p.capacity.meanStepMs(f.id, newKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
+	c.meanAfter = p.capacity.meanStepMs(f.id, newKv, newN, newPending, f.chunk, p.paceHorizonSteps())
 	c.headroomAfter = math.Min(f.capKv, f.capMem) - newKv
 	c.prefillMs, c.prefillOwnMs, c.prefillQueueMs = p.prefillEstimateParts(req, f)
 
@@ -2306,7 +2324,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	// allowance and the memory capacity are properties of the instance and the
 	// request, not of the projection.
 	snapKv := f.kvLogical + cost
-	snapMean := p.capacity.meanStepMs(f.id, snapKv, newN, newPending, f.chunk, p.cfg.horizonSteps)
+	snapMean := p.capacity.meanStepMs(f.id, snapKv, newN, newPending, f.chunk, p.paceHorizonSteps())
 	c.snapFeasible = !math.IsInf(snapMean, 0) &&
 		snapMean <= c.gateAfter &&
 		snapMean <= c.incumbentAfter &&
@@ -3228,6 +3246,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		horizonSteps:   p.FluidserveHorizonSteps,
 		chargeHorizon:  p.FluidserveChargeHorizon,
 		shadowHorizon:  p.FluidserveShadowHorizon,
+		paceHorizon:    p.FluidservePaceHorizon,
 		zSafety:        p.FluidserveZSafety,
 		ttftSafetyMs:   float64(p.FluidserveTtftSafetyMs),
 		enablePend:     p.FluidserveEnablePend,
@@ -3358,7 +3377,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3374,7 +3393,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon)
+		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon)
 
 	go policy.reportLoop()
 	return policy

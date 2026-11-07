@@ -124,3 +124,35 @@ func TestShadowStatesCoverBothVerdicts(t *testing.T) {
 	assert.Positive(t, flips)
 	t.Logf("feasible %d, infeasible %d, h=25 flips %d", seen[true], seen[false], flips)
 }
+
+func TestPaceHorizonFlagMatchesThePaceShadow(t *testing.T) {
+	// --fluidserve-pace-horizon=25 on a 100-iteration plan must decide exactly
+	// what the shadow judge's "pace" variant at 25 said that plan would decide:
+	// the flag is the shadow's pace term made real, and nothing else.
+	for _, tier := range []int{25, 50, 100} {
+		for _, prompt := range []int{600, 4000, 9000} {
+			shadow := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+				c.shadowHorizon = 25
+				c.memoryUsesPaceCap = true
+			})
+			paced := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+				c.paceHorizon = 25
+				c.shadowHorizon = 100
+				c.memoryUsesPaceCap = true
+			})
+			want := map[string]bool{}
+			sc, _ := shadowCandidates(t, shadow, tier, prompt)
+			for _, c := range sc {
+				want[c.flux.id] = c.shadow[shadowPace]
+			}
+			pc, _ := shadowCandidates(t, paced, tier, prompt)
+			for _, c := range pc {
+				assert.Equal(t, want[c.flux.id], c.feasible, "tier %d prompt %d on %s", tier, prompt, c.flux.id)
+				// With the pace horizon set apart, a shadow at the planning horizon
+				// changes nothing: "same" and "all" both leave the pace term alone.
+				assert.Equal(t, c.feasible, c.shadow[shadowSame])
+				assert.Equal(t, c.feasible, c.shadow[shadowAll])
+			}
+		}
+	}
+}

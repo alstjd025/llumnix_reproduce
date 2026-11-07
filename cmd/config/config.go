@@ -298,6 +298,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveHorizonSteps           int
 	FluidserveChargeHorizon          int
 	FluidserveShadowHorizon          int
+	FluidservePaceHorizon            int
 	FluidserveZSafety                float64
 	FluidserveTtftSafetyMs           int
 	FluidserveEnablePend             bool
@@ -501,6 +502,13 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"seconds because decode growth is then exactly one token per request per "+
 			"iteration, and because iteration time is itself a function of the occupancy "+
 			"being controlled.")
+	flags.IntVar(&c.FluidservePaceHorizon, "fluidserve-pace-horizon", 0,
+		"FluidServe: iterations the pace estimate spreads queued prefill over -- the "+
+			"denominator of the prefill-carrying share of iterations in the mean step and the "+
+			"pace ceiling, and the window arriving prefill is anticipated over -- when it has to "+
+			"differ from --fluidserve-horizon-steps. Zero, the default, follows the planning "+
+			"horizon (every measurement before 2026-11-08). EXP-149/150 found this denominator "+
+			"carries most of the horizon's effect on feasibility.")
 	flags.IntVar(&c.FluidserveShadowHorizon, "fluidserve-shadow-horizon", 0,
 		"FluidServe diagnostics: when positive, re-judge every candidate on the same state "+
 			"with the planning horizon replaced by this value -- in all three places it enters "+

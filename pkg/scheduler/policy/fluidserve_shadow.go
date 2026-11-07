@@ -139,6 +139,7 @@ func (p *fluidserveDispatchPolicy) shadowJudgeCandidate(f *instanceFlux,
 		return
 	}
 	h := p.cfg.horizonSteps
+	hp := p.paceHorizonSteps()
 	hc := p.cfg.chargeHorizon
 	if hc <= 0 {
 		hc = h
@@ -150,12 +151,17 @@ func (p *fluidserveDispatchPolicy) shadowJudgeCandidate(f *instanceFlux,
 		sc = hc
 	}
 	prefillCharge := newPending - f.effectivePrefill
+	sp := s
+	if p.cfg.paceHorizon > 0 {
+		// A separately set pace horizon is not the planning horizon; leave it.
+		sp = hp
+	}
 	set := [nShadowVariants][3]int{
-		shadowSame:   {h, h, hc},
-		shadowAll:    {s, s, sc},
+		shadowSame:   {h, hp, hc},
+		shadowAll:    {s, sp, sc},
 		shadowPace:   {h, s, hc},
-		shadowProj:   {s, h, hc},
-		shadowCharge: {h, h, sc},
+		shadowProj:   {s, hp, hc},
+		shadowCharge: {h, hp, sc},
 	}
 	tier := strconv.Itoa(req.tier)
 	real := strconv.FormatBool(c.feasible)
