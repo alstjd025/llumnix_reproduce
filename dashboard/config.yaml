@@ -73,6 +73,7 @@ arms:
   fsexactprogh200: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 200
   # EXP-149 (2026-11-06). horizon 100으로 결정하고, 같은 상태에서 horizon 25로 다시 판정한 결과를 카운터로만 남김
   fsexactprogshadow25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 25 shadow 판정
+  fsexactprogshadow200: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 200 shadow 판정
   llmdslot75: llm-d
   loadbalance: Llumnix
 
