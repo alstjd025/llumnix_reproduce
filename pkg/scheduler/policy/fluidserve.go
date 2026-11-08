@@ -112,7 +112,11 @@ type fluidserveConfig struct {
 	// and the pace ceiling, and the window over which arriving prefill is
 	// anticipated -- when it has to differ from horizonSteps. Zero means follow
 	// horizonSteps, which is every configuration measured before 2026-11-08.
-	paceHorizon  int
+	paceHorizon int
+	// shadowLedger re-judges every candidate with individual mechanisms removed
+	// or replaced and counts where the verdict would differ. Decisions are
+	// unchanged. See fluidserve_ledger.go.
+	shadowLedger bool
 	zSafety      float64
 	ttftSafetyMs float64
 	// Ablation switches. These select which mechanism is in play, they are not
@@ -1467,6 +1471,9 @@ type candidate struct {
 	// shadowOn says whether it was computed.
 	shadow   [nShadowVariants]bool
 	shadowOn bool
+	// ledger is the shadow ledger's verdict per variant (fluidserve_ledger.go).
+	ledger   [nLedgerVariants]bool
+	ledgerOn bool
 	// share is the fraction of the requests on this instance that belong to the
 	// arriving request's class. It orders the FEASIBLE set only.
 	share float64
@@ -1620,6 +1627,9 @@ func (s *fluidserveSelector) selectInstance(
 	}
 	if p.cfg.shadowHorizon > 0 {
 		p.shadowCountDecision(cands, req)
+	}
+	if p.cfg.shadowLedger {
+		p.ledgerCountDecision(cands, req)
 	}
 	// Would the projection have changed what happens to THIS request, as opposed
 	// to what one instance looked like? Two different answers count separately:
@@ -2339,6 +2349,9 @@ func (p *fluidserveDispatchPolicy) evaluate(
 
 	if p.cfg.shadowHorizon > 0 {
 		p.shadowJudgeCandidate(f, req, &c, newPending)
+	}
+	if p.cfg.shadowLedger {
+		p.ledgerJudgeCandidate(f, req, &c, newPending)
 	}
 	return c
 }
@@ -3142,6 +3155,7 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 	p.registry.onDispatch(c.flux.id, req.id, req.tier, req.promptTokens,
 		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs, c.prefillRaw,
 		req.oracleTokens)
+	p.registry.noteTtftBudget(c.flux.id, req.id, req.ttftSloMs)
 	// Recorded only for a placement that was actually made. A pended or shed
 	// request never reached an engine and therefore put nothing in a cache.
 	if p.cfg.prefixAware {
@@ -3247,6 +3261,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		chargeHorizon:  p.FluidserveChargeHorizon,
 		shadowHorizon:  p.FluidserveShadowHorizon,
 		paceHorizon:    p.FluidservePaceHorizon,
+		shadowLedger:   p.FluidserveShadowLedger,
 		zSafety:        p.FluidserveZSafety,
 		ttftSafetyMs:   float64(p.FluidserveTtftSafetyMs),
 		enablePend:     p.FluidserveEnablePend,
@@ -3377,7 +3392,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3393,7 +3408,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon)
+		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger)
 
 	go policy.reportLoop()
 	return policy

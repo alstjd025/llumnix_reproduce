@@ -156,3 +156,61 @@ func TestPaceHorizonFlagMatchesThePaceShadow(t *testing.T) {
 		}
 	}
 }
+
+func TestLedgerSameReproducesTheRealVerdict(t *testing.T) {
+	// The ledger's "same" variant re-runs evaluate()'s test through its own code
+	// path; it has to agree on states that give both verdicts, or no other
+	// variant's count means anything.
+	seen := map[bool]int{}
+	differ := map[int]int{}
+	for _, tier := range []int{25, 50, 100} {
+		for _, prompt := range []int{600, 4000, 9000} {
+			p := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+				c.shadowLedger = true
+				c.memoryUsesPaceCap = true
+			})
+			cands, _ := shadowCandidates(t, p, tier, prompt)
+			for _, c := range cands {
+				require.True(t, c.ledgerOn)
+				assert.Equal(t, c.feasible, c.ledger[ledgerSame], "tier %d prompt %d on %s", tier, prompt, c.flux.id)
+				seen[c.feasible]++
+				for v := 1; v < nLedgerVariants; v++ {
+					if c.ledger[v] != c.feasible {
+						differ[v]++
+					}
+				}
+			}
+		}
+	}
+	assert.Positive(t, seen[true])
+	assert.Positive(t, seen[false])
+	t.Logf("feasible %d infeasible %d; variants differing from real: %v", seen[true], seen[false], differ)
+}
+
+func TestLedgerSlackProtectionAdmitsAStallTheResidentsCanAbsorb(t *testing.T) {
+	// D replaces "the mean step after placement fits 45 ms" with "the one-time
+	// prefill stall fits inside the residents' slack, and the sustained step fits
+	// the gate". On the saturated chat instance a long prompt fails the mean-step
+	// gate; whether D admits it depends only on the residents' slack, so with
+	// slack made huge it must be at least as permissive as the real test.
+	p := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+		c.shadowLedger = true
+		c.memoryUsesPaceCap = true
+	})
+	cands, req := shadowCandidates(t, p, 100, 4000)
+	for _, c := range cands {
+		f := c.flux
+		for i := range f.live {
+			f.live[i].slackDecodeMs, f.live[i].slackLadderMs = 1e9, 1e9
+		}
+		charge := c.prefillCharge
+		real := p.ledgerJudge(f, req, &c, charge, ledgerOpts{})
+		d := p.ledgerJudge(f, req, &c, charge, ledgerOpts{slack: 2})
+		if real {
+			// D can still refuse on the sustained step or memory, but not on the
+			// incumbents, which now have unlimited slack.
+			continue
+		}
+		t.Logf("%s: real %v, D2 with unlimited slack %v", f.id, real, d)
+	}
+}

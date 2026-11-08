@@ -157,6 +157,10 @@ type dispatchRecord struct {
 	// class average and measure something else.
 	oracleTokens int
 	lastJ        int
+	// ttftMs is the request's first-token budget, kept so a resident's slack can
+	// be measured against the same deadline ladder the scorer uses (TTFT budget
+	// + i x per-token budget). Zero when unknown. Read only by the shadow ledger.
+	ttftMs float64
 
 	// --exact-progress (2026-10-20). Steps this request spent in the engine's
 	// waiting queue (not decoding), and the step at which that was last checked.
@@ -195,6 +199,14 @@ type liveRequest struct {
 	// the fleet projection can use it as well. Zero when absent.
 	oracleTokens int
 	unachievable bool
+	// Two measures of how far ahead of its deadlines this request is, in ms.
+	// slackDecodeMs counts the per-token budget from decode start, the same
+	// ladder allowanceMs is built on; slackLadderMs counts it from arrival with
+	// the first-token budget added, which is the scorer's ladder (ladder95).
+	// Before decode starts both are the time left to the first-token deadline.
+	// +Inf when not measurable. Read only by the shadow ledger.
+	slackDecodeMs float64
+	slackLadderMs float64
 }
 
 const (
@@ -904,6 +916,22 @@ func (r *requestRegistry) liveViewLocked(rec *dispatchRecord, j int, nowMs int64
 	if allowance < 0 {
 		allowance = 0
 	}
+	slackDecode, slackLadder := math.Inf(1), math.Inf(1)
+	if spec.mode != budgetE2E {
+		sinceArrival := float64(nowMs - rec.firstSeenMs)
+		if rec.decodeStartMs == 0 {
+			if rec.ttftMs > 0 {
+				slackDecode = rec.ttftMs - sinceArrival
+				slackLadder = slackDecode
+			}
+		} else {
+			slackDecode = spec.perTokMs*float64(j) - float64(nowMs-rec.decodeStartMs)
+			slackLadder = slackDecode
+			if rec.ttftMs > 0 {
+				slackLadder = rec.ttftMs + spec.perTokMs*float64(j) - sinceArrival
+			}
+		}
+	}
 	return liveRequest{
 		id:           rec.id,
 		tier:         rec.tier,
@@ -914,6 +942,18 @@ func (r *requestRegistry) liveViewLocked(rec *dispatchRecord, j int, nowMs int64
 		nominalMs:    r.nominalAllowanceLocked(rec.tier),
 		oracleTokens: rec.oracleTokens,
 		waiting:      rec.waitingNow,
+
+		slackDecodeMs: slackDecode,
+		slackLadderMs: slackLadder,
+	}
+}
+
+// noteTtftBudget records a placed request's first-token budget on its record.
+func (r *requestRegistry) noteTtftBudget(instanceID, requestID string, ttftMs float64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if rec := r.byInstance[instanceID][requestID]; rec != nil {
+		rec.ttftMs = ttftMs
 	}
 }
 

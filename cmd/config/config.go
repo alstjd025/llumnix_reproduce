@@ -299,6 +299,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveChargeHorizon          int
 	FluidserveShadowHorizon          int
 	FluidservePaceHorizon            int
+	FluidserveShadowLedger           bool
 	FluidserveZSafety                float64
 	FluidserveTtftSafetyMs           int
 	FluidserveEnablePend             bool
@@ -502,6 +503,11 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"seconds because decode growth is then exactly one token per request per "+
 			"iteration, and because iteration time is itself a function of the occupancy "+
 			"being controlled.")
+	flags.BoolVar(&c.FluidserveShadowLedger, "fluidserve-shadow-ledger", false,
+		"FluidServe diagnostics: re-judge every candidate on the same state with single "+
+			"mechanisms removed or replaced (charge, KV projection, per-instance correction, "+
+			"slack-based protection) and their combinations, and count where the verdict would "+
+			"differ (scheduler_fluidserve_ledger_*). Decisions are unchanged.")
 	flags.IntVar(&c.FluidservePaceHorizon, "fluidserve-pace-horizon", 0,
 		"FluidServe: iterations the pace estimate spreads queued prefill over -- the "+
 			"denominator of the prefill-carrying share of iterations in the mean step and the "+
