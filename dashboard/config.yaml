@@ -55,6 +55,7 @@ known_binaries:
   05745270: "gateway EXP-147~ — 파드 직접 통지 + keepalive 재연결 후에도 통지(5dec8d6)"
   783a574e: "scheduler EXP-149 — 3a1d2354 + horizon shadow 판정(83299fb)"
   4585b1f4: "scheduler EXP-151 — 783a574e + --fluidserve-pace-horizon(c8c831e)"
+  302638b0: "scheduler EXP-153 — 4585b1f4 + 제거 후보 shadow 장부(a21491c)"
 
 # arm 이름(run 디렉토리 이름의 네 번째 칸) → 화면에 쓰는 이름.
 # 이름 규칙은 CLAUDE.md의 "정책 이름은 이렇게 부른다" 표를 따른다.
@@ -78,6 +79,7 @@ arms:
   # EXP-151 (2026-11-08). horizon 100, 토큰당 시간 추정의 prefill 비중 분모만 따로
   fsexactprogp25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, pace horizon 25
   fsexactprogp50: FluidServe + 정확 장부 + 엔진 대기 요청 제외, pace horizon 50
+  fsexactprogledger: FluidServe + 정확 장부 + 엔진 대기 요청 제외, 제거 후보 shadow 장부
   llmdslot75: llm-d
   loadbalance: Llumnix
 
