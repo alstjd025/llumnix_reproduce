@@ -56,6 +56,7 @@ known_binaries:
   783a574e: "scheduler EXP-149 — 3a1d2354 + horizon shadow 판정(83299fb)"
   4585b1f4: "scheduler EXP-151 — 783a574e + --fluidserve-pace-horizon(c8c831e)"
   302638b0: "scheduler EXP-153 — 4585b1f4 + 제거 후보 shadow 장부(a21491c)"
+  359aac2c: "scheduler EXP-154 — 302638b0 + prompt만 청구·지연 보정 끄기 플래그(37e4d52)"
 
 # arm 이름(run 디렉토리 이름의 네 번째 칸) → 화면에 쓰는 이름.
 # 이름 규칙은 CLAUDE.md의 "정책 이름은 이렇게 부른다" 표를 따른다.
@@ -80,6 +81,8 @@ arms:
   fsexactprogp25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, pace horizon 25
   fsexactprogp50: FluidServe + 정확 장부 + 엔진 대기 요청 제외, pace horizon 50
   fsexactprogledger: FluidServe + 정확 장부 + 엔진 대기 요청 제외, 제거 후보 shadow 장부
+  fsexactprogA: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구
+  fsexactprogAC: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구 + 지연 보정 끔
   llmdslot75: llm-d
   loadbalance: Llumnix
 
