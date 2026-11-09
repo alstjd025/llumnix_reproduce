@@ -81,8 +81,8 @@ arms:
   fsexactprogp25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, pace horizon 25
   fsexactprogp50: FluidServe + 정확 장부 + 엔진 대기 요청 제외, pace horizon 50
   fsexactprogledger: FluidServe + 정확 장부 + 엔진 대기 요청 제외, 제거 후보 shadow 장부
-  fsexactprogA: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구
-  fsexactprogAC: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구 + 지연 보정 끔
+  fsexactproga: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구
+  fsexactprogac: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구 + 지연 보정 끔
   llmdslot75: llm-d
   loadbalance: Llumnix
 
