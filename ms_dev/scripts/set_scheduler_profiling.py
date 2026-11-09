@@ -373,6 +373,9 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-153. Diagnostics only: re-judge every candidate with single mechanisms
     # removed or replaced and count where the verdict differs. Decisions unchanged.
     "FS_SHADOW_LEDGER": "--fluidserve-shadow-ledger",
+    # EXP-154. Simplification candidates from the EXP-153 ledger.
+    "FS_CHARGE_PROMPT_ONLY": "--fluidserve-charge-prompt-only",
+    "FS_LATENCY_CORRECTION": "--fluidserve-latency-correction",
     "FS_Z": "--fluidserve-z-safety",
     # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
     # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.
@@ -952,6 +955,8 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-shadow-horizon", "shadowhorizon"),
         ("--fluidserve-pace-horizon", "pacehorizon"),
         ("--fluidserve-shadow-ledger", "shadowledger"),
+        ("--fluidserve-charge-prompt-only", "chargepromptonly"),
+        ("--fluidserve-latency-correction", "latencycorr"),
     ]
     bad = []
     for flag, key in checks:

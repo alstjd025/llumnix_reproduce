@@ -214,3 +214,38 @@ func TestLedgerSlackProtectionAdmitsAStallTheResidentsCanAbsorb(t *testing.T) {
 		t.Logf("%s: real %v, D2 with unlimited slack %v", f.id, real, d)
 	}
 }
+
+func TestChargePromptOnlyMatchesLedgerA(t *testing.T) {
+	// --fluidserve-charge-prompt-only must decide what the ledger's variant A
+	// predicted on the same state.
+	for _, tier := range []int{25, 50, 100} {
+		for _, prompt := range []int{600, 4000, 9000} {
+			ledger := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+				c.shadowLedger = true
+				c.memoryUsesPaceCap = true
+			})
+			prompt1 := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+				c.chargePromptOnly = true
+				c.memoryUsesPaceCap = true
+			})
+			want := map[string]bool{}
+			lc, _ := shadowCandidates(t, ledger, tier, prompt)
+			for _, c := range lc {
+				want[c.flux.id] = c.ledger[ledgerA]
+			}
+			pc, _ := shadowCandidates(t, prompt1, tier, prompt)
+			for _, c := range pc {
+				assert.Equal(t, want[c.flux.id], c.feasible, "tier %d prompt %d on %s", tier, prompt, c.flux.id)
+			}
+		}
+	}
+}
+
+func TestLatencyCorrectionOffUsesTheModelAsFitted(t *testing.T) {
+	m := testCapacity(t)
+	m.correction = 1.3
+	on := m.meanStepMs("", 100000, 50, 0, 8192, 100)
+	m.disabled = true
+	off := m.meanStepMs("", 100000, 50, 0, 8192, 100)
+	assert.InDelta(t, on/1.3, off, 1e-9)
+}

@@ -63,6 +63,11 @@ type capacityModel struct {
 	// what the fleet already knows instead of from the uncorrected law.
 	corrections map[string]float64
 	perInstance bool
+	// disabled turns the correction off entirely (--fluidserve-latency-correction
+	// =false, EXP-154): the latency model is used as fitted. Measured on the hour
+	// trace the fleet factor stayed within 0.97-1.03 and the per-instance one
+	// within 0.99-1.01 (p1-p99).
+	disabled bool
 
 	// prefillFraction is the share of an arriving prompt's tokens the engine
 	// actually computes. See notePrefill.
@@ -287,7 +292,7 @@ func (m *capacityModel) prefillFractionOf() float64 {
 // engine, not another filter on the same data.
 
 func newCapacityModel(
-	p *fluidserveProfile, predictor *LatencyPredictor, perInstance bool) *capacityModel {
+	p *fluidserveProfile, predictor *LatencyPredictor, perInstance, disabled bool) *capacityModel {
 
 	return &capacityModel{
 		c0:              p.DecodeStepLaw.C0Ms,
@@ -297,6 +302,7 @@ func newCapacityModel(
 		correction:      1.0,
 		corrections:     map[string]float64{},
 		perInstance:     perInstance,
+		disabled:        disabled,
 		prefillFraction: 1.0,
 	}
 }
@@ -305,6 +311,9 @@ func newCapacityModel(
 // lock. An empty id, which is what the tests and any call that does not know
 // the instance pass, always gets the fleet value.
 func (m *capacityModel) corrLocked(id string) float64 {
+	if m.disabled {
+		return 1
+	}
 	if !m.perInstance || id == "" {
 		return m.correction
 	}

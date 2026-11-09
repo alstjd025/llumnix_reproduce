@@ -300,6 +300,8 @@ type FullModeSchedulingConfig struct {
 	FluidserveShadowHorizon          int
 	FluidservePaceHorizon            int
 	FluidserveShadowLedger           bool
+	FluidserveChargePromptOnly       bool
+	FluidserveLatencyCorrection      bool
 	FluidserveZSafety                float64
 	FluidserveTtftSafetyMs           int
 	FluidserveEnablePend             bool
@@ -503,6 +505,13 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"seconds because decode growth is then exactly one token per request per "+
 			"iteration, and because iteration time is itself a function of the occupancy "+
 			"being controlled.")
+	flags.BoolVar(&c.FluidserveChargePromptOnly, "fluidserve-charge-prompt-only", false,
+		"FluidServe: charge an arriving request its prompt only, without the future decode "+
+			"min(horizon, expected output). EXP-153's ledger found the future-decode charge changed "+
+			"no decision. Off reproduces every earlier measurement.")
+	flags.BoolVar(&c.FluidserveLatencyCorrection, "fluidserve-latency-correction", true,
+		"FluidServe: correct the latency model by the measured/predicted step ratio (fleet, and per "+
+			"instance with --fluidserve-per-instance-correction). False uses the model as fitted.")
 	flags.BoolVar(&c.FluidserveShadowLedger, "fluidserve-shadow-ledger", false,
 		"FluidServe diagnostics: re-judge every candidate on the same state with single "+
 			"mechanisms removed or replaced (charge, KV projection, per-instance correction, "+

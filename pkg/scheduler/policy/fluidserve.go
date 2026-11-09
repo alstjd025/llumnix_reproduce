@@ -117,8 +117,13 @@ type fluidserveConfig struct {
 	// or replaced and counts where the verdict would differ. Decisions are
 	// unchanged. See fluidserve_ledger.go.
 	shadowLedger bool
-	zSafety      float64
-	ttftSafetyMs float64
+	// chargePromptOnly charges an arriving request its prompt only, without the
+	// future decode min(h, expected output) (EXP-153 ledger variant A: changed no
+	// decision). latencyCorrection=false uses the latency model as fitted.
+	chargePromptOnly  bool
+	latencyCorrection bool
+	zSafety           float64
+	ttftSafetyMs      float64
 	// Ablation switches. These select which mechanism is in play, they are not
 	// quantities to tune.
 	enablePend bool
@@ -2033,6 +2038,9 @@ func (p *fluidserveDispatchPolicy) costOf(req *fluidserveRequest) float64 {
 	if h <= 0 {
 		h = p.cfg.horizonSteps
 	}
+	if p.cfg.chargePromptOnly {
+		return float64(req.promptTokens)
+	}
 	growth := math.Min(float64(h), req.expectedToks)
 	return float64(req.promptTokens) + growth
 }
@@ -3257,21 +3265,23 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 	}
 
 	cfg := fluidserveConfig{
-		horizonSteps:   p.FluidserveHorizonSteps,
-		chargeHorizon:  p.FluidserveChargeHorizon,
-		shadowHorizon:  p.FluidserveShadowHorizon,
-		paceHorizon:    p.FluidservePaceHorizon,
-		shadowLedger:   p.FluidserveShadowLedger,
-		zSafety:        p.FluidserveZSafety,
-		ttftSafetyMs:   float64(p.FluidserveTtftSafetyMs),
-		enablePend:     p.FluidserveEnablePend,
-		enableShed:     p.FluidserveEnableShed,
-		shedFleetScale: parseShedSignal(p.FluidserveShedSignal),
-		oracleLength:   p.FluidserveOracleLength,
-		oracleFlux:     p.FluidserveOracleFlux,
-		enableAffinity: p.FluidserveEnableAffinity,
-		affinityWeight: p.FluidserveAffinityWeight,
-		affinityMetric: p.FluidserveAffinityMetric,
+		horizonSteps:      p.FluidserveHorizonSteps,
+		chargeHorizon:     p.FluidserveChargeHorizon,
+		shadowHorizon:     p.FluidserveShadowHorizon,
+		paceHorizon:       p.FluidservePaceHorizon,
+		shadowLedger:      p.FluidserveShadowLedger,
+		chargePromptOnly:  p.FluidserveChargePromptOnly,
+		latencyCorrection: p.FluidserveLatencyCorrection,
+		zSafety:           p.FluidserveZSafety,
+		ttftSafetyMs:      float64(p.FluidserveTtftSafetyMs),
+		enablePend:        p.FluidserveEnablePend,
+		enableShed:        p.FluidserveEnableShed,
+		shedFleetScale:    parseShedSignal(p.FluidserveShedSignal),
+		oracleLength:      p.FluidserveOracleLength,
+		oracleFlux:        p.FluidserveOracleFlux,
+		enableAffinity:    p.FluidserveEnableAffinity,
+		affinityWeight:    p.FluidserveAffinityWeight,
+		affinityMetric:    p.FluidserveAffinityMetric,
 
 		perInstanceCorrection: p.FluidservePerInstanceCorrection,
 		memoryUsesPaceCap:     p.FluidserveMemoryUsesPaceCap,
@@ -3334,7 +3344,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 
 	policy := &fluidserveDispatchPolicy{
 		cfg:       cfg,
-		capacity:  newCapacityModel(profile, predictor, cfg.perInstanceCorrection),
+		capacity:  newCapacityModel(profile, predictor, cfg.perInstanceCorrection, !cfg.latencyCorrection),
 		lengths:   lengths,
 		registry:  newRequestRegistry(lengths, budgets),
 		lastObs:   map[string]stepObservation{},
@@ -3392,7 +3402,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3408,7 +3418,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger)
+		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection)
 
 	go policy.reportLoop()
 	return policy
