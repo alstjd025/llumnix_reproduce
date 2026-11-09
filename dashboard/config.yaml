@@ -57,6 +57,7 @@ known_binaries:
   4585b1f4: "scheduler EXP-151 — 783a574e + --fluidserve-pace-horizon(c8c831e)"
   302638b0: "scheduler EXP-153 — 4585b1f4 + 제거 후보 shadow 장부(a21491c)"
   359aac2c: "scheduler EXP-154 — 302638b0 + prompt만 청구·지연 보정 끄기 플래그(37e4d52)"
+  5f6fa02a: "scheduler EXP-155 — 359aac2c + 정점 KV 예측·여유 기준 보호(81aeace)"
 
 # arm 이름(run 디렉토리 이름의 네 번째 칸) → 화면에 쓰는 이름.
 # 이름 규칙은 CLAUDE.md의 "정책 이름은 이렇게 부른다" 표를 따른다.
@@ -83,6 +84,10 @@ arms:
   fsexactprogledger: FluidServe + 정확 장부 + 엔진 대기 요청 제외, 제거 후보 shadow 장부
   fsexactproga: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구
   fsexactprogac: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구 + 지연 보정 끔
+  # EXP-155 (2026-11-10). 정점 KV 예측 + 여유 기준 보호(horizon을 예측 정확도 통제 값으로)
+  fsnewh25: FluidServe 새 모델(정점 예측 + 여유 보호), horizon 25
+  fsnewh100: FluidServe 새 모델(정점 예측 + 여유 보호), horizon 100
+  fsnewh200: FluidServe 새 모델(정점 예측 + 여유 보호), horizon 200
   llmdslot75: llm-d
   loadbalance: Llumnix
 
