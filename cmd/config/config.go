@@ -302,6 +302,10 @@ type FullModeSchedulingConfig struct {
 	FluidserveShadowLedger           bool
 	FluidserveChargePromptOnly       bool
 	FluidserveLatencyCorrection      bool
+	FluidservePeakForecast           bool
+	FluidserveArrivalHalfLifeMs      int
+	FluidserveForecastZ              float64
+	FluidserveSlackProtect           bool
 	FluidserveZSafety                float64
 	FluidserveTtftSafetyMs           int
 	FluidserveEnablePend             bool
@@ -505,6 +509,17 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"seconds because decode growth is then exactly one token per request per "+
 			"iteration, and because iteration time is itself a function of the occupancy "+
 			"being controlled.")
+	flags.BoolVar(&c.FluidservePeakForecast, "fluidserve-peak-forecast", false,
+		"FluidServe (EXP-155): judge memory on the peak of an unbiased KV forecast over the horizon "+
+			"(current KV + decode growth + averaged arrivals - expected release) plus z x the measured "+
+			"error of earlier forecasts, instead of the projection's end point.")
+	flags.IntVar(&c.FluidserveArrivalHalfLifeMs, "fluidserve-arrival-halflife-ms", 10000,
+		"FluidServe: half-life of the per-instance arrival average used by --fluidserve-peak-forecast.")
+	flags.Float64Var(&c.FluidserveForecastZ, "fluidserve-forecast-z", 1.65,
+		"FluidServe: multiple of the measured forecast error added by --fluidserve-peak-forecast.")
+	flags.BoolVar(&c.FluidserveSlackProtect, "fluidserve-slack-protect", false,
+		"FluidServe (EXP-155): replace the gate and incumbent tests that spread an arriving prompt over "+
+			"the pace horizon by a sustained-step test and a one-time-stall vs ladder-slack test.")
 	flags.BoolVar(&c.FluidserveChargePromptOnly, "fluidserve-charge-prompt-only", false,
 		"FluidServe: charge an arriving request its prompt only, without the future decode "+
 			"min(horizon, expected output). EXP-153's ledger found the future-decode charge changed "+

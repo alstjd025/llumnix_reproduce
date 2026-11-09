@@ -122,6 +122,15 @@ type fluidserveConfig struct {
 	// decision). latencyCorrection=false uses the latency model as fitted.
 	chargePromptOnly  bool
 	latencyCorrection bool
+	// EXP-155 (fluidserve_forecast.go). peakForecast replaces the KV
+	// projection's end point by the peak of an unbiased forecast plus z x its
+	// measured error (arrivals averaged with half-life arrivalHalfLifeMs);
+	// slackProtect replaces the horizon-spread pace tests by a sustained-step
+	// test and a one-time-stall vs ladder-slack test.
+	peakForecast      bool
+	arrivalHalfLifeMs float64
+	forecastZ         float64
+	slackProtect      bool
 	zSafety           float64
 	ttftSafetyMs      float64
 	// Ablation switches. These select which mechanism is in play, they are not
@@ -417,6 +426,7 @@ type fluidserveDispatchPolicy struct {
 
 	cfg      fluidserveConfig
 	capacity *capacityModel
+	forecast forecastState
 	registry *requestRegistry
 	lengths  *lengthModel
 	prefix   *prefixIndex
@@ -1368,10 +1378,16 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	if f.proj < 0 {
 		f.proj = 0
 	}
+	if p.cfg.peakForecast {
+		f.proj = p.peakForecast(f, nowMs)
+	}
 
 	f.capKv = p.capacity.maxKvForAllowance(
 		f.id, f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
 		f.effectivePrefill, f.chunk, p.paceHorizonSteps())
+	if p.cfg.slackProtect {
+		f.capKv = p.sustainedMaxKv(f, f.gateAllowance*fsAllowanceUtilisation)
+	}
 
 	// Physical capacity, converted into the logical units everything else is in.
 	// The ratio is measured rather than assumed because prefix-cache sharing
@@ -1479,6 +1495,9 @@ type candidate struct {
 	// ledger is the shadow ledger's verdict per variant (fluidserve_ledger.go).
 	ledger   [nLedgerVariants]bool
 	ledgerOn bool
+	// ownPaceAfter is the pace the arriving request's own budget is judged by:
+	// meanAfter, or the sustained step under --fluidserve-slack-protect.
+	ownPaceAfter float64
 	// share is the fraction of the requests on this instance that belong to the
 	// arriving request's class. It orders the FEASIBLE set only.
 	share float64
@@ -2209,6 +2228,15 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		c.incumbentAfter = math.Inf(1)
 	}
 	overIncumbents := c.meanAfter > c.incumbentAfter
+	c.ownPaceAfter = c.meanAfter
+	if p.cfg.slackProtect {
+		// EXP-155: neither test spreads this prompt over the pace horizon.
+		sustained, overInc, unpred := p.slackTests(f, newKv, c.prefillCharge)
+		c.ownPaceAfter = sustained
+		overGate = sustained > c.gateAfter
+		overIncumbents = overInc
+		unpredictable = unpredictable || unpred
+	}
 	// The memory predicate, and which ceiling it reads.
 	//
 	// capMem is the physical pool: kvCapacity x 0.95 over the sharing ratio.
@@ -2460,7 +2488,11 @@ func (p *fluidserveDispatchPolicy) missesOwnBudget(
 	if p.cfg.forceMargin {
 		budget *= fsAllowanceUtilisation
 	}
-	return req.nominalMs > 0 && c.meanAfter > budget
+	pace := c.meanAfter
+	if p.cfg.slackProtect && c.ownPaceAfter > 0 {
+		pace = c.ownPaceAfter
+	}
+	return req.nominalMs > 0 && pace > budget
 }
 
 // missesOnFleet is missesOwnBudget asked of the fleet rather than of a chosen
@@ -3160,6 +3192,9 @@ func (p *fluidserveDispatchPolicy) commit(c candidate, req *fluidserveRequest, k
 		metrics.Labels{}).Observe(float64(ord))
 
 	p.noteArrival(c.flux.id, req.nowMs, float64(req.promptTokens))
+	if p.cfg.peakForecast {
+		p.noteArrivalRate(c.flux.id, req.nowMs, float64(req.promptTokens))
+	}
 	p.registry.onDispatch(c.flux.id, req.id, req.tier, req.promptTokens,
 		c.flux.chunk, c.flux.stepID, req.nowMs, c.prefillMs, c.prefillRaw,
 		req.oracleTokens)
@@ -3272,6 +3307,10 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		shadowLedger:      p.FluidserveShadowLedger,
 		chargePromptOnly:  p.FluidserveChargePromptOnly,
 		latencyCorrection: p.FluidserveLatencyCorrection,
+		peakForecast:      p.FluidservePeakForecast,
+		arrivalHalfLifeMs: float64(p.FluidserveArrivalHalfLifeMs),
+		forecastZ:         p.FluidserveForecastZ,
+		slackProtect:      p.FluidserveSlackProtect,
 		zSafety:           p.FluidserveZSafety,
 		ttftSafetyMs:      float64(p.FluidserveTtftSafetyMs),
 		enablePend:        p.FluidserveEnablePend,
@@ -3402,7 +3441,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v, peakforecast=%v, arrivalhalflife=%.0f, forecastz=%.2f, slackprotect=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3418,7 +3457,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection)
+		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection, cfg.peakForecast, cfg.arrivalHalfLifeMs, cfg.forecastZ, cfg.slackProtect)
 
 	go policy.reportLoop()
 	return policy

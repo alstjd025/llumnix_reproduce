@@ -376,6 +376,11 @@ FLUIDSERVE_ABLATIONS = {
     # EXP-154. Simplification candidates from the EXP-153 ledger.
     "FS_CHARGE_PROMPT_ONLY": "--fluidserve-charge-prompt-only",
     "FS_LATENCY_CORRECTION": "--fluidserve-latency-correction",
+    # EXP-155. Horizon as an accuracy control.
+    "FS_PEAK_FORECAST": "--fluidserve-peak-forecast",
+    "FS_ARRIVAL_HALFLIFE_MS": "--fluidserve-arrival-halflife-ms",
+    "FS_FORECAST_Z": "--fluidserve-forecast-z",
+    "FS_SLACK_PROTECT": "--fluidserve-slack-protect",
     "FS_Z": "--fluidserve-z-safety",
     # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
     # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.
@@ -957,6 +962,10 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-shadow-ledger", "shadowledger"),
         ("--fluidserve-charge-prompt-only", "chargepromptonly"),
         ("--fluidserve-latency-correction", "latencycorr"),
+        ("--fluidserve-peak-forecast", "peakforecast"),
+        ("--fluidserve-arrival-halflife-ms", "arrivalhalflife"),
+        ("--fluidserve-forecast-z", "forecastz"),
+        ("--fluidserve-slack-protect", "slackprotect"),
     ]
     bad = []
     for flag, key in checks:
