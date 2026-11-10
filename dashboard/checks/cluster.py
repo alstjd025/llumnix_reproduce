@@ -93,8 +93,8 @@ def _exe_check(prefix, file_key, container=None):
         elif not binary_name(got) and worst == "ok":
             worst = "warn"
     msg = {"ok": "실행 중인 바이너리 = bin/의 파일",
-           "warn": "bin/의 파일과 같지만 config.yaml의 known_binaries에 없는 md5다",
-           "fail": "실행 중인 바이너리가 bin/의 파일과 다르다 — 재시작 전이거나 설치가 실패했다"}[worst]
+           "warn": "bin/의 파일과 같지만 config.yaml의 known_binaries에 없는 md5입니다",
+           "fail": "실행 중인 바이너리가 bin/의 파일과 다릅니다 — 재시작 전이거나 설치가 실패했습니다"}[worst]
     return Result(worst, msg, ev)
 
 

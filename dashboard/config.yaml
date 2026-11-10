@@ -52,7 +52,7 @@ known_binaries:
   590242b0: "gateway EXP-141~ — 완료 통지(--notify-completion)"
   3a1d2354: "scheduler EXP-146~148 — 통지를 배치한 스케줄러 파드로 직접(c0fb7ab), UUID 대기 ID 처리"
   f674aa25: "gateway EXP-146 — 통지를 배치한 스케줄러 파드로 직접"
-  05745270: "gateway EXP-147~ — 파드 직접 통지 + keepalive 재연결 후에도 통지(5dec8d6)"
+  "05745270": "gateway EXP-147~ — 파드 직접 통지 + keepalive 재연결 후에도 통지(5dec8d6)"
   783a574e: "scheduler EXP-149 — 3a1d2354 + horizon shadow 판정(83299fb)"
   4585b1f4: "scheduler EXP-151 — 783a574e + --fluidserve-pace-horizon(c8c831e)"
   302638b0: "scheduler EXP-153 — 4585b1f4 + 제거 후보 shadow 장부(a21491c)"
