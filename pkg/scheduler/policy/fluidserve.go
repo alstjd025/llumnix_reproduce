@@ -131,8 +131,14 @@ type fluidserveConfig struct {
 	arrivalHalfLifeMs float64
 	forecastZ         float64
 	slackProtect      bool
-	zSafety           float64
-	ttftSafetyMs      float64
+	// ladderGate (EXP-157, with slackProtect) replaces the nominal gate
+	// (tightest nominal budget x 0.9) by the smallest ladder allowance among
+	// the residents and the arriving request: budget + ladder slack / remaining
+	// tokens. EXP-156 measured that this, not the nominal gate, is where
+	// requests start to miss.
+	ladderGate   bool
+	zSafety      float64
+	ttftSafetyMs float64
 	// Ablation switches. These select which mechanism is in play, they are not
 	// quantities to tune.
 	enablePend bool
@@ -1386,7 +1392,11 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 		f.id, f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
 		f.effectivePrefill, f.chunk, p.paceHorizonSteps())
 	if p.cfg.slackProtect {
-		f.capKv = p.sustainedMaxKv(f, f.gateAllowance*fsAllowanceUtilisation)
+		allow := f.gateAllowance * fsAllowanceUtilisation
+		if p.cfg.ladderGate {
+			allow = p.residentLadderAllowance(f)
+		}
+		f.capKv = p.sustainedMaxKv(f, allow)
 	}
 
 	// Physical capacity, converted into the logical units everything else is in.
@@ -1498,6 +1508,9 @@ type candidate struct {
 	// ownPaceAfter is the pace the arriving request's own budget is judged by:
 	// meanAfter, or the sustained step under --fluidserve-slack-protect.
 	ownPaceAfter float64
+	// ownAllowance is the arriving request's ladder allowance under
+	// --fluidserve-ladder-gate (0 otherwise).
+	ownAllowance float64
 	// share is the fraction of the requests on this instance that belong to the
 	// arriving request's class. It orders the FEASIBLE set only.
 	share float64
@@ -2233,6 +2246,10 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		// EXP-155: neither test spreads this prompt over the pace horizon.
 		sustained, overInc, unpred := p.slackTests(f, newKv, c.prefillCharge)
 		c.ownPaceAfter = sustained
+		if p.cfg.ladderGate {
+			c.ownAllowance = p.arrivingLadderAllowance(req, &c)
+			c.gateAfter = math.Min(p.residentLadderAllowance(f), c.ownAllowance)
+		}
 		overGate = sustained > c.gateAfter
 		overIncumbents = overInc
 		unpredictable = unpredictable || unpred
@@ -2491,6 +2508,9 @@ func (p *fluidserveDispatchPolicy) missesOwnBudget(
 	pace := c.meanAfter
 	if p.cfg.slackProtect && c.ownPaceAfter > 0 {
 		pace = c.ownPaceAfter
+	}
+	if p.cfg.ladderGate && c.ownAllowance > 0 {
+		budget = c.ownAllowance
 	}
 	return req.nominalMs > 0 && pace > budget
 }
@@ -3311,6 +3331,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		arrivalHalfLifeMs: float64(p.FluidserveArrivalHalfLifeMs),
 		forecastZ:         p.FluidserveForecastZ,
 		slackProtect:      p.FluidserveSlackProtect,
+		ladderGate:        p.FluidserveLadderGate,
 		zSafety:           p.FluidserveZSafety,
 		ttftSafetyMs:      float64(p.FluidserveTtftSafetyMs),
 		enablePend:        p.FluidserveEnablePend,
@@ -3441,7 +3462,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v, peakforecast=%v, arrivalhalflife=%.0f, forecastz=%.2f, slackprotect=%v",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v, peakforecast=%v, arrivalhalflife=%.0f, forecastz=%.2f, slackprotect=%v, laddergate=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3457,7 +3478,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection, cfg.peakForecast, cfg.arrivalHalfLifeMs, cfg.forecastZ, cfg.slackProtect)
+		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection, cfg.peakForecast, cfg.arrivalHalfLifeMs, cfg.forecastZ, cfg.slackProtect, cfg.ladderGate)
 
 	go policy.reportLoop()
 	return policy

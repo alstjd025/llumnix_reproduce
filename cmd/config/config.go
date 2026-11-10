@@ -306,6 +306,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveArrivalHalfLifeMs      int
 	FluidserveForecastZ              float64
 	FluidserveSlackProtect           bool
+	FluidserveLadderGate             bool
 	FluidserveZSafety                float64
 	FluidserveTtftSafetyMs           int
 	FluidserveEnablePend             bool
@@ -517,6 +518,10 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 		"FluidServe: half-life of the per-instance arrival average used by --fluidserve-peak-forecast.")
 	flags.Float64Var(&c.FluidserveForecastZ, "fluidserve-forecast-z", 1.65,
 		"FluidServe: multiple of the measured forecast error added by --fluidserve-peak-forecast.")
+	flags.BoolVar(&c.FluidserveLadderGate, "fluidserve-ladder-gate", false,
+		"FluidServe (EXP-157, with --fluidserve-slack-protect): judge the sustained step against the "+
+			"smallest ladder allowance (budget + ladder slack / remaining tokens) among the residents and "+
+			"the arriving request, instead of the tightest nominal budget x 0.9.")
 	flags.BoolVar(&c.FluidserveSlackProtect, "fluidserve-slack-protect", false,
 		"FluidServe (EXP-155): replace the gate and incumbent tests that spread an arriving prompt over "+
 			"the pace horizon by a sustained-step test and a one-time-stall vs ladder-slack test.")

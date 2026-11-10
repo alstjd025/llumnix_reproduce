@@ -381,6 +381,7 @@ FLUIDSERVE_ABLATIONS = {
     "FS_ARRIVAL_HALFLIFE_MS": "--fluidserve-arrival-halflife-ms",
     "FS_FORECAST_Z": "--fluidserve-forecast-z",
     "FS_SLACK_PROTECT": "--fluidserve-slack-protect",
+    "FS_LADDER_GATE": "--fluidserve-ladder-gate",
     "FS_Z": "--fluidserve-z-safety",
     # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
     # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.
@@ -966,6 +967,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-arrival-halflife-ms", "arrivalhalflife"),
         ("--fluidserve-forecast-z", "forecastz"),
         ("--fluidserve-slack-protect", "slackprotect"),
+        ("--fluidserve-ladder-gate", "laddergate"),
     ]
     bad = []
     for flag, key in checks:

@@ -115,3 +115,46 @@ func TestSlackProtectCapacityDoesNotDependOnTheHorizon(t *testing.T) {
 	assert.InDelta(t, got[100], got[25], 1e-6)
 	assert.InDelta(t, got[100], got[200], 1e-6)
 }
+
+func TestLadderAllowanceUsesSlackAndSkipsResidentsBehind(t *testing.T) {
+	p := fsPolicy(t, "25:decode:75,50:decode,100:decode", nil)
+	f := &instanceFlux{live: []liveRequest{
+		{nominalMs: 50, slackLadderMs: 4000, remaining: 400}, // 50 + 10 = 60
+		{nominalMs: 50, slackLadderMs: 1000, remaining: 50},  // 50 + 20 = 70
+		{nominalMs: 50, slackLadderMs: -300, remaining: 100}, // behind: skipped
+		{nominalMs: 50, slackLadderMs: 10, remaining: 10, unachievable: true},
+	}}
+	assert.InDelta(t, 60, p.residentLadderAllowance(f), 1e-9)
+	assert.True(t, math.IsInf(p.residentLadderAllowance(&instanceFlux{}), 1))
+}
+
+func TestLadderGateAdmitsWhereTheNominalGateRefuses(t *testing.T) {
+	// A chat instance whose sustained step is above 45 ms (50 x 0.9) but whose
+	// residents have seconds of ladder slack: the nominal gate refuses, the
+	// ladder gate does not.
+	mk := func(ladder bool) *fluidserveDispatchPolicy {
+		return fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+			c.slackProtect = true
+			c.ladderGate = ladder
+		})
+	}
+	for _, ladder := range []bool{false, true} {
+		p := mk(ladder)
+		fill(p, "busy", 50, 700, 120, 4000, 0)
+		views := map[string]*instanceViewScheduling{
+			"busy": fsView(fsViewOpts{id: "busy", decodeReqs: 120, decodeTokens: 1700000,
+				usedGpu: 300000, stepID: 5000}),
+		}
+		p.calculateMetrics("neutral", fsRequest("probe", 50, 5000, 600), views)
+		f := views["busy"].schedulingCtx.fluidserveFlux
+		for i := range f.live {
+			f.live[i].slackLadderMs = 4000
+		}
+		c := p.evaluate(f, views["busy"], views["busy"].schedulingCtx.fluidserveRequest)
+		if ladder {
+			assert.Greater(t, c.gateAfter, 45.0)
+		} else {
+			assert.InDelta(t, 45.0, c.gateAfter, 1e-9)
+		}
+	}
+}

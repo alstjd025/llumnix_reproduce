@@ -269,3 +269,38 @@ func (p *fluidserveDispatchPolicy) sustainedMaxKv(f *instanceFlux, allowanceMs f
 	}
 	return (allowanceMs/corr - c0 - cN*f.nDecode - f.prefillDuty*f.horizonPaceMs) / cKv
 }
+
+// residentLadderAllowance is the smallest per-token allowance among the
+// residents still on track: budget + ladder slack / remaining tokens, the pace
+// at which the request would just reach its last deadline (EXP-156: requests
+// running slower than the nominal gate but inside this met their deadlines).
+// Residents already behind (negative slack) or past saving are left out, as
+// in the stall test; +Inf on an instance with none.
+func (p *fluidserveDispatchPolicy) residentLadderAllowance(f *instanceFlux) float64 {
+	out := math.Inf(1)
+	for i := range f.live {
+		r := &f.live[i]
+		if r.unachievable || r.slackLadderMs < 0 || math.IsInf(r.slackLadderMs, 1) || r.nominalMs <= 0 {
+			continue
+		}
+		a := r.nominalMs + r.slackLadderMs/math.Max(r.remaining, 1)
+		if a < out {
+			out = a
+		}
+	}
+	return out
+}
+
+// arrivingLadderAllowance is the arriving request's own ladder allowance:
+// budget + what is left of its first-token budget after the wait so far and
+// the estimated prefill, spread over its expected output.
+func (p *fluidserveDispatchPolicy) arrivingLadderAllowance(req *fluidserveRequest, c *candidate) float64 {
+	if req.isE2E || req.ttftSloMs <= 0 || req.nominalMs <= 0 {
+		return req.nominalMs
+	}
+	left := req.ttftSloMs - float64(req.nowMs-req.arrivedMs) - c.prefillMs
+	if left < 0 || math.IsInf(left, 0) {
+		left = 0
+	}
+	return req.nominalMs + left/math.Max(req.expectedToks, 1)
+}
