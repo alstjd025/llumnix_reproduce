@@ -262,7 +262,11 @@ def run_fluidserve(name):
             per_inst.setdefault(short, {})[str(inst_port.get(inst, inst))] = ys
         elif lab.startswith("tier="):
             from config import class_of_tier
-            per_tier.setdefault(short, {})[class_of_tier(lab.split("=", 1)[1]) or lab] = ys
+            # A label can carry more than the tier (the shadow counters add
+            # variant=, real=, shadow=); the class name replaces only the tier part.
+            first, _, rest = lab.partition(",")
+            cls = class_of_tier(first.split("=", 1)[1]) if first.split("=", 1)[1].isdigit() else None
+            per_tier.setdefault(short, {})[(cls + ("," + rest if rest else "")) if cls else lab] = ys
         else:
             fleet[short + (f"[{lab}]" if lab else "")] = ys
     return jsonable(dict(recorded=True, t=t, per_instance=per_inst, per_tier=per_tier, fleet=fleet, stack=stack))
