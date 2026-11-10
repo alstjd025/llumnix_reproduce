@@ -42,7 +42,9 @@ def compare(q: str, ref: str = "", exclude_listed: bool = True):
         out.append(c)
     out.sort(key=lambda c: (c["rate"] or 0, c["arm_label"] or ""))
     # 기준 arm과의 비교: 같은 도착률의 칸끼리
-    ref = ref or next((c["arm"] for c in out if c["arm_label"] == "FluidServe"), out[0]["arm"] if out else "")
+    # The default reference is the submitted paper's configuration (FluidServe v0.4), found by its
+    # arm name: labels carry the version since 2026-11-10 and are not a stable key.
+    ref = ref or next((c["arm"] for c in out if c["arm"] == "fsv3capgnofrct75"), out[0]["arm"] if out else "")
     for c in out:
         base = next((b for b in out if b["arm"] == ref and b["rate"] == c["rate"]
                      and b["duration_min"] == c["duration_min"]), None)

@@ -62,32 +62,32 @@ known_binaries:
 # arm 이름(run 디렉토리 이름의 네 번째 칸) → 화면에 쓰는 이름.
 # 이름 규칙은 CLAUDE.md의 "정책 이름은 이렇게 부른다" 표를 따른다.
 arms:
-  fsv3capgnofrct75: FluidServe
+  fsv3capgnofrct75: FluidServe v0.4 (제출 논문)
   polyservept75: PolyServe
   vllmcachet75: "vLLM*"
   slot75: Llumnix SLO
-  # EXP-141 (2026-10-20). 원본 arm의 이름은 기존 run과 그림이 쓰는 이름이라 그대로 두고, 새 arm에만 무엇이 다른지를 붙인다.
+  # 2026-11-10: FluidServe 구성은 버전으로 부른다(project/versions/). EXP-141 (2026-10-20). 원본 arm의 이름은 기존 run과 그림이 쓰는 이름이라 그대로 두고, 새 arm에만 무엇이 다른지를 붙인다.
   fsexact: FluidServe + 정확 장부
   slot75inc: Llumnix SLO + 처리 중 기준
-  fsexactprog: FluidServe + 정확 장부 + 엔진 대기 요청 제외
-  fsexactprogdl: FluidServe + 정확 장부 + 엔진 대기 요청 제외 + 첫 토큰 마감 조건
+  fsexactprog: FluidServe v0.5 (EXP-147 이전 run은 통지 누락 수정 전 바이너리)
+  fsexactprogdl: FluidServe v0.5 + 첫 토큰 마감 조건
   # EXP-148 (2026-11-06). fsexactprog에서 계획 horizon만 바꾼 arm
-  fsexactprogh25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 25
-  fsexactprogh50: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 50
-  fsexactprogh200: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 200
+  fsexactprogh25: FluidServe v0.5 + horizon 25
+  fsexactprogh50: FluidServe v0.5 + horizon 50
+  fsexactprogh200: FluidServe v0.5 + horizon 200
   # EXP-149 (2026-11-06). horizon 100으로 결정하고, 같은 상태에서 horizon 25로 다시 판정한 결과를 카운터로만 남김
-  fsexactprogshadow25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 25 shadow 판정
-  fsexactprogshadow200: FluidServe + 정확 장부 + 엔진 대기 요청 제외, horizon 200 shadow 판정
+  fsexactprogshadow25: FluidServe v0.5.1 + horizon 25 shadow 판정
+  fsexactprogshadow200: FluidServe v0.5.1 + horizon 200 shadow 판정
   # EXP-151 (2026-11-08). horizon 100, 토큰당 시간 추정의 prefill 비중 분모만 따로
-  fsexactprogp25: FluidServe + 정확 장부 + 엔진 대기 요청 제외, pace horizon 25
-  fsexactprogp50: FluidServe + 정확 장부 + 엔진 대기 요청 제외, pace horizon 50
-  fsexactprogledger: FluidServe + 정확 장부 + 엔진 대기 요청 제외, 제거 후보 shadow 장부
-  fsexactproga: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구
-  fsexactprogac: FluidServe + 정확 장부 + 엔진 대기 요청 제외, prompt만 청구 + 지연 보정 끔
+  fsexactprogp25: FluidServe v0.5 + pace horizon 25
+  fsexactprogp50: FluidServe v0.5 + pace horizon 50
+  fsexactprogledger: FluidServe v0.5.3 + 제거 후보 shadow 장부
+  fsexactproga: FluidServe v0.5 + prompt만 청구
+  fsexactprogac: FluidServe v0.5 + prompt만 청구 + 지연 보정 끔
   # EXP-155 (2026-11-10). 정점 KV 예측 + 여유 기준 보호(horizon을 예측 정확도 통제 값으로)
-  fsnewh25: FluidServe 새 모델(정점 예측 + 여유 보호), horizon 25
-  fsnewh100: FluidServe 새 모델(정점 예측 + 여유 보호), horizon 100
-  fsnewh200: FluidServe 새 모델(정점 예측 + 여유 보호), horizon 200
+  fsnewh25: FluidServe v0.6-후보1, horizon 25
+  fsnewh100: FluidServe v0.6-후보1, horizon 100
+  fsnewh200: FluidServe v0.6-후보1, horizon 200
   llmdslot75: llm-d
   loadbalance: Llumnix
 
