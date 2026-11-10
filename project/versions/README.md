@@ -20,3 +20,5 @@
 | **v0.5** | 2026-11-05 | `3a1d2354` / `05745270` | `fsexactprog` | 완료 통지로 처리 중 목록 유지 + 엔진 대기 요청 제외 + 통지 누락 수정 | [fluidserve-v0.5.md](fluidserve-v0.5.md) |
 | v0.5.1~v0.5.5 | 2026-11-06~10 | `783a574e`·`4585b1f4`·`302638b0`·`359aac2c`·`5f6fa02a` | | v0.5에 기본값이 꺼진 플래그만 더한 바이너리(진단·실험용). 플래그를 안 켜면 v0.5와 같은 결정 | [fluidserve-v0.5.md](fluidserve-v0.5.md) §4 |
 | **v0.6-후보1** | 2026-11-10 | `5f6fa02a` + 플래그 / `05745270` | `fsnewh25`·`fsnewh100`·`fsnewh200` | v0.5 + 정점 KV 예측 + 여유 기준 보호 | [fluidserve-v0.6-candidate1.md](fluidserve-v0.6-candidate1.md) |
+| v0.5.6 | 2026-11-10 | `f532e712` | | v0.5.5 + `--fluidserve-ladder-gate`(기본 꺼짐) | [fluidserve-v0.5.md](fluidserve-v0.5.md) §4 |
+| **v0.6-후보2** | 2026-11-10 | `f532e712` + 플래그 / `05745270` | `fsc2h25`·`fsc2h100`·`fsc2h200` | v0.6-후보1 + ladder 판정선 + KV 한도 0.98 | [fluidserve-v0.6-candidate2.md](fluidserve-v0.6-candidate2.md) |

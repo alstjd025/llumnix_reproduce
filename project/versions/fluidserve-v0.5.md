@@ -58,5 +58,6 @@ FS_PREFILL_INTERLEAVE=true FS_INSTANCE_CAP=true FS_CAP_WINDOW_MULT=3.0 FS_FORCE=
 | v0.5.3 | `302638b0` | `a21491c` | `--fluidserve-shadow-ledger`(제거 후보 장부) | EXP-153 |
 | v0.5.4 | `359aac2c` | `37e4d52` | `--fluidserve-charge-prompt-only`, `--fluidserve-latency-correction` | EXP-154 |
 | v0.5.5 | `5f6fa02a` | `81aeace` | `--fluidserve-peak-forecast`, `--fluidserve-slack-protect`(켜면 v0.6-후보1) | EXP-155 |
+| v0.5.6 | `f532e712` | `e9b812c` | `--fluidserve-ladder-gate`(v0.6-후보1과 함께 켜고 KV 한도 0.98이면 v0.6-후보2) | EXP-157 |
 
 주의: shadow 계산(v0.5.1의 shadow, v0.5.3의 장부)을 켜면 결정 로직은 같지만 결정 1회 시간이 약 0.27 ms → 0.68~0.79 ms로 늘어난다.
