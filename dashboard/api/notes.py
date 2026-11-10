@@ -27,4 +27,4 @@ def put_note(kind: str, key: str, body: dict = Body(...)):
     except ValueError as e:
         raise HTTPException(400, str(e))
     except notes.Conflict as e:
-        raise HTTPException(409, "다른 곳에서 이 메모가 바뀌었다. 새로 불러온 뒤 다시 저장한다")
+        raise HTTPException(409, "다른 곳에서 이 메모가 바뀌었습니다. 새로 불러온 뒤 다시 저장해 주십시오")

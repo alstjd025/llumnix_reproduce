@@ -15,11 +15,11 @@ export async function render(el, { name }) {
   body.innerHTML = `
     <div class="toolbar">${badge(info.state === "done" ? "ok" : "warn", { done: "끝남", running: "진행 중", incomplete: "불완전" }[info.state])}
       <span>${esc(info.arm_label || "")} <span class="muted mono">${esc(info.arm || "")}</span></span>
-      <span class="muted">세션 ${esc(info.session || "")} · ${info.rate ? fmt(info.rate, 1) + " req/s" : "trace"} · ${d.config?.duration_min ? fmt(d.config.duration_min, 0) + "분" : "길이는 trace가 정한다"} · ${esc(d.config?.workload || "")}</span>
+      <span class="muted">세션 ${esc(info.session || "")} · ${info.rate ? fmt(info.rate, 1) + " req/s" : "trace"} · ${d.config?.duration_min ? fmt(d.config.duration_min, 0) + "분" : "길이는 trace가 정합니다"} · ${esc(d.config?.workload || "")}</span>
       ${info.excluded?.length ? badge("warn", "제외 목록: " + info.excluded.join(" / ")) : ""}</div>
-    <h2>메모 <span class="muted" style="font-weight:400;font-size:12px">— project/notes/runs/에 파일로 남는다</span></h2><div id="r-note"></div>
+    <h2>메모 <span class="muted" style="font-weight:400;font-size:12px">— project/notes/runs/에 파일로 남습니다</span></h2><div id="r-note"></div>
     ${scoreHtml(d)}
-    <h2>검사</h2><div>${(d.checks || []).map(c => checkHtml(c)).join("") || '<span class="muted">채점이 끝나면 나온다</span>'}</div>
+    <h2>검사</h2><div>${(d.checks || []).map(c => checkHtml(c)).join("") || '<span class="muted">채점이 끝나면 표시됩니다</span>'}</div>
     <h2>엔진 <span class="muted" style="font-weight:400;font-size:12px">— 러너 수집기가 1초마다 기록한 vLLM 메트릭. 선 하나가 엔진 하나(포트)</span></h2>
     <div class="grid g2" id="eng"></div>
     <h2>스케줄러 결정 <span class="muted" style="font-weight:400;font-size:12px">— scheduler_dispatch.log</span></h2>
@@ -28,7 +28,7 @@ export async function render(el, { name }) {
     <div class="grid g4" id="occ"></div>
     <h2>지연 분포와 결과 <span class="muted" style="font-weight:400;font-size:12px">— 클라이언트 측정, warm-up 60 s·drain 20 s 제외, 거절·오류 제외</span></h2>
     <div class="grid g2" id="lat"></div>
-    <h2>FluidServe 내부 값 <span class="muted" style="font-weight:400;font-size:12px">— 스케줄러 /metrics를 대시보드가 2초마다 기록한 것. run 디렉토리에는 없다</span></h2>
+    <h2>FluidServe 내부 값 <span class="muted" style="font-weight:400;font-size:12px">— 스케줄러 /metrics를 대시보드가 2초마다 기록한 것. run 디렉토리에는 없습니다</span></h2>
     <div class="grid g2" id="fs"></div>
     <h2>이 run이 쓴 스택 <span class="muted" style="font-weight:400;font-size:12px">— 실행 중인 바이너리 md5와 플래그, run 시작과 스케줄러 파드가 바뀔 때마다</span></h2>
     <div id="stack"></div>

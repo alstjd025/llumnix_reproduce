@@ -22,7 +22,7 @@ export function chartBox(parent, cls = "", key = null) {
 
 export function drawSeries(body, d) {
   const eng = body.querySelector("#eng"), dec = body.querySelector("#dec"), occ = body.querySelector("#occ");
-  if (!d || d.error || !d.t0) { eng.innerHTML = `<div class="panel muted">server_metrics가 없다 ${esc(d?.error || "")}</div>`; return; }
+  if (!d || d.error || !d.t0) { eng.innerHTML = `<div class="panel muted">server_metrics가 없습니다 ${esc(d?.error || "")}</div>`; return; }
   const ports = Object.keys(d.engines);
   const ser = key => ports.map((p, i) => ({ name: p, t: d.engines[p].t, y: d.engines[p][key], color: ENGINE_COLORS[i] }));
   timeLines(chartBox(eng, "", "kv"), { title: "KV cache 사용률", yname: "%", series: ser("kv_pct"), group: G, ymax: 100 });
@@ -42,13 +42,13 @@ export function drawSeries(body, d) {
   }
 
   const ds = d.dispatch;
-  if (!ds || !ds.decisions) { dec.innerHTML = `<div class="panel muted">결정 로그가 없다</div>`; }
+  if (!ds || !ds.decisions) { dec.innerHTML = `<div class="panel muted">결정 로그가 없습니다</div>`; }
   else {
     const kinds = ds.decisions.kinds, cls = Object.keys(ds.decisions.counts).filter(c => c !== "?" || Object.values(ds.decisions.counts["?"]).some(v => v.some(x => x)));
     const tot = ds.decisions.totals;
     const shedNote = ds.policy === "fluidserve"
-      ? "FluidServe 결정 줄(route = 인스턴스에 보냄, shed:<사유> = 거절). 클래스는 결정 줄의 tier로 정한다."
-      : "이 정책은 결정 줄을 쓰지 않으므로 routing 줄만 센다. 거절은 아래 '지연 분포와 결과'의 막대에 있다.";
+      ? "FluidServe 결정 줄(route = 인스턴스에 보냄, shed:<사유> = 거절). 클래스는 결정 줄의 tier로 정합니다."
+      : "이 정책은 결정 줄을 쓰지 않으므로 routing 줄만 셉니다. 거절은 아래 '지연 분포와 결과'의 막대에 있습니다.";
     if (!dec.querySelector("#dec-g")) dec.innerHTML = `<div class="note" id="dec-note"></div><div class="grid g4" id="dec-g"></div>
       <div class="panel" style="margin-top:8px" id="dec-tbl"></div>`;
     dec.querySelector("#dec-note").textContent = shedNote + " 10초 단위.";
@@ -67,11 +67,11 @@ export function drawSeries(body, d) {
       timeLines(chartBox(occ, "short", "occ-" + inst), { title: `인스턴스 ${inst}`, yname: "요청", group: G, stack: true,
         series: Object.entries(byc).map(([c, y]) => ({ name: c, t: ds.occupancy.t, y, color: CLASS_COLORS[c] })) });
     }
-  } else occ.innerHTML = `<div class="panel muted">routing 줄이나 request_ids.jsonl이 없다</div>`;
+  } else occ.innerHTML = `<div class="panel muted">routing 줄이나 request_ids.jsonl이 없습니다</div>`;
 }
 
 export function drawLatency(box, d) {
-  if (!d) { box.innerHTML = `<div class="panel muted">채점이 끝나면 나온다</div>`; return; }
+  if (!d) { box.innerHTML = `<div class="panel muted">채점이 끝나면 표시됩니다</div>`; return; }
   const B = d.budgets, cls = Object.keys(d.cdf);
   cdf(chartBox(box, "", "cdf-ttft"), { title: "TTFT 누적분포 · 점선 = 예산 " + cls.map(c => `${c} ${B[c]?.ttft_s}s`).join(", "), xname: "s", q: d.q,
     series: cls.map(c => ({ name: c, x: d.cdf[c].ttft_s, color: B[c]?.color })),
@@ -97,7 +97,7 @@ export function outcomeBars(box, d, note) {
 // FluidServe 내부 값(대시보드 기록기가 2초마다 남긴 것). 인스턴스별 선은 엔진 포트 이름이다.
 export function drawFluidServe(box, d) {
   if (!d || !d.recorded) {
-    box.innerHTML = `<div class="panel muted">이 run에는 대시보드가 기록한 FluidServe 내부 값이 없다(기록기는 2026-10-12부터, 대시보드가 떠 있는 동안 FluidServe run에서만 기록한다).</div>`;
+    box.innerHTML = `<div class="panel muted">이 run에는 대시보드가 기록한 FluidServe 내부 값이 없습니다(기록기는 2026-10-12부터, 대시보드가 떠 있는 동안 FluidServe run에서만 기록합니다).</div>`;
     return;
   }
   const P = d.per_instance, ports = Object.keys(P.observed_step_ms || P.live_requests || {}).sort();
@@ -125,7 +125,7 @@ export function drawFluidServe(box, d) {
 // 그 run이 쓴 스택(대시보드 기록기가 run 시작과 스케줄러 파드가 바뀔 때마다 남긴 스냅샷)
 export function stackHtml(stack) {
   const ss = stack?.snapshots || [];
-  if (!ss.length) return `<div class="panel muted">스택 스냅샷이 없다(2026-10-12부터, 대시보드가 떠 있는 동안 시작된 run만 기록된다). 이 run의 바이너리·플래그는 드라이버 로그에만 있다.</div>`;
+  if (!ss.length) return `<div class="panel muted">스택 스냅샷이 없습니다(2026-10-12부터, 대시보드가 떠 있는 동안 시작된 run만 기록됩니다). 이 run의 바이너리·플래그는 드라이버 로그에만 있습니다.</div>`;
   return ss.map(s => `<div class="panel" style="margin-bottom:8px"><div><b>${new Date(s.t * 1000).toLocaleString("ko-KR")}</b>
     ${s.error ? `<span class="muted">${esc(s.error)}</span>` : ""}</div>
     <div class="mono">스케줄러 ${Object.entries(s.scheduler_md5 || {}).map(([p, m]) => `${esc(p)} /proc/1/exe ${esc((m || "?").slice(0, 8))}`).join(", ")}</div>

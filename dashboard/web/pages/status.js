@@ -27,7 +27,7 @@ export async function render(el) {
       </div>
       <h2>스케줄러 deployment의 인자 (${fs}개 플래그)</h2>
       <div class="panel"><details><summary>펼치기</summary><pre class="mono">${esc(pairArgs(d.scheduler_args))}</pre></details>
-      <div class="note">deployment spec에 적힌 값이다. 프로세스가 실제로 읽은 값은 아니다(실행 중인 바이너리는 위 검사의 /proc/1/exe md5로 확인한다).</div></div>`;
+      <div class="note">deployment spec에 적힌 값입니다. 프로세스가 실제로 읽은 값은 아닙니다(실행 중인 바이너리는 위 검사의 /proc/1/exe md5로 확인합니다).</div></div>`;
     body.querySelectorAll(".check details").forEach(x => { if (open.has(x.dataset.id)) x.open = true; });
     open = new Set();
   };

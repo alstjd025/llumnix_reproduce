@@ -6,7 +6,7 @@ export async function noteBox(el, kind, key) {
   const url = `/api/notes/${kind}/${encodeURIComponent(key)}`;
   let base = null, saved = "";
   el.innerHTML = `<div class="panel note-box">
-      <textarea rows="5" placeholder="이 ${kind === "run" ? "run" : "실험"}에 대한 메모(Markdown). 저장하면 파일로 남는다"></textarea>
+      <textarea rows="5" placeholder="이 ${kind === "run" ? "run" : "실험"}에 대한 메모(Markdown). 저장하면 파일로 남습니다"></textarea>
       <div class="toolbar"><button>저장</button><span class="muted st"></span><span class="muted mono path"></span></div></div>`;
   const ta = el.querySelector("textarea"), btn = el.querySelector("button"), st = el.querySelector(".st"), pth = el.querySelector(".path");
   const show = (d) => {
@@ -24,7 +24,7 @@ export async function noteBox(el, kind, key) {
     try {
       const r = await fetch(url, { method: "PUT", headers: { "Content-Type": "application/json" },
                                    body: JSON.stringify({ text: ta.value, base_mtime: base }) });
-      if (r.status === 409) { st.innerHTML = `<b style="color:var(--fail)">저장 안 됨</b> — 다른 탭에서 바뀌었다. 지금 내용을 복사해 둔 뒤 새로고침한다`; return; }
+      if (r.status === 409) { st.innerHTML = `<b style="color:var(--fail)">저장 안 됨</b> — 다른 탭에서 내용이 바뀌었습니다. 지금 내용을 복사해 둔 뒤 새로고침하십시오`; return; }
       if (!r.ok) throw new Error(await r.text());
       show(await r.json());
     } catch (e) { st.innerHTML = `<b style="color:var(--fail)">저장 실패</b> ${esc(e.message)}`; }

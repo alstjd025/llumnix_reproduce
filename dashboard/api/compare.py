@@ -64,6 +64,6 @@ def compare(q: str, ref: str = "", exclude_listed: bool = True):
     dates = sorted({r.get("date") for r in rows if r.get("date")})
     warn = []
     if len(dates) > 1 and int(dates[-1]) - int(dates[0]) > 2:
-        warn.append(f"run 날짜가 {dates[0]}~{dates[-1]}로 벌어져 있다. 다른 세션의 arm끼리는 비교가 아니다"
+        warn.append(f"run 날짜가 {dates[0]}~{dates[-1]}로 벌어져 있습니다. 다른 세션의 arm끼리는 비교가 되지 않습니다"
                     f"(세션 간 이동이 최대 4.6점).")
     return jsonable(dict(cells=out, ref=ref, skipped=skipped, warnings=warn, metrics=METRICS))

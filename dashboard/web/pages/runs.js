@@ -11,10 +11,10 @@ const COLS = [
   { k: "rate", t: "req/s", num: true, f: r => fmt(r.rate, 1) },
   { k: "duration_min", t: "분", num: true, f: r => fmt(r.duration_min, 0) },
   { k: "offered", t: "모든 도착 %", num: true, f: r => fmt(r.offered), tip: "ladder95, 거절·오류=위반, 미완료 제외" },
-  { k: "admitted", t: "admitted %", num: true, f: r => fmt(r.admitted), tip: "ladder95, 거절·미완료를 분모에서 뺀다" },
+  { k: "admitted", t: "admitted %", num: true, f: r => fmt(r.admitted), tip: "ladder95, 거절·미완료를 분모에서 뺍니다" },
   { k: "rejected_pct", t: "거절 %", num: true, f: r => fmt(r.rejected_pct) },
   { k: "goodput_tok_s", t: "goodput tok/s", num: true, f: r => fmt(r.goodput_tok_s, 0), tip: "마감을 지킨 토큰 수 / 측정 창" },
-  { k: "preemptions", t: "preempt", num: true, f: r => fmt(r.preemptions, 0), tip: "엔진 4대 합. 세션을 넘어 비교하지 않는다" },
+  { k: "preemptions", t: "preempt", num: true, f: r => fmt(r.preemptions, 0), tip: "엔진 4대 합. 세션을 넘어 비교하지 않습니다" },
   { k: "n", t: "요청", num: true, f: r => fmt(r.n, 0) },
   { k: "_check", t: "검사", f: r => checkCell(r) },
 ];
@@ -32,8 +32,8 @@ export async function render(el) {
     <div class="toolbar"><input type="text" id="q" placeholder="run 이름·세션·arm으로 거르기" size="40">
       <button id="cmp" disabled>고른 두 run의 설정 비교</button><span id="cnt" class="muted"></span></div>
     <div class="note">점수는 논문 주 규칙 ladder95(토큰 i의 마감 = TTFT 예산 + i × 토큰당 예산, 토큰의 95% 이상이 마감 안이면 성공)이고
-      analysis_scripts의 채점 함수를 그대로 불러 계산한다. 끝난 run은 백그라운드에서 자동으로 채점된다(run 하나에 약 7초, 한 시간 run은 더 길다).
-      한 조건의 1회 측정으로 판정하지 않는다 — 반복 간 편차가 1.4~3.3점이다.</div>
+      analysis_scripts의 채점 함수를 그대로 불러 계산합니다. 끝난 run은 백그라운드에서 자동으로 채점됩니다(run 하나에 약 7초, 한 시간 run은 더 깁니다).
+      한 조건의 1회 측정으로 판정하지 않습니다. 반복 간 편차가 1.4~3.3점입니다.</div>
     <div class="panel scroll"><table id="tbl"></table></div>`;
   let rows = [], sortK = null, sortDir = -1;
   const sel = new Set();
