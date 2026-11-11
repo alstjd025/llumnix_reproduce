@@ -81,7 +81,24 @@ export function drawLatency(box, d) {
     series: cls.map(c => ({ name: c, x: d.cdf[c].itl_ms, color: B[c]?.color })),
     marks: cls.map(c => ({ series: c, x: B[c]?.tbt_ms, label: `${c} ${B[c]?.tbt_ms}` })),
     xmax: Math.max(...cls.map(c => (B[c]?.tbt_ms || 0) * 2.5)) });
+  violationTable(box, d);
   outcomeBars(box, d, "ladder95, 최종 채점")
+}
+
+// 받은 요청(거절·오류·측정 끝에서 잘린 요청 제외)의 SLO 위반을 종류별로 나눈 표.
+function violationTable(box, d) {
+  const V = d.violations; if (!V) return;
+  const B = d.budgets, pct = (n, m) => m ? `${n.toLocaleString()} <span class="muted">(${(100 * n / m).toFixed(2)}%)</span>` : "—";
+  const el = document.createElement("div"); el.className = "panel scroll"; el.style.gridColumn = "1 / -1";
+  el.innerHTML = `<div class="muted" style="margin-bottom:6px">받은 요청의 SLO 위반 종류. <b>마감 위반</b>은 ladder95 실패(토큰의 95% 이상이 마감 안이어야 성공, i번째 토큰 마감 = TTFT 예산 + i × TBT 예산)이고,
+    그 원인을 TTFT 예산 초과 → (TTFT는 지켰고) 요청 평균 토큰 간격이 TBT 예산 초과 → 둘 다 지켰는데 지연이 일부 구간에 몰림 순서로 하나에만 넣습니다.
+    오른쪽 세 열은 마감 성공 여부와 무관하게 센 값입니다. 평균 간격이 예산을 넘어도 첫 토큰에서 남긴 TTFT 예산으로 마감을 지킬 수 있습니다.</div>
+    <table><tr><th>클래스 (예산)</th><th class="num">받은 요청</th><th class="num">마감 위반</th><th class="num">└ TTFT 초과</th><th class="num">└ 평균 간격 초과</th><th class="num">└ 지연이 구간에 몰림</th>
+    <th class="num">TTFT 초과 (전체)</th><th class="num">평균 간격 초과 (전체)</th><th class="num">평균 간격 초과인데 마감 지킴</th></tr>
+    ${Object.entries(V).map(([c, v]) => `<tr><td>${c} <span class="muted">(${B[c]?.ttft_s}s, ${B[c]?.tbt_ms}ms)</span></td><td class="num">${v.admitted.toLocaleString()}</td>
+      <td class="num">${pct(v.deadline_fail, v.admitted)}</td><td class="num">${pct(v.fail_ttft, v.admitted)}</td><td class="num">${pct(v.fail_tbt, v.admitted)}</td><td class="num">${pct(v.fail_other, v.admitted)}</td>
+      <td class="num">${pct(v.ttft_over, v.admitted)}</td><td class="num">${pct(v.tbt_over, v.admitted)}</td><td class="num">${pct(v.tbt_over_met, v.admitted)}</td></tr>`).join("")}</table>`;
+  box.appendChild(el);
 }
 
 // 클래스마다 도착 시각별 결과 막대. 끝난 run(최종 채점)과 진행 중인 run(중간 결과)이 같이 쓴다.

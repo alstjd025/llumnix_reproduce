@@ -128,7 +128,7 @@ def run_series(name):
 
 @router.get("/runs/{name}/latency")
 def run_latency(name):
-    """클래스별 TTFT·토큰 사이 시간의 분포(분위수 101개)와, 10초 단위 결과(ladder95 성공/실패/거절/미완료)."""
+    """클래스별 TTFT·토큰 사이 시간의 분포(분위수 101개), 10초 단위 결과(ladder95 성공/실패/거절/미완료), 받은 요청의 SLO 위반 종류."""
     _dir(name)
     req = scoring.requests_table(name)
     if req is None:
@@ -137,7 +137,7 @@ def run_latency(name):
     t0_series = timeseries.run_t0(os.path.join(runs.run_dir(name), "server_metrics"))
     shift = (sc.get("t0_requests") or 0) - (t0_series or 0) if sc.get("t0_requests") and t0_series else 0.0
     qs = np.linspace(0, 1, 101)
-    cdf, outcome = {}, {}
+    cdf, outcome, violations = {}, {}, {}
     bin_s = 10
     nb = int((req["rel"].max() + shift) // bin_s) + 1 if len(req) else 0
     for c, sub in req.groupby("class"):
@@ -154,7 +154,19 @@ def run_latency(name):
         miss = ~met & ~rej & ~err & ~cut
         outcome[c] = {k: np.bincount(b[m], minlength=nb).tolist()
                       for k, m in (("met", met), ("missed", miss), ("rejected", rej), ("errored", err), ("cutoff", cut))}
-    return jsonable(dict(q=qs.tolist(), cdf=cdf, bin_s=bin_s, t=[i * bin_s for i in range(nb)], outcome=outcome,
+        # 받은 요청의 SLO 위반을 종류별로 나눈다. TTFT 초과와 평균 토큰 간격 초과는 서로 독립으로 세고,
+        # 마감 위반(ladder95 실패)은 그 원인을 TTFT 초과 → 평균 간격 초과 → 둘 다 아님(중간에 몰린 지연) 순서로 하나에만 넣는다.
+        bud = CFG["classes"].get(c, {})
+        ok_rows = served[~served["cutoff"].astype(bool)]
+        ttft_over = ok_rows["first_token_latency"] > bud.get("ttft_s", np.inf)
+        tbt_over = ok_rows["itl_ms"] > bud.get("tbt_ms", np.inf)
+        fail = ~ok_rows["ladder_ok"].astype(bool)
+        violations[c] = dict(
+            admitted=int(len(ok_rows)), deadline_fail=int(fail.sum()),
+            fail_ttft=int((fail & ttft_over).sum()), fail_tbt=int((fail & ~ttft_over & tbt_over).sum()),
+            fail_other=int((fail & ~ttft_over & ~tbt_over).sum()),
+            ttft_over=int(ttft_over.sum()), tbt_over=int(tbt_over.sum()), tbt_over_met=int((tbt_over & ~fail).sum()))
+    return jsonable(dict(q=qs.tolist(), cdf=cdf, bin_s=bin_s, t=[i * bin_s for i in range(nb)], outcome=outcome, violations=violations,
                          budgets=CFG["classes"]))
 
 
