@@ -1,7 +1,7 @@
-// ③ run 하나의 상세. 위에서부터: 점수 → 검사 → 엔진 시계열 → 스케줄러 결정 → 인스턴스별 클래스 구성 → 지연 분포 → 설정.
+// ③ run 하나의 상세. 위에서부터: 점수 → 시간에 따른 결과 → 검사 → 엔진 시계열 → 스케줄러 결정 → 인스턴스별 클래스 구성 → 지연 분포 → 설정.
 // 시간축 그래프는 모두 같은 group이라 하나를 확대하면 나머지도 같이 움직인다.
 import { api, esc, fmt, badge, checkHtml } from "../lib/util.js";
-import { drawSeries, drawLatency, drawFluidServe, stackHtml } from "../lib/runviews.js";
+import { drawSeries, drawLatency, drawFluidServe, drawOutcomeTime, stackHtml } from "../lib/runviews.js";
 import { noteBox } from "../lib/notes.js";
 
 
@@ -19,6 +19,8 @@ export async function render(el, { name }) {
       ${info.excluded?.length ? badge("warn", "제외 목록: " + info.excluded.join(" / ")) : ""}</div>
     <h2>메모 <span class="muted" style="font-weight:400;font-size:12px">— project/notes/runs/에 파일로 남습니다</span></h2><div id="r-note"></div>
     ${scoreHtml(d)}
+    <h2>시간에 따른 결과 <span class="muted" style="font-weight:400;font-size:12px">— 도착 시각 10초 단위를 1분 이동 창으로 묶은 값. 선은 전체와 클래스별</span></h2>
+    <div class="grid g2" id="top"></div>
     <h2>검사</h2><div>${(d.checks || []).map(c => checkHtml(c)).join("") || '<span class="muted">채점이 끝나면 표시됩니다</span>'}</div>
     <h2>엔진 <span class="muted" style="font-weight:400;font-size:12px">— 러너 수집기가 1초마다 기록한 vLLM 메트릭. 선 하나가 엔진 하나(포트)</span></h2>
     <div class="grid g2" id="eng"></div>
@@ -44,6 +46,7 @@ export async function render(el, { name }) {
   body.querySelector("#stack").innerHTML = stackHtml(fs?.stack);
   drawSeries(body, series);
   drawLatency(body.querySelector("#lat"), lat);
+  drawOutcomeTime(body.querySelector("#top"), lat);
 }
 
 function scoreHtml(d) {

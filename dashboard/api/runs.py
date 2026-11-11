@@ -154,6 +154,12 @@ def run_latency(name):
         miss = ~met & ~rej & ~err & ~cut
         outcome[c] = {k: np.bincount(b[m], minlength=nb).tolist()
                       for k, m in (("met", met), ("missed", miss), ("rejected", rej), ("errored", err), ("cutoff", cut))}
+        # 받은 요청이 만든 토큰과 그중 마감 안 토큰을 그 요청의 도착 시각 bin에 넣는다(토큰이 실제로 나온 시각이 아니다).
+        done = met | miss
+        ntok = sub["n_tokens"].fillna(0).to_numpy(float)
+        outcome[c]["tok_all"] = np.bincount(b[done], weights=ntok[done.to_numpy()], minlength=nb).tolist()
+        outcome[c]["tok_ontime"] = np.bincount(b[done], weights=(ntok - sub["n_late"].fillna(0).to_numpy(float))[done.to_numpy()],
+                                               minlength=nb).tolist()
         # 받은 요청의 SLO 위반을 종류별로 나눈다. TTFT 초과와 평균 토큰 간격 초과는 서로 독립으로 세고,
         # 마감 위반(ladder95 실패)은 그 원인을 TTFT 초과 → 평균 간격 초과 → 둘 다 아님(중간에 몰린 지연) 순서로 하나에만 넣는다.
         bud = CFG["classes"].get(c, {})

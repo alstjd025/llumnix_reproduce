@@ -101,6 +101,28 @@ function violationTable(box, d) {
   box.appendChild(el);
 }
 
+// 결과 페이지 맨 위: 시간에 따른 달성률·거절률·토큰. 도착 시각 10초 bin을 1분 이동 합으로 묶는다.
+export function drawOutcomeTime(box, d) {
+  if (!d) { box.innerHTML = `<div class="panel muted">채점이 끝나면 표시됩니다</div>`; return; }
+  const W = 6, B = d.budgets, cls = Object.keys(d.outcome);
+  const roll = a => a.map((_, i) => { let s = 0; for (let j = Math.max(0, i - W + 1); j <= i; j++) s += a[j] || 0; return s; });
+  const sum = k => d.t.map((_, i) => cls.reduce((s, c) => s + (d.outcome[c][k]?.[i] || 0), 0));
+  const get = (c, k) => c ? d.outcome[c][k] : sum(k);
+  const ratio = (num, den) => { const n = roll(num), m = roll(den); return n.map((v, i) => m[i] ? 100 * v / m[i] : null); };
+  const add = (...xs) => xs[0].map((_, i) => xs.reduce((s, x) => s + (x[i] || 0), 0));
+  const lines = f => [{ name: "전체", t: d.t, y: f(null), color: "#333" }, ...cls.map(c => ({ name: c, t: d.t, y: f(c), color: B[c]?.color }))];
+  timeLines(chartBox(box, "", "top-adm"), { title: "admitted 기준 SLO 달성률 (%) — 받은 요청 중 ladder95 성공", yname: "%", ymax: 100, group: G,
+    series: lines(c => ratio(get(c, "met"), add(get(c, "met"), get(c, "missed")))) });
+  timeLines(chartBox(box, "", "top-all"), { title: "모든 도착 기준 SLO 달성률 (%) — 거절·오류도 위반", yname: "%", ymax: 100, group: G,
+    series: lines(c => ratio(get(c, "met"), add(get(c, "met"), get(c, "missed"), get(c, "rejected"), get(c, "errored")))) });
+  timeLines(chartBox(box, "", "top-rej"), { title: "거절률 (%)", yname: "%", ymax: 100, group: G,
+    series: lines(c => ratio(get(c, "rejected"), add(get(c, "met"), get(c, "missed"), get(c, "rejected"), get(c, "errored")))) });
+  const rate = a => roll(a).map(v => v / (W * d.bin_s));
+  timeLines(chartBox(box, "", "top-tok"), { title: "token goodput(전체·클래스별)과 throughput(회색, 전체), tok/s — 토큰은 요청 도착 시각에 넣음", yname: "tok/s", group: G,
+    series: [{ name: "throughput 전체", t: d.t, y: rate(get(null, "tok_all")), color: "#999" },
+             ...lines(c => rate(get(c, "tok_ontime"))).map(s => ({ ...s, name: "goodput " + s.name }))] });
+}
+
 // 클래스마다 도착 시각별 결과 막대. 끝난 run(최종 채점)과 진행 중인 run(중간 결과)이 같이 쓴다.
 export function outcomeBars(box, d, note) {
   let g = box.querySelector(":scope > .outcome-grid");
