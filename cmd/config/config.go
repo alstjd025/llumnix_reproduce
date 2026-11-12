@@ -300,6 +300,7 @@ type FullModeSchedulingConfig struct {
 	FluidserveShadowHorizon          int
 	FluidservePaceHorizon            int
 	FluidserveShadowLedger           bool
+	FluidserveShadowVariants         bool
 	FluidserveChargePromptOnly       bool
 	FluidserveLatencyCorrection      bool
 	FluidservePeakForecast           bool
@@ -537,6 +538,12 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"mechanisms removed or replaced (charge, KV projection, per-instance correction, "+
 			"slack-based protection) and their combinations, and count where the verdict would "+
 			"differ (scheduler_fluidserve_ledger_*). Decisions are unchanged.")
+	flags.BoolVar(&c.FluidserveShadowVariants, "fluidserve-shadow-variants", false,
+		"FluidServe diagnostics (EXP-158): on the v0.5 path, re-judge every candidate with a 1.0 gate, a "+
+			"horizon-free budget test (sustained step + marginal late-token test), the peak KV forecast "+
+			"without arrivals, and a pending-only first-token estimate, and count where the verdict, the "+
+			"target and class spreading would differ (scheduler_fluidserve_shadowv_*, fsshadowv log lines). "+
+			"Decisions are unchanged.")
 	flags.IntVar(&c.FluidservePaceHorizon, "fluidserve-pace-horizon", 0,
 		"FluidServe: iterations the pace estimate spreads queued prefill over -- the "+
 			"denominator of the prefill-carrying share of iterations in the mean step and the "+

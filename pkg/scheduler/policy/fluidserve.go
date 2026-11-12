@@ -117,6 +117,10 @@ type fluidserveConfig struct {
 	// or replaced and counts where the verdict would differ. Decisions are
 	// unchanged. See fluidserve_ledger.go.
 	shadowLedger bool
+	// shadowVariants re-judges every candidate of the v0.5 path with
+	// horizon-free and budget-based variants (EXP-158). Decisions are unchanged.
+	// See fluidserve_variants.go.
+	shadowVariants bool
 	// chargePromptOnly charges an arriving request its prompt only, without the
 	// future decode min(h, expected output) (EXP-153 ledger variant A: changed no
 	// decision). latencyCorrection=false uses the latency model as fitted.
@@ -425,6 +429,9 @@ type instanceFlux struct {
 	// the last status interval, or -1 if it could not be measured. Comparing it
 	// with meanStep is a live check on the capacity model.
 	observedStep float64
+	// vPeakMean, vPeakZ: the peak KV forecast without arrivals, for the shadow
+	// variants M0/M1/U+M0 only (--fluidserve-shadow-variants). No decision reads them.
+	vPeakMean, vPeakZ float64
 }
 
 type fluidserveDispatchPolicy struct {
@@ -433,9 +440,13 @@ type fluidserveDispatchPolicy struct {
 	cfg      fluidserveConfig
 	capacity *capacityModel
 	forecast forecastState
-	registry *requestRegistry
-	lengths  *lengthModel
-	prefix   *prefixIndex
+	// vforecast, vledger: state of the shadow variants (fluidserve_variants.go).
+	vforecast forecastState
+	vledgerMu sync.Mutex
+	vledger   map[string]*variantReq
+	registry  *requestRegistry
+	lengths   *lengthModel
+	prefix    *prefixIndex
 
 	obsMu   sync.Mutex
 	lastObs map[string]stepObservation
@@ -1387,6 +1398,9 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	if p.cfg.peakForecast {
 		f.proj = p.peakForecast(f, nowMs)
 	}
+	if p.cfg.shadowVariants {
+		f.vPeakMean, f.vPeakZ = p.variantPeak(f, nowMs)
+	}
 
 	f.capKv = p.capacity.maxKvForAllowance(
 		f.id, f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
@@ -1505,6 +1519,9 @@ type candidate struct {
 	// ledger is the shadow ledger's verdict per variant (fluidserve_ledger.go).
 	ledger   [nLedgerVariants]bool
 	ledgerOn bool
+	// variant/variantOn: verdicts of the shadow variants (fluidserve_variants.go).
+	variant   [nVariants]bool
+	variantOn bool
 	// ownPaceAfter is the pace the arriving request's own budget is judged by:
 	// meanAfter, or the sustained step under --fluidserve-slack-protect.
 	ownPaceAfter float64
@@ -1668,6 +1685,9 @@ func (s *fluidserveSelector) selectInstance(
 	if p.cfg.shadowLedger {
 		p.ledgerCountDecision(cands, req)
 	}
+	if p.cfg.shadowVariants {
+		p.variantCountDecision(cands, req)
+	}
 	// Would the projection have changed what happens to THIS request, as opposed
 	// to what one instance looked like? Two different answers count separately:
 	// whether the request gets placed at all, and if it does, whether it goes
@@ -1703,6 +1723,9 @@ func (s *fluidserveSelector) selectInstance(
 
 	best := cands[0]
 	if best.feasible {
+		if p.cfg.shadowVariants {
+			p.variantLog(req, "route")
+		}
 		p.commit(best, req, "route")
 		return best.view
 	}
@@ -1710,7 +1733,11 @@ func (s *fluidserveSelector) selectInstance(
 	// Nothing can take the request within the pace its class was promised.
 	// Waiting at the gateway costs the fleet nothing and keeps every option
 	// open, so it is preferred for as long as the request can still afford it.
-	if p.cfg.enablePend && p.canWait(best, req) {
+	realPend := p.cfg.enablePend && p.canWait(best, req)
+	if p.cfg.shadowVariants {
+		p.variantNoteWait(best, req, realPend)
+	}
+	if realPend {
 		metrics.Counter("scheduler_fluidserve_decisions_total",
 			metrics.Labels{{Name: "decision", Value: "pend"}}).Inc()
 		klog.V(5).Infof("FluidServe pends request %s (tier %dms, waited %dms): best "+
@@ -1760,6 +1787,9 @@ func (s *fluidserveSelector) selectInstance(
 		shedReason = "no_feasible"
 	}
 	if shedReason != "" {
+		if p.cfg.shadowVariants {
+			p.variantLog(req, "shed")
+		}
 		p.registry.forget(req.id)
 		metrics.Counter("scheduler_fluidserve_decisions_total",
 			metrics.Labels{{Name: "decision", Value: "shed"}}).Inc()
@@ -2358,6 +2388,13 @@ func (p *fluidserveDispatchPolicy) evaluate(
 		// the first-token deadline experiment could only approach it
 		// indirectly, from the share of decisions whose feasible set was
 		// already empty (63.9% against 61.9%). Counted here directly.
+		if p.cfg.shadowVariants {
+			metrics.Counter("scheduler_fluidserve_infeasible_mask_total",
+				metrics.Labels{
+					{Name: "mask", Value: strings.Join(failed, "+")},
+					{Name: "tier", Value: tier},
+				}).Inc()
+		}
 		if len(failed) == 1 {
 			metrics.Counter("scheduler_fluidserve_infeasible_sole_total",
 				metrics.Labels{
@@ -2405,6 +2442,9 @@ func (p *fluidserveDispatchPolicy) evaluate(
 	}
 	if p.cfg.shadowLedger {
 		p.ledgerJudgeCandidate(f, req, &c, newPending)
+	}
+	if p.cfg.shadowVariants {
+		p.variantJudgeCandidate(f, req, &c)
 	}
 	return c
 }
@@ -3325,6 +3365,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		shadowHorizon:     p.FluidserveShadowHorizon,
 		paceHorizon:       p.FluidservePaceHorizon,
 		shadowLedger:      p.FluidserveShadowLedger,
+		shadowVariants:    p.FluidserveShadowVariants,
 		chargePromptOnly:  p.FluidserveChargePromptOnly,
 		latencyCorrection: p.FluidserveLatencyCorrection,
 		peakForecast:      p.FluidservePeakForecast,
@@ -3462,7 +3503,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v, peakforecast=%v, arrivalhalflife=%.0f, forecastz=%.2f, slackprotect=%v, laddergate=%v",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v, peakforecast=%v, arrivalhalflife=%.0f, forecastz=%.2f, slackprotect=%v, laddergate=%v, shadowvariants=%v",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3478,7 +3519,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection, cfg.peakForecast, cfg.arrivalHalfLifeMs, cfg.forecastZ, cfg.slackProtect, cfg.ladderGate)
+		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection, cfg.peakForecast, cfg.arrivalHalfLifeMs, cfg.forecastZ, cfg.slackProtect, cfg.ladderGate, cfg.shadowVariants)
 
 	go policy.reportLoop()
 	return policy

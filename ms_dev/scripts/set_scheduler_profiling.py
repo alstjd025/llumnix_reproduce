@@ -382,6 +382,8 @@ FLUIDSERVE_ABLATIONS = {
     "FS_FORECAST_Z": "--fluidserve-forecast-z",
     "FS_SLACK_PROTECT": "--fluidserve-slack-protect",
     "FS_LADDER_GATE": "--fluidserve-ladder-gate",
+    # EXP-158. Shadow variants of the v0.5 path; decisions unchanged.
+    "FS_SHADOW_VARIANTS": "--fluidserve-shadow-variants",
     "FS_Z": "--fluidserve-z-safety",
     # EXP-42 candidate A. Off in the shipped default, so the baseline arm needs
     # no environment variable and the treatment arm sets FS_FORCE_MARGIN=true.
@@ -968,6 +970,7 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-forecast-z", "forecastz"),
         ("--fluidserve-slack-protect", "slackprotect"),
         ("--fluidserve-ladder-gate", "laddergate"),
+        ("--fluidserve-shadow-variants", "shadowvariants"),
     ]
     bad = []
     for flag, key in checks:
