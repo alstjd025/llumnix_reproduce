@@ -22,3 +22,4 @@
 | **v0.6-후보1** | 2026-11-10 | `5f6fa02a` + 플래그 / `05745270` | `fsnewh25`·`fsnewh100`·`fsnewh200` | v0.5 + 정점 KV 예측 + 여유 기준 보호 | [fluidserve-v0.6-candidate1.md](fluidserve-v0.6-candidate1.md) |
 | v0.5.6 | 2026-11-10 | `f532e712` | | v0.5.5 + `--fluidserve-ladder-gate`(기본 꺼짐) | [fluidserve-v0.5.md](fluidserve-v0.5.md) §4 |
 | **v0.6-후보2** | 2026-11-10 | `f532e712` + 플래그 / `05745270` | `fsc2h25`·`fsc2h100`·`fsc2h200` | v0.6-후보1 + ladder 판정선 + KV 한도 0.98 | [fluidserve-v0.6-candidate2.md](fluidserve-v0.6-candidate2.md) |
+| v0.5.7 | 2026-11-12 | `cb12ee4e` | `fsshadowv` | v0.5.6 + `--fluidserve-shadow-variants`(기본 꺼짐, 켜도 결정은 v0.5 그대로) | [fluidserve-v0.5.md](fluidserve-v0.5.md) §4 |
