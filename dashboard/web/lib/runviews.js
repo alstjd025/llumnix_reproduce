@@ -67,6 +67,20 @@ export function drawSeries(body, d) {
       timeLines(chartBox(occ, "short", "occ-" + inst), { title: `인스턴스 ${inst}`, yname: "요청", group: G, stack: true,
         series: Object.entries(byc).map(([c, y]) => ({ name: c, t: ds.occupancy.t, y, color: CLASS_COLORS[c] })) });
     }
+    const S = ds.occupancy.separation;
+    if (S && Object.keys(S).length) {
+      timeLines(chartBox(occ, "short", "occ-sep"), { title: "클래스별: 그 클래스 요청을 처리 중인 인스턴스 수", yname: "인스턴스", group: G,
+        series: Object.entries(S).map(([c, v]) => ({ name: c, t: ds.occupancy.t, y: v.series, color: CLASS_COLORS[c], step: true })) });
+      const box = document.createElement("div"); box.className = "panel scroll"; box.style.gridColumn = "1 / -1";
+      box.innerHTML = `<div class="muted" style="margin-bottom:6px">클래스 분리 지표. 처리 중 = routing 시각부터 요청이 끝난 시각까지(run 전체, warm-up 포함).
+        <b>첫 진입</b> = 그 클래스 요청이 하나도 없던 인스턴스로 그 클래스 요청이 route된 횟수, <b>보유 구간</b> = 인스턴스가 그 클래스를 0개에서 1개 이상으로 바꾼 횟수.</div>
+        <table><tr><th>클래스</th><th class="num">route</th><th class="num">처리 중 인스턴스 수 (평균)</th><th class="num">3대 이상인 시간</th>
+        <th class="num">첫 진입</th><th class="num">보유 구간</th><th class="num">상위 두 대로 간 비율</th></tr>
+        ${Object.entries(S).map(([c, v]) => `<tr><td>${c}</td><td class="num">${v.routes.toLocaleString()}</td><td class="num">${v.mean_instances.toFixed(2)}</td>
+          <td class="num">${(100 * v.frac_ge3).toFixed(0)}%</td><td class="num">${v.first_entries}</td><td class="num">${v.episodes}</td>
+          <td class="num">${(100 * v.top2_share).toFixed(1)}%</td></tr>`).join("")}</table>`;
+      occ.appendChild(box);
+    }
   } else occ.innerHTML = `<div class="panel muted">routing 줄이나 request_ids.jsonl이 없습니다</div>`;
 }
 

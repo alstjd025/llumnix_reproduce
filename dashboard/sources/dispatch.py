@@ -196,6 +196,36 @@ def summarize(run_dir, t0, bin_s=10, occ_step_s=5, live_now=None):
                 occ["instances"][name][c] = (np.searchsorted(a, grid, "right") -
                                              np.searchsorted(b, grid, "right")).tolist()
 
+    # 2b. 클래스 분리 지표(EXP-158부터 판정 기준). 클래스마다: 그 클래스 요청을 처리 중인 인스턴스 수(시간 평균, 3대 이상 비율),
+    # 그 클래스가 없던 인스턴스로 그 클래스 요청이 route된 횟수(첫 진입), 처리 중 0 → 1 이상으로 바뀐 횟수(보유 구간),
+    # route가 가장 많은 두 인스턴스로 간 비율. 처리 중 구간은 위 2와 같은 정의(routing 시각부터 끝난 시각까지).
+    sep = None
+    if occ:
+        sep = {}
+        for c in classes:
+            per = [occ["instances"][n].get(c, [0] * len(occ["t"])) for n in occ["instances"]]
+            held = (np.array(per) > 0) if per else np.zeros((0, len(occ["t"])), bool)
+            nh = held.sum(axis=0) if len(per) else np.zeros(len(occ["t"]))
+            if not nh.any():
+                continue
+            episodes = int(sum(((h[1:] & ~h[:-1]).sum() + int(h[0])) for h in held))
+            sc = [(i, a, b) for i, cc, a, b in spans if cc == c]
+            by = {}
+            for i, a, b in sc:
+                by.setdefault(i, ([], []))
+                by[i][0].append(a); by[i][1].append(b)
+            arr = {i: (np.sort(np.array(x[0])), np.sort(np.array(x[1]))) for i, x in by.items()}
+            first = 0
+            for i, a, b in sc:
+                A, B = arr[i]
+                if (np.searchsorted(A, a, "left") - np.searchsorted(B, a, "right")) == 0:
+                    first += 1
+            cnt = sorted((len(x[0]) for x in by.values()), reverse=True)
+            sep[c] = dict(series=nh.astype(int).tolist(), mean_instances=float(nh.mean()), frac_ge3=float((nh >= 3).mean()),
+                          first_entries=first, episodes=episodes, top2_share=float(sum(cnt[:2]) / max(sum(cnt), 1)),
+                          routes=len(sc))
+        occ["separation"] = sep
+
     # 3. FluidServe가 요청을 붙잡아 둔 시간(waited, ms)의 클래스별 분위수. 0이면 도착 즉시 결정됐다.
     waited = None
     if p["fs"]:
