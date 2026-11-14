@@ -60,6 +60,6 @@ FS_PREFILL_INTERLEAVE=true FS_INSTANCE_CAP=true FS_CAP_WINDOW_MULT=3.0 FS_FORCE=
 | v0.5.5 | `5f6fa02a` | `81aeace` | `--fluidserve-peak-forecast`, `--fluidserve-slack-protect`(켜면 v0.6-후보1) | EXP-155 |
 | v0.5.6 | `f532e712` | `e9b812c` | `--fluidserve-ladder-gate`(v0.6-후보1과 함께 켜고 KV 한도 0.98이면 v0.6-후보2) | EXP-157 |
 | v0.5.7 | `cb12ee4e` | `eb75c1e` | `--fluidserve-shadow-variants`(v0.5 경로를 같은 상태에서 판정선 1.0, h 없는 budget 판정, 도착 항 없는 정점 KV 예측, 지금 대기 prefill만 쓰는 첫 토큰 예측으로 다시 판정; 결정은 그대로) | EXP-158 |
-| v0.5.8 | `7dc2355c` | (이 커밋) | `--fluidserve-gate-utilisation`(판정선 = min(자기 budget, 가장 빡빡한 처리 중 budget) × 이 값, 기본 0.9; KV 속도 상한과 instance cap의 판정선 변화 비용도 같은 값. instance cap 수요 추정은 0.9 유지). 1.0이면 v0.6-후보3 | EXP-159 |
+| v0.5.8 | `7dc2355c` | `8e0fe5e` | `--fluidserve-gate-utilisation`(판정선 = min(자기 budget, 가장 빡빡한 처리 중 budget) × 이 값, 기본 0.9; KV 속도 상한과 instance cap의 판정선 변화 비용도 같은 값. instance cap 수요 추정은 0.9 유지). 1.0이면 v0.6-후보3 | EXP-159 |
 
 주의: shadow 계산(v0.5.1의 shadow, v0.5.3의 장부)을 켜면 결정 로직은 같지만 결정 1회 시간이 약 0.27 ms → 0.68~0.79 ms로 늘어난다.
