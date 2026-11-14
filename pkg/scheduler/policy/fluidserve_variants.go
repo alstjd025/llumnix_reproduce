@@ -49,19 +49,19 @@ const (
 var variantNames = [nVariants]string{"same", "G1.0", "U", "U+G1.0", "M0", "M1", "U+M0"}
 
 type variantOpts struct {
-	util   float64 // gate utilisation: v0.5 is fsAllowanceUtilisation (0.9)
+	util   float64 // gate utilisation; 0 = the deployed one (p.gateUtil(), 0.9 in v0.5)
 	budget bool    // U: sustained step + marginal late-token test instead of the h-spread mean step
 	peak   int     // KV from the peak forecast without arrivals: 0 off, 1 with z x error, 2 mean only
 }
 
 var variantSet = [nVariants]variantOpts{
-	varSame: {util: fsAllowanceUtilisation},
+	varSame: {},
 	varG10:  {util: 1.0},
-	varU:    {util: fsAllowanceUtilisation, budget: true},
+	varU:    {budget: true},
 	varUG10: {util: 1.0, budget: true},
-	varM0:   {util: fsAllowanceUtilisation, peak: 1},
-	varM1:   {util: fsAllowanceUtilisation, peak: 2},
-	varUM0:  {util: fsAllowanceUtilisation, budget: true, peak: 1},
+	varM0:   {peak: 1},
+	varM1:   {peak: 2},
+	varUM0:  {budget: true, peak: 1},
 }
 
 // fsLateTokenShare is the scorer's tolerance: ladder95 accepts a request with
@@ -87,8 +87,12 @@ func (p *fluidserveDispatchPolicy) variantJudge(f *instanceFlux, req *fluidserve
 	if p.cfg.memLevelTest {
 		memKv = f.kvLogical + cost
 	}
-	// The gate before evaluate() applied the utilisation.
-	gate := c.gateAfter / fsAllowanceUtilisation * o.util
+	// The gate before evaluate() applied the deployed utilisation.
+	util := o.util
+	if util <= 0 {
+		util = p.gateUtil()
+	}
+	gate := c.gateAfter / p.gateUtil() * util
 
 	var unpredictable, overGate, overIncumbents bool
 	capKv := f.capKv
@@ -99,8 +103,8 @@ func (p *fluidserveDispatchPolicy) variantJudge(f *instanceFlux, req *fluidserve
 		unpredictable = math.IsInf(mean, 0)
 		overGate = mean > gate
 		overIncumbents = mean > c.incumbentAfter
-		if o.util != fsAllowanceUtilisation {
-			capKv = p.capacity.maxKvForAllowance(f.id, f.gateAllowance*o.util, f.nDecode,
+		if util != p.gateUtil() {
+			capKv = p.capacity.maxKvForAllowance(f.id, f.gateAllowance*util, f.nDecode,
 				f.effectivePrefill, f.chunk, p.paceHorizonSteps())
 		}
 	} else {
@@ -111,7 +115,7 @@ func (p *fluidserveDispatchPolicy) variantJudge(f *instanceFlux, req *fluidserve
 		late, unpred := p.lateTokenTest(f, sustained, c.prefillCharge, corr)
 		overIncumbents = late && p.cfg.incumbentBalance
 		unpredictable = unpredictable || unpred
-		capKv = p.sustainedMaxKv(f, f.gateAllowance*o.util)
+		capKv = p.sustainedMaxKv(f, f.gateAllowance*util)
 	}
 	memLimit := f.capMem
 	if p.cfg.memoryUsesPaceCap {

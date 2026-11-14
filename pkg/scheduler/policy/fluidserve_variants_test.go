@@ -138,3 +138,36 @@ func TestCanWaitPendingOnlyIgnoresAnticipatedArrivals(t *testing.T) {
 	pendingOnly, _, _ := p.prefillEstimateParts(req, &fc)
 	assert.LessOrEqual(t, pendingOnly, real)
 }
+
+func TestGateUtilisationOneDecidesWhatShadowG10Predicted(t *testing.T) {
+	// --fluidserve-gate-utilisation=1.0 decides, candidate by candidate, what the
+	// G1.0 shadow variant predicted on the same state under the 0.9 gate.
+	for _, tier := range []int{25, 50, 100} {
+		for _, prompt := range []int{100, 600, 4000, 9000, 30000} {
+			shadow := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+				c.shadowVariants = true
+				c.memoryUsesPaceCap = true
+			})
+			real := fsPolicy(t, "25:decode:75,50:decode,100:decode", func(c *fluidserveConfig) {
+				c.gateUtil = 1.0
+				c.shadowVariants = true
+				c.memoryUsesPaceCap = true
+			})
+			want := map[string]bool{}
+			sc, _ := shadowCandidates(t, shadow, tier, prompt)
+			for _, c := range sc {
+				want[c.flux.id] = c.variant[varG10]
+			}
+			rc, _ := shadowCandidates(t, real, tier, prompt)
+			for _, c := range rc {
+				assert.Equal(t, want[c.flux.id], c.feasible, "tier %d prompt %d on %s", tier, prompt, c.flux.id)
+				assert.Equal(t, c.feasible, c.variant[varSame])
+			}
+		}
+	}
+}
+
+func TestGateUtilisationDefaultIsTheCompiledValue(t *testing.T) {
+	p := fsPolicy(t, "25:decode:75,50:decode,100:decode", nil)
+	assert.InDelta(t, fsAllowanceUtilisation, p.gateUtil(), 1e-12)
+}

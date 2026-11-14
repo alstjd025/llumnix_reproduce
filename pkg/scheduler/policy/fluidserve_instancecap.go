@@ -209,7 +209,7 @@ func (p *fluidserveDispatchPolicy) gateIsFree(f *instanceFlux, req *fluidserveRe
 	after := math.Min(now, req.nominalMs)
 	cost, ok := p.capacity.gateTighteningCost(
 		f.id, f.capKv, f.capMem,
-		now*fsAllowanceUtilisation, after*fsAllowanceUtilisation)
+		now*p.gateUtil(), after*p.gateUtil()) // the same utilisation f.capKv was built with
 	return ok && cost <= 0
 }
 

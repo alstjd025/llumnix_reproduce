@@ -98,7 +98,7 @@ func (p *fluidserveDispatchPolicy) shadowJudge(f *instanceFlux, req *fluidserveR
 		tightest = math.Inf(1)
 	}
 	capKv := p.capacity.maxKvForAllowance(
-		f.id, f.gateAllowance*fsAllowanceUtilisation, f.nDecode, eff, f.chunk, hPace)
+		f.id, f.gateAllowance*p.gateUtil(), f.nDecode, eff, f.chunk, hPace)
 
 	// Charge.
 	cost := float64(req.promptTokens) + math.Min(float64(hCharge), req.expectedToks)

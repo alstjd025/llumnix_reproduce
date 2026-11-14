@@ -94,7 +94,7 @@ func (p *fluidserveDispatchPolicy) ledgerJudge(f *instanceFlux, req *fluidserveR
 	eff := math.Max(f.pendingPrefill, arriving)
 	meanStep := p.capacity.meanStepMs(f.id, f.kvLogical, f.nDecode, eff, f.chunk, hp) / undo
 	capKv := p.capacity.maxKvForAllowance(
-		f.id, f.gateAllowance*fsAllowanceUtilisation*undo, f.nDecode, eff, f.chunk, hp)
+		f.id, f.gateAllowance*p.gateUtil()*undo, f.nDecode, eff, f.chunk, hp)
 
 	cost := float64(req.promptTokens)
 	if !o.noCharge {

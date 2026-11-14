@@ -301,6 +301,7 @@ type FullModeSchedulingConfig struct {
 	FluidservePaceHorizon            int
 	FluidserveShadowLedger           bool
 	FluidserveShadowVariants         bool
+	FluidserveGateUtilisation        float64
 	FluidserveChargePromptOnly       bool
 	FluidserveLatencyCorrection      bool
 	FluidservePeakForecast           bool
@@ -538,6 +539,10 @@ func (c *FullModeSchedulingConfig) AddFullModeSchedulingConfigFlags(flags *pflag
 			"mechanisms removed or replaced (charge, KV projection, per-instance correction, "+
 			"slack-based protection) and their combinations, and count where the verdict would "+
 			"differ (scheduler_fluidserve_ledger_*). Decisions are unchanged.")
+	flags.Float64Var(&c.FluidserveGateUtilisation, "fluidserve-gate-utilisation", 0.9,
+		"FluidServe (EXP-159): share of the tightest nominal per-token budget the gate admits "+
+			"(gate = min(own budget, tightest resident budget) x this; the KV pace ceiling inverts the "+
+			"same value). 0.9 is every configuration before EXP-159; the instance cap keeps 0.9.")
 	flags.BoolVar(&c.FluidserveShadowVariants, "fluidserve-shadow-variants", false,
 		"FluidServe diagnostics (EXP-158): on the v0.5 path, re-judge every candidate with a 1.0 gate, a "+
 			"horizon-free budget test (sustained step + marginal late-token test), the peak KV forecast "+

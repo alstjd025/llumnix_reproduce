@@ -121,6 +121,12 @@ type fluidserveConfig struct {
 	// horizon-free and budget-based variants (EXP-158). Decisions are unchanged.
 	// See fluidserve_variants.go.
 	shadowVariants bool
+	// gateUtil (EXP-159) is the share of the tightest nominal per-token budget
+	// the gate admits: the gate is min(own budget, tightest resident budget) x
+	// gateUtil, and the KV pace ceiling inverts the same value. 0.9 (the
+	// compiled fsAllowanceUtilisation) is every configuration before EXP-159.
+	// The instance cap's demand estimate keeps 0.9.
+	gateUtil float64
 	// chargePromptOnly charges an arriving request its prompt only, without the
 	// future decode min(h, expected output) (EXP-153 ledger variant A: changed no
 	// decision). latencyCorrection=false uses the latency model as fitted.
@@ -1403,7 +1409,7 @@ func (p *fluidserveDispatchPolicy) buildFlux(
 	}
 
 	f.capKv = p.capacity.maxKvForAllowance(
-		f.id, f.gateAllowance*fsAllowanceUtilisation, f.nDecode,
+		f.id, f.gateAllowance*p.gateUtil(), f.nDecode,
 		f.effectivePrefill, f.chunk, p.paceHorizonSteps())
 	if p.cfg.slackProtect {
 		allow := f.gateAllowance * fsAllowanceUtilisation
@@ -2112,6 +2118,15 @@ func (p *fluidserveDispatchPolicy) costOf(req *fluidserveRequest) float64 {
 // instance state, that this denominator is what most of the planning horizon's
 // effect on feasibility comes from, so it is separable from the projection
 // and the charge.
+// gateUtil is the gate's share of the nominal budget (--fluidserve-gate-utilisation),
+// fsAllowanceUtilisation when unset.
+func (p *fluidserveDispatchPolicy) gateUtil() float64 {
+	if p.cfg.gateUtil > 0 {
+		return p.cfg.gateUtil
+	}
+	return fsAllowanceUtilisation
+}
+
 func (p *fluidserveDispatchPolicy) paceHorizonSteps() int {
 	if p.cfg.paceHorizon > 0 {
 		return p.cfg.paceHorizon
@@ -2263,7 +2278,7 @@ func (p *fluidserveDispatchPolicy) evaluate(
 			gate = inst
 		}
 	}
-	c.gateAfter = gate * fsAllowanceUtilisation
+	c.gateAfter = gate * p.gateUtil()
 	unpredictable := math.IsInf(c.meanAfter, 0)
 	overGate := c.meanAfter > c.gateAfter
 	c.incumbentAfter = f.tightestAllowance
@@ -3366,6 +3381,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		paceHorizon:       p.FluidservePaceHorizon,
 		shadowLedger:      p.FluidserveShadowLedger,
 		shadowVariants:    p.FluidserveShadowVariants,
+		gateUtil:          p.FluidserveGateUtilisation,
 		chargePromptOnly:  p.FluidserveChargePromptOnly,
 		latencyCorrection: p.FluidserveLatencyCorrection,
 		peakForecast:      p.FluidservePeakForecast,
@@ -3503,7 +3519,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		"classpin=%v, budgets %q, instancecap=%v, capmult=%.1f, enableforce=%v, "+
 		"capcost=%v, memlevel=%v, memsafety=%.3f, prefillfulliter=%v, prefillresidentq=%v, arrivalhorizons=%d, "+
 		// exactresidency goes last, after everything the deployment script parses.
-		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v, peakforecast=%v, arrivalhalflife=%.0f, forecastz=%.2f, slackprotect=%v, laddergate=%v, shadowvariants=%v",
+		"chargehorizon=%d, exactresidency=%v, exactprogress=%v, shadowhorizon=%d, pacehorizon=%d, shadowledger=%v, chargepromptonly=%v, latencycorr=%v, peakforecast=%v, arrivalhalflife=%.0f, forecastz=%.2f, slackprotect=%v, laddergate=%v, shadowvariants=%v, gateutil=%.2f",
 		cfg.horizonSteps, cfg.zSafety, p.FluidserveTtftSafetyMs, cfg.enablePend,
 		cfg.enableShed, cfg.enableAffinity, policy.affinityWeight(), cfg.affinityMetric,
 		cfg.perInstanceCorrection, cfg.memoryUsesPaceCap,
@@ -3519,7 +3535,7 @@ func newFluidserveDispatchFullMode(p *options.SchedulerConfig) *fluidserveDispat
 		cfg.classInstanceCap, cfg.capWindowMult, cfg.enableForce,
 		cfg.capCostsCapacity, cfg.memLevelTest, effectiveMemorySafety(cfg),
 		cfg.prefillFullIteration, cfg.prefillResidentQueue, cfg.arrivalHorizons, cfg.chargeHorizon,
-		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection, cfg.peakForecast, cfg.arrivalHalfLifeMs, cfg.forecastZ, cfg.slackProtect, cfg.ladderGate, cfg.shadowVariants)
+		p.ExactResidency, p.ExactProgress, cfg.shadowHorizon, cfg.paceHorizon, cfg.shadowLedger, cfg.chargePromptOnly, cfg.latencyCorrection, cfg.peakForecast, cfg.arrivalHalfLifeMs, cfg.forecastZ, cfg.slackProtect, cfg.ladderGate, cfg.shadowVariants, policy.gateUtil())
 
 	go policy.reportLoop()
 	return policy

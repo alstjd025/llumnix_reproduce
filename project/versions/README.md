@@ -23,3 +23,5 @@
 | v0.5.6 | 2026-11-10 | `f532e712` | | v0.5.5 + `--fluidserve-ladder-gate`(기본 꺼짐) | [fluidserve-v0.5.md](fluidserve-v0.5.md) §4 |
 | **v0.6-후보2** | 2026-11-10 | `f532e712` + 플래그 / `05745270` | `fsc2h25`·`fsc2h100`·`fsc2h200` | v0.6-후보1 + ladder 판정선 + KV 한도 0.98 | [fluidserve-v0.6-candidate2.md](fluidserve-v0.6-candidate2.md) |
 | v0.5.7 | 2026-11-12 | `cb12ee4e` | `fsshadowv` | v0.5.6 + `--fluidserve-shadow-variants`(기본 꺼짐, 켜도 결정은 v0.5 그대로) | [fluidserve-v0.5.md](fluidserve-v0.5.md) §4 |
+| v0.5.8 | 2026-11-14 | `7dc2355c` | | v0.5.7 + `--fluidserve-gate-utilisation`(기본 0.9 = v0.5와 같은 결정) | [fluidserve-v0.5.md](fluidserve-v0.5.md) §4 |
+| **v0.6-후보3** | 2026-11-14 | `7dc2355c` + `FS_GATE_UTIL=1.0` / `05745270` | `fsg10` | v0.5 + 판정선 0.9 → 1.0 × 명목 budget (EXP-158 shadow에서 통과한 가장 단순한 변경) | [fluidserve-v0.6-candidate3.md](fluidserve-v0.6-candidate3.md) |

@@ -60,6 +60,7 @@ known_binaries:
   5f6fa02a: "scheduler EXP-155 — 359aac2c + 정점 KV 예측·여유 기준 보호(81aeace)"
   f532e712: "scheduler EXP-157 — v0.5.6: 5f6fa02a + ladder 판정선(e9b812c)"
   cb12ee4e: "scheduler EXP-158 — v0.5.7: f532e712 + shadow 판정 변형(eb75c1e)"
+  7dc2355c: "scheduler EXP-159 — v0.5.8: cb12ee4e + 판정선 이용률 플래그"
 
 # arm 이름(run 디렉토리 이름의 네 번째 칸) → 화면에 쓰는 이름.
 # 이름 규칙은 CLAUDE.md의 "정책 이름은 이렇게 부른다" 표를 따른다.
@@ -93,6 +94,7 @@ arms:
   fsc2h25: FluidServe v0.6-후보2, horizon 25
   fsc2h100: FluidServe v0.6-후보2, horizon 100
   fsshadowv: FluidServe v0.5 + shadow 판정 변형 (v0.5.7)
+  fsg10: FluidServe v0.6-후보3 (v0.5 + 판정선 1.0)
   fsc2h200: FluidServe v0.6-후보2, horizon 200
   llmdslot75: llm-d
   loadbalance: Llumnix
