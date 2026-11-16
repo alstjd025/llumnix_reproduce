@@ -95,6 +95,7 @@ arms:
   fsc2h100: FluidServe v0.6-후보2, horizon 100
   fsshadowv: FluidServe v0.5 + shadow 판정 변형 (v0.5.7)
   fsg10: FluidServe v0.6-후보3 (v0.5 + 판정선 1.0)
+  fsg10dl: FluidServe v0.6-후보4 (v0.5 + 판정선 1.0 + 첫 토큰 마감 판정)
   fsc2h200: FluidServe v0.6-후보2, horizon 200
   llmdslot75: llm-d
   loadbalance: Llumnix
