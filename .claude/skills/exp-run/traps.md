@@ -1112,3 +1112,13 @@
   `wc`의 "0" 뒤에 "0"을 하나 더 붙였다. `count()`에 이미 적혀 있던 결함이 `ndirs()`에 남아 있었던 것이다.
   `tools/watch_experiment.sh`에서 고쳤고(원본 `.pre-1010`), 러너 파드가 스스로 못 빠져나오는 상태도 보고하게 했다.
   → **결과 디렉토리는 조건이 시작될 때 생긴다.** 디렉토리 수로 "끝났다"를 판정하지 않는다(위 B의 같은 항목).
+
+## 새 arm을 드라이버에 더할 때 워크로드 설정 목록에도 넣는다 (2026-11-16, EXP-158~160)
+
+`run_exp1xx_hour.sh`의 `run_cell`은 arm 이름이 `case "$arm" in fsv3capgnofrct75|fsexact|fsexactprog|...)` 목록에 있을 때만
+swe TTFT 7 s 설정(`mix_dyn60_shift_m2Am1B_b1045_t75.json`)을 쓰고, **목록에 없으면 경고 없이** 원래 설정(swe `ttft_ms` 11,800)으로 간다.
+EXP-158 `fsshadowv`, EXP-159 `fsg10`, EXP-160 `fsg10dl`을 arm 정의(`set_arm`)에만 넣고 이 목록에 넣지 않아, 세 실험의 후보 arm이 swe 첫 토큰 budget 11.8 s로 돌았다
+(같은 실험의 v0.5 arm은 7 s). 스케줄러는 swe의 첫 토큰 budget을 요청에 실려 온 값으로 쓰므로 pend 여부와 첫 토큰 판정이 달라지고, 채점은 7 s라
+swe의 첫 토큰 초과와 swe·deepresearch 점수가 설정 차이로 움직인다. 기동 줄 검증(`verified: every FluidServe flag matches`)은 스케줄러 플래그만 보므로 이것을 잡지 못한다.
+→ arm을 더하면 **`set_arm`과 `run_cell`의 설정 목록 두 곳**에 넣는다. 결과를 판정하기 전에 **각 run의 `run_config.json`에서 `workload_config.slo`를 arm끼리 대조한다**
+(`python3 -c "import json;print(json.load(open('<run>/run_config.json'))['workload_config']['slo'])"`). 드라이버는 FluidServe arm이 목록에 없으면 멈추게 한다(EXP-161 드라이버부터).
