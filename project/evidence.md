@@ -502,6 +502,13 @@ request goodput       : 제때인 요청 수 ÷ 분석 창(초)   (거절·미�
 11. **한 시간 trace는 admission이 있는 넷의 곡선을 59.2분까지만 그린다.** 마지막 2분은 아직 돌던 요청이 admitted 분모에서 빠져
     잘 하는 arm을 부풀린다(마지막 다섯 창: llm-d admitted 96.4 대 모든 도착 28.4, FluidServe 98.5 대 70.0). 같은 arm의 세션 간
     이동은 FluidServe offered 3.8점으로 쟀다(archive/README(그림) `exp109_hour` 절, archive/EXP-109 §8).
+12. **PolyServe 한 시간 trace run의 swe 기대 출력 길이 (2026-11-18 EXP-165에서 발견, 논문 run에서는 미확인).** PolyServe가 §4.5 KV 투영에
+    쓰는 tier별 기대 출력 길이 표(`--polyserve-tier-decode-tokens`)는 `PS_MIX_CONFIG`가 가리키는 워크로드 설정의 `tbt_ms`를 key로 만든다.
+    한 시간 trace 드라이버(`run_exp109_hour.sh:190-191`부터 EXP-164까지의 복사본)는 run_cell에서 그 값을 export한 직후 `set_arm`에서 지워서,
+    표가 기본 설정(`mix_short_m1_balanced.json`, swe `tbt_ms` 25)에서 `25:494,50:428,100:985`로 만들어진다. 요청은 swe를 75 ms로 달고 오므로(`t75fair`)
+    표에서 찾지 못하고 기본값 463토큰을 쓴다 — swe의 KV 증가를 494 대신 463토큰(6 % 작게)으로 투영한다. chat·deepresearch는 영향이 없다.
+    정적 드라이버(`run_exp108_t75.sh`)는 지우지 않아 `50:428,75:494,100:985`였다(그림 14). **그림 11~13의 PolyServe(EXP-109)가 이 표로 돌았는지는
+    그 run의 `scheduler_deploy_*.yaml`(맥 SSD)로 확인해야 한다.** EXP-165부터는 고친 드라이버(`run_exp165_hour.sh`)가 표를 검사한다.
 
 ---
 
