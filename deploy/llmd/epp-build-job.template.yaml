@@ -1,0 +1,54 @@
+# Build the llm-d EPP binary the way Dockerfile.epp at that commit does:
+# golang:<ver> builder, WORKDIR /workspace, GOPATH /go, go mod download,
+# CGO_ENABLED=0 go build -ldflags "-s -w -X ...CommitSHA=<sha> -X ...BuildRef=main"
+# -o bin/epp cmd/epp/main.go. Same paths as upstream, because without -trimpath
+# the source, module-cache and GOROOT paths are written into the binary.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llmd-epp-build-__SHORT__
+  namespace: default
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      securityContext: { runAsUser: 3092, runAsGroup: 1999 }
+      containers:
+        - name: build
+          image: docker.io/library/golang:__GOVER__
+          imagePullPolicy: IfNotPresent
+          workingDir: /workspace
+          env:
+            - { name: HOME, value: /tmp/home }
+            - { name: GOCACHE, value: /tmp/gocache }
+            # Pod egress to proxy.golang.org is intercepted (wrong TLS certificate), so the
+            # module cache is filled on the host and mounted at the path upstream used.
+            - { name: GOPROXY, value: "off" }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eux
+              go version; go env GOROOT GOPATH GOMODCACHE GOTOOLCHAIN GOFLAGS
+              go mod download
+              CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+                -ldflags="-s -w -X github.com/llm-d/llm-d-router/version.CommitSHA=__SHA__ -X github.com/llm-d/llm-d-router/version.BuildRef=main" \
+                -o bin/epp cmd/epp/main.go
+              cp bin/epp /out/epp-__SHORT__
+              sha256sum /out/epp-__SHORT__
+          resources:
+            requests: { cpu: "4", memory: 4Gi }
+            limits: { cpu: "16", memory: 16Gi }
+          volumeMounts:
+            - { name: src, mountPath: /workspace }
+            - { name: out, mountPath: /out }
+            - { name: gopath, mountPath: /go }
+            - { name: modcache, mountPath: /go/pkg/mod }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - { name: src, hostPath: { path: /home/nxclab/tools/llmd-build/src-__SHORT__, type: Directory } }
+        - { name: out, hostPath: { path: /home/nxclab/tools/llmd-build/out, type: Directory } }
+        - { name: gopath, emptyDir: {} }
+        - { name: modcache, hostPath: { path: /home/nxclab/go/pkg/mod, type: Directory } }
+        - { name: tmp, emptyDir: {} }
