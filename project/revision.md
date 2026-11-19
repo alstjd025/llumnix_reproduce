@@ -86,8 +86,14 @@
   6~12점 덜 받는다. chat 2.5배에서는 두 기준선 모두 받은 chat의 약 2/3가 평균 토큰 간격으로 실패(prefill이 늘리는 decode iteration을 판정이 반영하지 않는다).
   **발견**: 한 시간 trace 드라이버가 PolyServe tier 표를 기본 설정에서 만들어 swe 기대 출력을 494 대신 463토큰으로 투영하던 결함(`run_exp109_hour.sh`부터; 정적 드라이버는 정상) —
   `run_exp165_hour.sh`에서 고치고 검사를 넣었다(사용자 지시). 논문 PolyServe 한 시간 run이 이 표로 돌았는지는 맥 SSD의 run으로 확인해야 한다(`evidence.md` §6 12번).
-  **사용자 결정 대기**: ① llm-d 이미지 버전 — 논문 run(08-31)의 `:main` digest가 기록되지 않았다. 08-28 초기화 전 digest(EPP 08-06 빌드)는 지금도 받을 수 있다. 맥 SSD의 `epp_metrics.txt`로 커밋을 찾는 것을 제안.
-  ② PolyServe의 구조적 KV 투영(EXP-127, 2026-09-11 "논문에 충실" 결정으로 유지)을 그대로 둘지.
+  **llm-d (2026-11-19, 같은 세 trace 2회씩)**: 논문 run의 llm-d 버전을 기록에서 찾아(EPP llm-d-router 커밋 `644a8856` — EXP-114 기록, 그 `:main` 이미지는 태그가 없어 같은 커밋을
+  upstream Dockerfile 절차로 다시 빌드했다; 절차는 08-06 이미지 바이너리를 바이트 단위로 재현; 예측기 `ec7626b`) `deploy/llmd/router-paper.yaml`·`predictor-paper.yaml`로 세웠다.
+  첫 시도는 예측기를 `04e44cd`로 잘못 잡아 학습이 매번 실패(EPP 예측 10 ms 고정)해서 무효로 하고, 드라이버에 run 중 학습 확인을 넣었다. 결과 admitted: chat 2.5배 99.5, swe만 93.6(89.7·97.6), deepresearch만 86.7.
+  chat에서는 v0.6과 admitted가 같고 거절률 +6.7·goodput −8.8 %(예측기가 90번째 백분위수를 학습해 덜 받는다고 추정 → EXP-166에서 중앙값으로 확인 중). deepresearch만에서는 KV admission이 없어
+  preemption 3,700~4,200회, 거절 82.6 %로 다섯 정책 중 가장 많이 거절한다. llm-d는 반복 간 편차가 크다(swe admitted 7.8점, deepresearch 모든 도착 6.5점; r1만 엔진 두 대 쏠림).
+  **다섯 정책 종합(세션이 다른 비교)**: v0.6이 세 trace 모두에서 모든 도착·goodput이 가장 높고, admitted는 swe만·deepresearch만에서 PolyServe(엔진 KV를 44~71 %만 쓴다)가 v0.6보다 2~3점 높다.
+  **사용자 결정 대기**: PolyServe의 구조적 KV 투영(EXP-127, 2026-09-11 "논문에 충실" 결정으로 유지)을 그대로 둘지.
+- **EXP-166 (2026-11-19 진행 중)**: llm-d 예측기를 중앙값(`LATENCY_QUANTILE_ALPHA=0.5`, `deploy/llmd/predictor-paper-p50.yaml`)으로 바꾼 민감도 변형, chat 2.5배 2회. 논문 구성 p90은 기준선으로 유지.
 - **다음 (2026-11-10)**: ① 판정선을 SLO 위반·preemption이 실제로 시작되는 지점에서 다시 정하기(기존 데이터로 먼저). ② h200 배분 이동 원인. ③ 마지막 구간 갈림을 만드는 결정.
   ④ ~~버전 이름 정리~~ → 완료(2026-11-10): `project/versions/`. **v0.4 = 제출 논문, v0.5 = 지금까지의 "대조군"(`fsexactprog`), v0.6-후보1 = EXP-155의 새 모델.**
 - **다음 (2026-10-24에 적은 것, 위 줄이 대체)**: ① EXP-142 r2·r3에서 deepresearch가 실패한 원인(엔진 대기 요청 제외만 켰을 때). ② 처리 중 기준이 정적에서는 나쁘고
