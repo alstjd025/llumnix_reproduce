@@ -1,7 +1,12 @@
 # predictor-paper.yaml (2026-11-19, EXP-165). predictor.yaml with the two images pinned to
-# the build that was :main at the paper runs' re-pull (2026-08-31): commit 04e44cd801d5
-# (release 0.9.0, built 2026-08-11; the next build is 2026-09-08). Not the pre-2026-08-28
-# images (ec7626b, 2026-08-03).
+# commit ec7626be00b4 (main build 2026-08-03; the digests the pre-2026-08-28 pods ran).
+# Why this and not the newest build before 2026-08-31: commit-04e44cd (2026-08-11) is the
+# 0.9.0 RELEASE build (same digest as the 0.9.0/0.9/0 tags), and the registry shows release
+# builds tag commit-<sha> without moving :main (1.0.0 on 2026-10-16 did the same); the next
+# main build after ec7626b is 0e39e36 (2026-09-08). 04e44cd also cannot train at all: its
+# training_server.py calls a module-level _drop_timestamp as self._drop_timestamp, so every
+# train() fails and the EPP gets a constant 10 ms prediction (seen 2026-11-19, EXP-165 first
+# attempt), while the paper-era EXP-114 recorded trained predictions (TTFT predicted/actual 1.18).
 # llm-d latency predictor — training server + prediction servers.
 #
 # Derived from llm-d-latency-predictor/deploy/base (upstream), with four
@@ -79,7 +84,7 @@ spec:
     spec:
       containers:
         - name: training-server
-          image: ghcr.io/llm-d/llm-d-latency-predictor-training-server@sha256:5679d69a8603fb555578c5b5e319eb856acda058ddee1355e5d3b1f662701761
+          image: ghcr.io/llm-d/llm-d-latency-predictor-training-server@sha256:490d6bb951a9e3f4a60dfec80241c4d19b63a8019fe7386cdcd64944f1f80ae4
           imagePullPolicy: IfNotPresent
           ports: [{ containerPort: 8000, name: training-port }]
           livenessProbe:
@@ -145,7 +150,7 @@ spec:
     spec:
       containers:
         - name: prediction-server
-          image: ghcr.io/llm-d/llm-d-latency-predictor-prediction-server@sha256:7377707db2efac33fed3740b3d541bd4c045b240195e03453a6e33e86d69eba3
+          image: ghcr.io/llm-d/llm-d-latency-predictor-prediction-server@sha256:8322e60463cfdf4841117f40643dde995b72de48fbcdbaa94d00f6159378fc6d
           imagePullPolicy: IfNotPresent
           ports: [{ containerPort: 8001, name: predict-port }]
           livenessProbe:
