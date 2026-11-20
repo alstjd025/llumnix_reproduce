@@ -101,7 +101,7 @@
   **논문 구성 p90이 llm-d에게 더 나은 설정.** **논문 llm-d 재현**: p90 섞인 trace 모든 도착 56.76(54.99·58.52) 대 논문 53.0(49.9·56.3), 거절률 42.4 대 45.7, chat·swe 범위 안 — 재현. deepresearch만 +9.9로 이번이 높다(원인 미확인).
   다섯 정책 비교표: EXP-165·166·167 기록.
 - **EXP-168 (2026-11-20 진행 중)**: 섞인 논문 trace에서 PolyServe·Llumnix SLO(논문 `slot75`, 변경 `slot75inc`) 2회씩. FluidServe는 다시 돌리지 않는다(사용자 결정; EXP-161과 세션 간 문턱으로 비교).
-- **문제 분석 (2026-11-20): FluidServe가 기준선보다 나은 이유 — 엔진을 SLO를 지키는 한계 바로 아래에서 돌린다.** 데이터 `analysis_scripts/capacity/engine_work.py`
+- **문제 분석 (2026-11-20, 원인 규명과 그림은 EXP-169 기록): FluidServe가 기준선보다 나은 이유 — 엔진을 SLO를 지키는 한계 바로 아래에서 돌린다.** 원인 요약: PolyServe는 KV를 prefix 공유를 푼 논리 토큰 + 기대 출력 전체로 계산해 물리 KV 38~62 %에서 멈추고(swe 논리/물리 2.43배), 정상상태 step 예측이 prefill을 빼 실측의 58~71 %라 chat에서 넘긴다; Llumnix SLO는 한 step decode 예측이 실측의 51~77 %이고 KV 판정이 없다; llm-d는 p90 예측으로 덜 받고, 섞인 trace에서는 chat이 모든 엔진에 있어 모든 엔진이 50 ms에 묶이며(`podMinTPOTSLO`), deepresearch만에서는 `least` 전략이 한 엔진에 몰고 포화 평균(엔진별 max(대기/5, KV/0.8)의 평균)이 한 엔진 때문에 1을 넘어 세 엔진이 노는 동안 86 %를 거절한다; llm-d p50은 예측이 실측보다 조금 낮아 받은 chat의 37 %가 budget을 넘는다. 데이터 `analysis_scripts/capacity/engine_work.py`
   (엔진의 vLLM 지표, 시간 5~55분; 결과 `/home/nxclab/scratch/capacity/engine_work.tsv`). 엔진 하나의 출력 처리량은 대략 (동시 처리 요청 수) ÷ (토큰 하나 걸리는 시간)이므로,
   SLO를 지키며 낼 수 있는 최대 처리량은 토큰 간격이 그 엔진에서 처리 중인 가장 빡빡한 클래스의 budget에 닿을 때까지(그리고 KV가 물리 용량에 닿을 때까지) 받는 것이다.
   v0.6은 5분 구간마다 엔진의 토큰 간격이 budget에 붙어 있다(chat 2.5배 47~50 ms / budget 50, 동시 처리 225~273; swe만 77~82 ms / 75, 142~165). 기준선은 두 방향으로 벗어난다:
