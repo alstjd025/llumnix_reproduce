@@ -1122,3 +1122,15 @@ EXP-158 `fsshadowv`, EXP-159 `fsg10`, EXP-160 `fsg10dl`을 arm 정의(`set_arm`)
 swe의 첫 토큰 초과와 swe·deepresearch 점수가 설정 차이로 움직인다. 기동 줄 검증(`verified: every FluidServe flag matches`)은 스케줄러 플래그만 보므로 이것을 잡지 못한다.
 → arm을 더하면 **`set_arm`과 `run_cell`의 설정 목록 두 곳**에 넣는다. 결과를 판정하기 전에 **각 run의 `run_config.json`에서 `workload_config.slo`를 arm끼리 대조한다**
 (`python3 -c "import json;print(json.load(open('<run>/run_config.json'))['workload_config']['slo'])"`). 드라이버는 FluidServe arm이 목록에 없으면 멈추게 한다(EXP-161 드라이버부터).
+
+## 기준선이 "떠 있다"와 "동작한다"는 다르다 — llm-d 예측기가 학습하지 못한 채 모든 검사를 통과했다 (2026-11-19, EXP-165)
+
+llm-d를 다시 세울 때 예측기를 `04e44cd`(0.9.0 release 빌드)로 고정했더니, 그 `training_server.py`가 모듈 수준 함수를 `self._drop_timestamp(...)`로 불러 `train()`이 매번 실패했다.
+EPP는 그때 모든 요청에 TTFT·TPOT 10 ms 고정값을 예측했고 SLO admitter는 한 번도 거절하지 않았다. 이미지·바이너리·커밋·표본 0개 시작·엔진 분산·부하가 모두 정상이었다 — **기동 검사는 동작을 보지 않는다.**
+→ run 중에 기능이 실제로 도는지 보는 검사를 둔다: llm-d는 10분 뒤 학습 로그에 `model trained on`이 있고 `Critical error in train`이 없고, EPP 예측 평균이 10 ms 고정이 아닌지(`run_exp165_llmd.sh` `verify_predictor_live`).
+→ 레지스트리의 `commit-<sha>` 태그가 `:main`이었다고 가정하지 않는다: release 빌드도 `commit-<sha>`를 붙이고 `main`은 옮기지 않는다.
+
+## `pipefail` 아래 `echo "$x" | grep -q` 는 거짓으로 실패한다 (2026-11-19)
+
+`grep -q`가 첫 일치에서 끝나면 `echo`가 SIGPIPE로 죽고 `pipefail`이 파이프 전체를 실패로 본다. "학습됨" 검사는 늘 실패했고 "crash" 검사는 절대 발동하지 않았다 — 알려진 답 셋으로 시험해서 잡았다.
+→ `grep -q PATTERN <<< "$x"` 를 쓴다. 중단하는 검사는 걸기 전에 통과할 경우·중단할 경우를 하나씩 넣어 본다.

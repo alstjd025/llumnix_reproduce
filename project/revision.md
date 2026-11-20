@@ -100,6 +100,18 @@
   admitted −4.6·chat admitted −6.5(받은 chat의 36 %가 평균 간격 budget 초과)·deepresearch 모든 도착 −11.6으로 나쁘고 goodput은 차이 없음. swe만에서는 admitted 93.6 → 67.6, deepresearch만은 차이 없음.
   **논문 구성 p90이 llm-d에게 더 나은 설정.** **논문 llm-d 재현**: p90 섞인 trace 모든 도착 56.76(54.99·58.52) 대 논문 53.0(49.9·56.3), 거절률 42.4 대 45.7, chat·swe 범위 안 — 재현. deepresearch만 +9.9로 이번이 높다(원인 미확인).
   다섯 정책 비교표: EXP-165·166·167 기록.
+- **EXP-168 (2026-11-20 진행 중)**: 섞인 논문 trace에서 PolyServe·Llumnix SLO(논문 `slot75`, 변경 `slot75inc`) 2회씩. FluidServe는 다시 돌리지 않는다(사용자 결정; EXP-161과 세션 간 문턱으로 비교).
+- **문제 분석 (2026-11-20): FluidServe가 기준선보다 나은 이유 — 엔진을 SLO를 지키는 한계 바로 아래에서 돌린다.** 데이터 `analysis_scripts/capacity/engine_work.py`
+  (엔진의 vLLM 지표, 시간 5~55분; 결과 `/home/nxclab/scratch/capacity/engine_work.tsv`). 엔진 하나의 출력 처리량은 대략 (동시 처리 요청 수) ÷ (토큰 하나 걸리는 시간)이므로,
+  SLO를 지키며 낼 수 있는 최대 처리량은 토큰 간격이 그 엔진에서 처리 중인 가장 빡빡한 클래스의 budget에 닿을 때까지(그리고 KV가 물리 용량에 닿을 때까지) 받는 것이다.
+  v0.6은 5분 구간마다 엔진의 토큰 간격이 budget에 붙어 있다(chat 2.5배 47~50 ms / budget 50, 동시 처리 225~273; swe만 77~82 ms / 75, 142~165). 기준선은 두 방향으로 벗어난다:
+  ① **덜 받는다** — PolyServe는 KV를 크게 계산해 swe만에서 동시 처리 77·토큰 간격 53 ms(budget 75)·KV 38 %에서 멈추고(goodput v0.6의 77 %), deepresearch만에서 KV 60 %에서 멈춘다;
+  llm-d는 p90 예측의 여유로 chat 43~47 ms·swe 62~67 ms·섞인 trace 42~43 ms에서 멈추고(섞인 trace 동시 처리 99~103 대 v0.6 167), deepresearch만에서는 prefix 친화 필터가 엔진 두 대에 몰아 나머지가 논다.
+  ② **더 받는다** — Llumnix SLO는 새 요청 하나의 한 step TPOT만 예측하고 KV를 보지 않아 chat 77~87 ms·swe 117 ms(KV 99 %, preemption 9천)·deepresearch KV 100 %(preemption 2만)까지 가고,
+  PolyServe는 chat에서 정상상태 추정이 prefill을 빼서 69~75 ms까지 간다. 그러면 요청이 오래 머물러 동시 처리가 370~450으로 늘고 step이 더 느려진다.
+  chat 2.5배에서 PolyServe·Llumnix SLO의 엔진 출력은 v0.6과 같은데(20.6~20.8k 대 20.6k tok/s) 마감을 지킨 비율이 37~39 % 대 97 %다 — 처리량이 아니라 운전점이 차이를 만든다.
+  마감을 지킨 출력 비율(goodput ÷ 엔진 출력)은 v0.6이 네 trace에서 0.95~0.98, 덜 받는 기준선도 0.94~0.99지만 엔진 출력 자체가 작다.
+  v0.6의 남은 약점도 같은 그림에 있다: swe만에서 토큰 간격이 budget을 4~7 ms 넘고(마감 비율 0.95), deepresearch만은 KV에 묶여 preemption이 1.2만 회다(토큰 간격은 73 ms로 budget 100 안이라 대부분 흡수된다).
 - **다음 (2026-11-10)**: ① 판정선을 SLO 위반·preemption이 실제로 시작되는 지점에서 다시 정하기(기존 데이터로 먼저). ② h200 배분 이동 원인. ③ 마지막 구간 갈림을 만드는 결정.
   ④ ~~버전 이름 정리~~ → 완료(2026-11-10): `project/versions/`. **v0.4 = 제출 논문, v0.5 = 지금까지의 "대조군"(`fsexactprog`), v0.6-후보1 = EXP-155의 새 모델.**
 - **다음 (2026-10-24에 적은 것, 위 줄이 대체)**: ① EXP-142 r2·r3에서 deepresearch가 실패한 원인(엔진 대기 요청 제외만 켰을 때). ② 처리 중 기준이 정적에서는 나쁘고
