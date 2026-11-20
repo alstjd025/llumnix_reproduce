@@ -107,7 +107,9 @@
   ④ 경로 선택이 한 엔진에 몰고 그 엔진이 전체 판정을 정한다(llm-d `least` + 포화 평균, PolyServe의 고정된 tier 배분).
   정정: Llumnix SLO 거절은 100 % 게이트웨이 5초 포기; llm-d 예측기는 KV·대기 수를 입력으로 쓴다; llm-d와 클라이언트는 요청 번호로 정확히 맞출 수 있다; FluidServe "iteration 예측/실측 1.001"은 현재 상태의 재구성이라 받은 뒤의 예측 정확도가 아니다; FluidServe 첫 토큰 예측은 판정 구간에서 2.2~3.4 s 비관적.
   섞인 trace Llumnix SLO 변경 구성은 deepresearch admitted 29.6 → 99.7, chat 55.2 → 38.5(실패가 deepresearch 첫 토큰에서 chat 평균 간격으로 옮겨감; 각 1 run).
-- **EXP-168 (2026-11-20 진행 중)**: 섞인 논문 trace에서 PolyServe·Llumnix SLO(논문 `slot75`, 변경 `slot75inc`) 2회씩. FluidServe는 다시 돌리지 않는다(사용자 결정; EXP-161과 세션 간 문턱으로 비교).
+- **EXP-168 (2026-11-20, 섞인 논문 trace, 기준선 셋 × 2회; FluidServe는 다시 돌리지 않음 — 사용자 결정)**: PolyServe 53.70 / admitted 65.58 / goodput 8,653, Llumnix SLO 논문 27.69 / 45.97 / 6,786,
+  Llumnix SLO 처리 중 요청 기준 43.58 / 51.62 / 7,773 — 논문 값(EXP-109) 둘 다 재현(`evidence.md` §4.9a). 처리 중 요청 기준은 논문 구성보다 열 지표 중 아홉이 좋고 chat admitted만 55.2 → 38.7로 나쁘다.
+  v0.6(EXP-161, 80.69 / 99.90 / 11,764)과 비교하면 세 기준선 모두 모든 도착·goodput이 나쁘고, PolyServe만 swe 모든 도착에서 +4.8로 앞선다(논문의 "PolyServe performs best for the Agent workload"와 같은 방향).
 - **문제 분석 (2026-11-20, 원인 규명과 그림은 EXP-169 기록): FluidServe가 기준선보다 나은 이유 — 엔진을 SLO를 지키는 한계 바로 아래에서 돌린다.** 원인 요약: PolyServe는 KV를 prefix 공유를 푼 논리 토큰 + 기대 출력 전체로 계산해 물리 KV 38~62 %에서 멈추고(swe 논리/물리 2.43배), 정상상태 step 예측이 prefill을 빼 실측의 58~71 %라 chat에서 넘긴다; Llumnix SLO는 한 step decode 예측이 실측의 51~77 %이고 KV 판정이 없다; llm-d는 p90 예측으로 덜 받고, 섞인 trace에서는 chat이 모든 엔진에 있어 모든 엔진이 50 ms에 묶이며(`podMinTPOTSLO`), deepresearch만에서는 `least` 전략이 한 엔진에 몰고 포화 평균(엔진별 max(대기/5, KV/0.8)의 평균)이 한 엔진 때문에 1을 넘어 세 엔진이 노는 동안 86 %를 거절한다; llm-d p50은 예측이 실측보다 조금 낮아 받은 chat의 37 %가 budget을 넘는다. 데이터 `analysis_scripts/capacity/engine_work.py`
   (엔진의 vLLM 지표, 시간 5~55분; 결과 `/home/nxclab/scratch/capacity/engine_work.tsv`). 엔진 하나의 출력 처리량은 대략 (동시 처리 요청 수) ÷ (토큰 하나 걸리는 시간)이므로,
   SLO를 지키며 낼 수 있는 최대 처리량은 토큰 간격이 그 엔진에서 처리 중인 가장 빡빡한 클래스의 budget에 닿을 때까지(그리고 KV가 물리 용량에 닿을 때까지) 받는 것이다.

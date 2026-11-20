@@ -471,6 +471,8 @@ request goodput       : 제때인 요청 수 ÷ 분석 창(초)   (거절·미�
 예측기 `ec7626b`; `deploy/llmd/router-paper.yaml`·`predictor-paper.yaml`; 근거는 EXP-165 기록). 그림 11~13과 같은 trace·설정(`dyn60_shift_m2Am1B_b1045` + `..._t75fair.json`, 부하 생성 12개)에서 2회:
 모든 도착 **56.76**(54.99·58.52) 대 그림 13 **53.0**(49.9·56.3), 거절률 42.4 %(44.2·40.6) 대 45.7 %(49.0·42.4), chat 55.74 대 52.9, swe 45.96 대 47.8 — 논문 반복 범위 ± 세션 간 4.6점 안이다.
 **deepresearch 모든 도착만 66.43 대 56.5로 약 10점 높다**(원인 미확인). admitted 98.7(98.72·98.69).
+같은 trace에서 PolyServe·Llumnix SLO도 다시 쟀다(EXP-168, 2026-11-20, 2회씩): PolyServe 모든 도착 **53.70** 대 그림 13 52.7, 거절 17.9 대 20.2 %, chat 51.85 / deepresearch 42.96 / swe 80.66 대 49.5 / 45.6 / 80.2;
+Llumnix SLO 27.69 대 27.9, 거절 39.45 대 39.5 %, chat 29.85 / deepresearch 26.91 / swe 18.14 대 30.0 / 27.1 / 18.7 — 둘 다 재현(지금 바이너리 `7dc2355c`, PolyServe tier 표는 swe 494토큰; §6 12번).
 
 ## 6. 같이 적어야 오독되지 않는 한계
 
