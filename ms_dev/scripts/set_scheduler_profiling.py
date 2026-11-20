@@ -445,6 +445,15 @@ FLUIDSERVE_ABLATIONS = {
     # keeps the compiled 0.95.  Sweeping it is how the occupancy/rejection
     # exchange rate is measured, so it is a value flag rather than a bool.
     "FS_MEM_SAFETY": "--fluidserve-memory-safety",
+    # EXP-172 candidates (2026-11-21). Each flag's compiled default reproduces v0.6.
+    # c1: per-instance AIMD window on the KV pool, cut on preemption the scheduler observes.
+    "FS_KV_WINDOW": "--fluidserve-kv-window",
+    "FS_KV_WINDOW_BETA": "--fluidserve-kv-window-beta",
+    "FS_KV_WINDOW_SIGNAL": "--fluidserve-kv-window-signal",
+    # c2: committed-work KV test against the whole pool less the measured error quantile; a float eps.
+    "FS_KV_EPS": "--fluidserve-kv-epsilon",
+    # c3: per-instance KV price by dual ascent on the measured shortage; off|shadow|on.
+    "FS_KV_PRICE": "--fluidserve-kv-price",
     # Price the observed prefill queue's drain at the full cost of a
     # chunk-carrying iteration, t_pre + t_dec - c0, instead of dividing the
     # prefill-only cost by the instance's unconditional prefill duty and taking
@@ -974,6 +983,11 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-ladder-gate", "laddergate"),
         ("--fluidserve-shadow-variants", "shadowvariants"),
         ("--fluidserve-gate-utilisation", "gateutil"),
+        ("--fluidserve-kv-window", "kvwindow"),
+        ("--fluidserve-kv-window-beta", "kvwindowbeta"),
+        ("--fluidserve-kv-window-signal", "kvwindowsignal"),
+        ("--fluidserve-kv-epsilon", "kveps"),
+        ("--fluidserve-kv-price", "kvprice"),
     ]
     bad = []
     for flag, key in checks:
