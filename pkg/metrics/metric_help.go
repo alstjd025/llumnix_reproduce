@@ -12,6 +12,7 @@ func init() {
 	RegisterHelp("request_total", "Total number of inference requests processed, partitioned by status code")
 	RegisterHelp("request_retry_total", "Total number of request retries due to transient backend errors")
 	RegisterHelp("request_fallback_total", "Total number of requests routed to fallback endpoints")
+	RegisterHelp("gateway_scheduling_fallback_total", "Total number of requests placed by the local fallback policy because the scheduler call failed (no scheduling decision)")
 	RegisterHelp("request_fallback_retry_success_total", "Total number of successful retries after fallback rate-limit (429)")
 	RegisterHelp("request_input_tokens_total", "Cumulative count of input (prompt) tokens across all requests")
 	RegisterHelp("request_output_tokens_total", "Cumulative count of output (completion) tokens across all requests")

@@ -22,7 +22,31 @@ import (
 const (
 	scheduleRequestTimeout = 2 * time.Second
 	releaseTryCount        = 3
+
+	// Idle connections kept open to the scheduler. See newSchedulerHTTPClient.
+	schedulerMaxIdleConns    = 1000
+	schedulerIdleConnTimeout = 5 * time.Minute
 )
+
+// newSchedulerHTTPClient creates the client for every call to the scheduler
+// (schedule, release, complete).
+//
+// The default Transport keeps only 2 idle connections per host. A request the
+// scheduler answers "not yet" is asked again every retry interval, so with a
+// few thousand held requests most calls found no idle connection, dialed a new
+// one and closed it afterwards. A closed connection keeps its local port in
+// TIME_WAIT for about 60 s, the ephemeral ports ran out, and connect failed
+// with "cannot assign requested address". Get turns that failure into
+// ErrorSchedulerNotReady, and the request was then placed by the local
+// round-robin fallback with no admission decision (EXP-173, trap G). Keeping
+// the connections open removes the dial per call.
+func newSchedulerHTTPClient() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 0
+	transport.MaxIdleConnsPerHost = schedulerMaxIdleConns
+	transport.IdleConnTimeout = schedulerIdleConnTimeout
+	return &http.Client{Transport: transport, Timeout: scheduleRequestTimeout}
+}
 
 type SchedulerClient struct {
 	config *options.GatewayConfig
@@ -38,7 +62,7 @@ func NewSchedulerClient(config *options.GatewayConfig) *SchedulerClient {
 
 	cb := &SchedulerClient{
 		config:    config,
-		schClient: &http.Client{Timeout: scheduleRequestTimeout},
+		schClient: newSchedulerHTTPClient(),
 		kac:       kac,
 	}
 

@@ -8,6 +8,7 @@ import (
 
 	"llumnix/cmd/gateway/app/options"
 	"llumnix/pkg/consts"
+	"llumnix/pkg/metrics"
 	"llumnix/pkg/resolver"
 	"llumnix/pkg/types"
 )
@@ -57,6 +58,9 @@ func NewCompositeBalancer(config *options.GatewayConfig) *CompositeBalancer {
 	} else {
 		bp.setupNeutralBalancer(config)
 	}
+	// Exported as 0 from start-up, so a run with no fallback reads 0 and not
+	// "metric absent".
+	metrics.Counter("gateway_scheduling_fallback_total", metrics.Labels{})
 	return bp
 }
 
@@ -133,6 +137,10 @@ func (bp *CompositeBalancer) getWithFallback(req *types.RequestContext) (types.S
 	}
 
 	if err == nil {
+		// Counted as well as logged: a request placed here received no decision
+		// from the scheduling policy, and the gateway log is not kept per run
+		// (EXP-173, trap G).
+		metrics.Counter("gateway_scheduling_fallback_total", metrics.Labels{}).Inc()
 		klog.Infof("[%s] fallback policy(round-robin) is applied, select endpoints: %s", req.Id, result.String())
 	}
 	return result, err
