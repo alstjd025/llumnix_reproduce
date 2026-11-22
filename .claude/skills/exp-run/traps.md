@@ -1134,3 +1134,9 @@ EPP는 그때 모든 요청에 TTFT·TPOT 10 ms 고정값을 예측했고 SLO ad
 
 `grep -q`가 첫 일치에서 끝나면 `echo`가 SIGPIPE로 죽고 `pipefail`이 파이프 전체를 실패로 본다. "학습됨" 검사는 늘 실패했고 "crash" 검사는 절대 발동하지 않았다 — 알려진 답 셋으로 시험해서 잡았다.
 → `grep -q PATTERN <<< "$x"` 를 쓴다. 중단하는 검사는 걸기 전에 통과할 경우·중단할 경우를 하나씩 넣어 본다.
+
+
+## 함정 G: 8B 함대에서 보류가 많은 정책은 일부 요청이 스케줄러를 거치지 않는다 (2026-11-22, EXP-173)
+
+게이트웨이의 스케줄러 HTTP client가 Go 기본 Transport(호스트당 유휴 연결 2개)를 쓰므로, 보류된 요청들이 500 ms마다 스케줄러를 다시 부르면 호출마다 새 연결을 열고 TIME_WAIT가 임시 포트를 고갈시킨다. 그러면 `dial tcp …:8088: connect: cannot assign requested address` → "scheduler not ready" → `composite_balancer.go` `getWithFallback`이 **round-robin으로 직접 배치**한다. 그 요청은 admission 없이 엔진에 들어가고 채점에서는 "받아들임"으로 세어진다. EXP-170 PolyServe 8B는 받아들인 요청의 7~10 %, EXP-172·173의 KV를 조이는 후보는 20~54 %가 이렇게 들어갔고, 후보 3의 반복 간 편차(72.5 / 81.6 / 73.9)도 우회 비율(6.8 / 1.2 / 7.8 %)과 함께 움직였다. 70B와 v0.6 8B는 0.
+**확인 방법(run마다)**: 채점의 받아들인 요청 수와 `scheduler_scheduling_total`(스케줄러가 실제 배치한 수)을 비교한다 — `/home/nxclab/scratch/exp173/bypass.py <run>`. 0이 아니면 그 run의 점수는 정책의 점수가 아니다. 게이트웨이 로그의 "fallback policy(round-robin) is applied" 줄 수로도 본다(로그는 회전하므로 run 중에 세야 한다).
