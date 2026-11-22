@@ -454,6 +454,13 @@ FLUIDSERVE_ABLATIONS = {
     "FS_KV_EPS": "--fluidserve-kv-epsilon",
     # c3: per-instance KV price by dual ascent on the measured shortage; off|shadow|on.
     "FS_KV_PRICE": "--fluidserve-kv-price",
+    # EXP-173 candidates (2026-11-22). Each compiled default reproduces v0.6.
+    # A: inflow term in the memory test only, window = last h engine steps.
+    "FS_KV_INFLOW": "--fluidserve-inflow-memory",
+    # B: KV inflow-rate valve (token bucket from the flow balance); off|shadow|on.
+    "FS_KV_BUCKET": "--fluidserve-kv-bucket",
+    # C: first-token wait from the measured net prefill drain rate (Little's law).
+    "FS_PREFILL_FLOW": "--fluidserve-prefill-flow",
     # Price the observed prefill queue's drain at the full cost of a
     # chunk-carrying iteration, t_pre + t_dec - c0, instead of dividing the
     # prefill-only cost by the instance's unconditional prefill duty and taking
@@ -988,6 +995,9 @@ def verify_effective(policy, logs, applied_args):
         ("--fluidserve-kv-window-signal", "kvwindowsignal"),
         ("--fluidserve-kv-epsilon", "kveps"),
         ("--fluidserve-kv-price", "kvprice"),
+        ("--fluidserve-inflow-memory", "inflowmemory"),
+        ("--fluidserve-kv-bucket", "kvbucket"),
+        ("--fluidserve-prefill-flow", "prefillflow"),
     ]
     bad = []
     for flag, key in checks:
