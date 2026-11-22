@@ -626,7 +626,7 @@ KV 가격 판정을 더한 것(arm `fsxc3`, EXP-172; `project/versions/`의 "v0.
 
 **gateway가 두 가지다 — 섞어 읽지 않는다.** 2026-11-22 이전의 gateway(`05745270`)는 scheduler를 호출할 때마다 새 연결을 열어서, 8B 함대의
 도착률에서는 임시 포트가 고갈되면 호출이 실패하고 그 요청을 admission 판정 없이 round-robin으로 인스턴스에 보냈다(`traps.md` 함정 G).
-그렇게 들어간 요청의 비율은 옛 gateway의 PolyServe가 받아들인 요청의 7~10 %, KV를 조이는 후보들이 20~54 %, v0.6이 run당 4건이다. 고친
+그렇게 들어간 요청의 비율은 옛 gateway의 PolyServe가 받아들인 요청의 7~10 %, KV를 조이는 후보들이 20~54 %, v0.6이 4건 수준이다(EXP-174 기록의 값). 고친
 gateway(`3590c1af`, 연결 재사용, counter `gateway_scheduling_fallback_total`)의 여섯 run은 전부 0건이다. **옛 gateway의 PolyServe와 후보 3
 값은 인용하지 않는다**(아래 10.3에 값과 이유를 남긴다). v0.6은 대체 배치가 사실상 없었으므로 옛 gateway의 2회도 유효하다.
 
