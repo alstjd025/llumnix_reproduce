@@ -793,3 +793,57 @@ run: PolyServe r1 `261122_0648_exp175hr1_polyservept75_shift`, r2 `261122_1040_e
   이 절의 값을 한 표에 놓지 않는다.
 - 근거 파일: `Agent_applications/agent_motivation_experiment/experiments/EXP-175_candidate3-on-70b.md`(판정 규칙과 예측은 실행 전에 적음), EXP-161의 v0.6은
   `EXP-161_*.md`, EXP-168의 PolyServe는 `EXP-168_*.md`. gateway counter와 로그는 `/home/nxclab/scratch/exp175/gwmetrics_*`, `gwlog_*`.
+
+---
+
+## 12. 리비전 실험 — 8B 함대, 논문의 절반 budget, 새 gateway (EXP-176 앞 절반, 2026-11-23)
+
+**이 절은 제출본의 수치가 아니라 리비전에서 새로 잰 수치다.** 물은 것: 제출 논문의 8B 조건(모든 budget 절반, 그림 11·12 (c)의 EXP-126)에서 v0.6과
+후보 3이 PolyServe를 앞서는가. EXP-126 PolyServe가 tier 표 결함으로 돌았다는 것은 §11 다음의 항목 12(위 "같이 적어야 하는 한계" 목록)에 적었다.
+작성 2026-11-23, 값은 `/home/nxclab/scratch/exp176/score.py`(대시보드의 채점 함수를 절반 budget 환경으로 부른 것)로 냈다. **대시보드 점수는 표준 budget이라
+이 run들에 쓰지 않는다.**
+
+**공통 조건**: Llama-3.1-8B × 8(TP=1), trace `shift62`(도착 약 609,000건), 부하 생성 36 프로세스, gateway `3590c1af`(여섯 run 모두 대체 배치 0건), 채점
+ladder95 at chat 2.5 s / 25 ms, deepresearch 5 s / 50 ms, swe 3.5 s / 38 ms(`FS_CHAT_TTFT_S=2.5 FS_DR_TTFT_S=5 FS_SWE_TTFT_S=3.5 FS_CHAT_TBT_MS=25
+FS_DR_TBT_MS=50 FS_SWE_TBT_MS=38`). FluidServe 계열은 `--fluidserve-class-budgets 25:decode:38,50:decode:25,100:decode:50`, PolyServe는 tier 표
+`25:403,38:464,50:1094`(기동 인자로 확인). scheduler: PolyServe·v0.6 `7dc2355c`, 후보 3 `5d52124e`. 이 budget의 값은 표준 budget(§10)·더 빡빡한 budget과 한 표에 놓지 않는다.
+
+run: PolyServe `261122_1804_exp176hr1_polyservept75_shift62h`, `261122_2150_exp176hr2_polyservept75_shift62h`; 후보 3 `261122_1919_exp176hr1_fsxc3_shift62h`,
+`261122_2305_exp176hr2_fsxc3_shift62h`; v0.6 `261122_2039_exp176hr1_fsg10dl_shift62h`, `261123_0025_exp176hr2_fsg10dl_shift62h`.
+
+### 12.1 값 (각 2회, r1 / r2 (평균))
+
+클래스 행은 모든 도착 / admitted / 거절률(%)의 2회 평균.
+
+| 지표 | PolyServe | v0.6 | 후보 3 |
+|---|---|---|---|
+| 모든 도착 | 74.07 / 75.70 (**74.88**) | 75.94 / 74.95 (**75.45**) | 76.92 / 74.08 (**75.50**) |
+| admitted | 97.03 / 96.65 (96.84) | 99.38 / 99.19 (99.29) | 99.73 / 99.55 (99.64) |
+| 거절률 % | 23.61 / 21.62 (22.62) | 23.48 / 24.33 (23.90) | 22.76 / 25.48 (24.12) |
+| token goodput tok/s | 69,451 / 70,421 (69,936) | 75,931 / 75,297 (75,614) | 76,376 / 74,961 (75,668) |
+| 엔진이 만든 토큰 전체 tok/s | 71,010 / 72,398 (71,704) | 76,213 / 75,666 (75,940) | 76,635 / 75,305 (75,970) |
+| request goodput r/s (ladder95로 성공한 요청 ÷ 채점 구간) | 125.82 / 128.65 (127.23) | 129.02 / 127.33 (128.17) | 130.65 / 125.84 (128.24) |
+| chat | 81.34 / 95.75 / 15.02 | 78.60 / 99.86 / 21.27 | 77.43 / 99.79 / 22.40 |
+| deepresearch | 45.89 / 99.92 / 53.95 | 67.38 / 97.34 / 30.40 | 69.58 / 99.44 / 29.65 |
+| swe | 90.24 / 99.40 / 9.21 | 72.90 / 99.22 / 26.47 | 75.62 / 99.15 / 23.69 |
+| preemption (같은 chain 안에서만 비교) | 0 / 0 | 10,284 / 12,213 | 7,239 / 9,440 |
+| KV 사용률 평균 | 0.438 / 0.443 | 0.602 / 0.622 | 0.595 / 0.623 |
+
+### 12.2 지표별 판정 (같은 chain, 문턱 = max(4점 / admitted 1점 / goodput 5 %, 두 구성의 반복 범위))
+
+- **v0.6 − PolyServe**: 모든 도착 +0.56, 거절률 +1.29, request goodput +0.7 % — 차이 없음. admitted **+2.44**, token goodput **+8.1 %**, 엔진 출력 **+5.9 %** — 다르다
+  (v0.6이 높다). chat +−2.74(같음) / **+4.11** / **+6.25**, deepresearch **+21.49** / **−2.58** / **−23.56**, swe **−17.33** / −0.19(같음) / **+17.26**.
+- **후보 3 − PolyServe**: 모든 도착 +0.62, 거절률 +1.50, request goodput +0.8 % — 차이 없음. admitted **+2.79**, token goodput **+8.2 %**, 엔진 출력 **+5.95 %** — 다르다.
+  chat −3.91(같음) / **+4.04** / **+7.38**, deepresearch **+23.69** / −0.48(같음) / **−24.30**, swe **−14.62** / −0.25(같음) / **+14.48**.
+- **후보 3 − v0.6**: deepresearch admitted **+2.10**(후보 3이 높다)만 다르고 나머지 열네 지표는 차이 없음(모든 도착 +0.06). preemption은 후보 3이 두 반복 모두 적다(평균
+  8,340 대 11,249, 문턱 없음).
+
+### 12.3 같이 적어야 하는 한계와 읽는 법
+
+- **절반 budget에서 FluidServe는 PolyServe보다 끝까지 처리한 요청 수가 많지 않다.** 논문의 "8B에서 PolyServe 대비 1.33배"(request goodput)는 tier 표 결함이
+  있던 PolyServe(EXP-126: 거절률 36.8~37.2 %, 92.7 r/s) 위의 값이고, 결함 없이 잰 PolyServe(127.23 r/s)는 FluidServe(128.2 r/s)와 같다. 쓸 수 있는 문장은
+  "같은 요청 수를 처리하면서 받은 요청의 마감을 더 지키고(admitted 99.3~99.6 대 96.8) 마감 안 토큰이 8 % 많다"이다.
+- 두 정책은 다른 요청을 고른다: PolyServe는 deepresearch를 54 % 거절하고 swe를 91 % 처리, FluidServe는 세 클래스 거절률이 21~30 %.
+- 각 구성 2회, trace 하나. EXP-126과의 차이가 tier 표 결함 하나로 전부 설명되는지는 EXP-126 run이 이 기계에 없어 확인하지 못했다.
+- 근거 파일: `Agent_applications/agent_motivation_experiment/experiments/EXP-176_tighter-budgets-8b.md`(판정 규칙·예측은 실행 전에 적음).
+
