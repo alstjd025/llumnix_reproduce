@@ -124,6 +124,11 @@
   가격: 부족도 u = (물리 KV + 미계산 prefill) ÷ pool로 쌍대 상승(Kelly / Low–Lapsley), 기대 수명 KV 비용이 큰 요청부터 거절, 새 조정값 없음. **반복 범위 9.1점으로 불안정**(초반·끝 15분), admitted 93.7.
   반증: 상한만 끄기(A1, 차이 없음 — EXP-171의 "상한이 주원인"은 틀림), AIMD KV 창(preemption −70~83 %인데 점수 그대로, 손실 신호가 preemption의 0.3~1.5 %만 잡음), 약속한 일 기반 KV 판정(요청이 대기열에 묶임, 56.27), 첫 토큰 판정 보정(오프라인), 첫 토큰 모델 수정(EXP-118 붕괴 재현, 43.08).
   **첫 토큰 예측의 비관은 prefill 처리량을 넘는 수용을 막는 사실상의 제어**라 그것만 고치면 무너진다. 운영: 디스크 부족 축출 뒤 옛 결과 172개를 `/NHNHOME/nxclab_results_overflow/`로 옮기고 심볼릭 링크(지운 것 없음). 70B 복구 확인.
+- **EXP-176 (2026-11-23 10:46 시작, 8B, 진행 중 — 논문의 8B 조건(모든 budget 절반)과 그보다 더 빡빡한 per-token budget에서 후보 3·v0.6·PolyServe; 사용자 지시)**:
+  8B 함대, 한 시간 trace `shift62`, 새 gateway `3590c1af`. budget: 절반(변형 `shift62h`) chat 2.5 s / 25 ms, deepresearch 5 s / 50 ms, swe 3.5 s / 38 ms(EXP-126과 같음); 더 빡빡함(`shift62t`) 첫 토큰은 같고 토큰당 15 / 35 / 25 ms.
+  대기열 12 run(각 약 71분, 전체 약 15시간): 절반 budget에서 PolyServe → 후보 3 → v0.6을 2회 반복, 그 다음 더 빡빡한 budget에서 같은 순서. **채점은 그 조건의 budget 여섯 개를 환경변수로 준다 — 대시보드 점수는 표준 budget이라 쓰지 않는다**(채점기 `/home/nxclab/scratch/exp176/score.py`, 대시보드와 같은 함수이고 EXP-174 run 하나에서 대시보드와 모든 칸이 같음을 확인).
+  판정 규칙(같은 budget 안의 세 비교, 지표별 문턱 4 / 1 / 5 %; 절반 budget PolyServe를 EXP-126과 거절률·request goodput으로만 참고 대조)과 예측은 `EXP-176_tighter-budgets-8b.md`. 드라이버 `k8s/exp07/run_exp176_hour.sh`, 체인 `/home/nxclab/scratch/exp176/run.sh`, 로그 `/home/nxclab/tools/exp176_chain.log`.
+  디스크: 8B run 하나가 약 39 GB라 시작 전에 2026-11-20·21의 결과 디렉토리를 `/NHNHOME/nxclab_results_overflow`(로컬 XFS, Lustre 아님)로 옮기고 원래 자리에 심볼릭 링크를 남겼다(`/home/nxclab/scratch/exp172/move_old_results.log`, 지운 것 없음).
 - **EXP-175 (2026-11-22 23:34 ~ 2026-11-23 07:27, 70B, 끝남 — 8B에서 PolyServe를 앞선 후보 3(EXP-172의 인스턴스별 KV 가격)이 70B 한 시간 trace에서도 앞서는가; 사용자 지시)**:
   **결과(한 시간 trace `shift`, ladder95, 각 2회, 여섯 run 전부 유효·대체 배치 0건; 수치의 정본은 `project/evidence.md` §11)** — ① 측정 경로: 이번 chain의 PolyServe는 EXP-168의 PolyServe(옛 gateway)와 어느 지표도 다르지 않다 → 70B에서는 gateway 변경이 값을 바꾸지 않는다.
   ② 후보 3은 PolyServe보다 모든 도착·admitted·goodput·chat(세 지표)·deepresearch(세 지표)에서 다르고(앞선다; chat은 더 많이 거절한다), 전체 거절률과 swe 세 지표는 차이 없음. ③ **그 차이는 v0.6이 이미 가진 차이다**: 후보 3 − v0.6(EXP-161 기록, 세션 간 문턱)은 어느 지표도 다르지 않다.
