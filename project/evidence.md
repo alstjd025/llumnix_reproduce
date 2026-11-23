@@ -518,6 +518,14 @@ Llumnix SLO 27.69 대 27.9, 거절 39.45 대 39.5 %, chat 29.85 / deepresearch 2
     표에서 찾지 못하고 기본값 463토큰을 쓴다 — swe의 KV 증가를 494 대신 463토큰(6 % 작게)으로 투영한다. chat·deepresearch는 영향이 없다.
     정적 드라이버(`run_exp108_t75.sh`)는 지우지 않아 `50:428,75:494,100:985`였다(그림 14). **그림 11~13의 PolyServe(EXP-109)가 이 표로 돌았는지는
     그 run의 `scheduler_deploy_*.yaml`(맥 SSD)로 확인해야 한다.** EXP-165부터는 고친 드라이버(`run_exp165_hour.sh`)가 표를 검사한다.
+    **8B 절반 budget 패널(그림 11·12 (c), EXP-126)의 PolyServe는 이 결함으로 돌았다(2026-11-23 확인, EXP-176 기록 run 4).** EXP-126 체인 로그
+    (`/home/nxclab/tools/exp126.log` 113~120행)에 PolyServe arm의 tier 표가 `25:464,50:403,100:1094`(기본 설정의 key)로 찍혀 있고, 요청은 절반 budget의
+    tier chat 25 / deepresearch 50 / swe 38을 달고 왔다. 그래서 70B와 달리 **세 클래스 모두** 틀린 길이를 썼다: chat은 swe의 464, deepresearch는 chat의
+    403(클래스 평균 1,094), swe는 표에 없어 기본값. EXP-126 기록 §3의 "tier 경계 25/38/50 확인"은 체인 스크립트의 사전 점검 출력이었다.
+    같은 절반 budget을 결함 없이 잰 PolyServe(EXP-176, 새 gateway, 2회)는 거절률 22.62 %(EXP-126 36.8~37.2 %), request goodput 127.24 r/s(EXP-126
+    92.78 / 92.72)로 둘 다 세션 간 문턱을 넘게 다르다. 결함이 이 차이를 얼마나 설명하는지는 EXP-126 run이 이 기계에 없어 정하지 못했다(옛 gateway는
+    거절률을 낮추는 쪽이라 이 방향을 설명하지 못하고, 그 사이 PolyServe 결정 코드의 변경은 없다). **논문의 "8B에서 PolyServe 대비 1.33배"는 이 결함
+    위의 값이므로 그대로 쓰지 않는다** — 고친 비교는 EXP-176 절반 budget 판정(진행 중)으로 대신한다.
 
 ---
 
