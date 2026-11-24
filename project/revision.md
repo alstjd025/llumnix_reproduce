@@ -124,6 +124,13 @@
   가격: 부족도 u = (물리 KV + 미계산 prefill) ÷ pool로 쌍대 상승(Kelly / Low–Lapsley), 기대 수명 KV 비용이 큰 요청부터 거절, 새 조정값 없음. **반복 범위 9.1점으로 불안정**(초반·끝 15분), admitted 93.7.
   반증: 상한만 끄기(A1, 차이 없음 — EXP-171의 "상한이 주원인"은 틀림), AIMD KV 창(preemption −70~83 %인데 점수 그대로, 손실 신호가 preemption의 0.3~1.5 %만 잡음), 약속한 일 기반 KV 판정(요청이 대기열에 묶임, 56.27), 첫 토큰 판정 보정(오프라인), 첫 토큰 모델 수정(EXP-118 붕괴 재현, 43.08).
   **첫 토큰 예측의 비관은 prefill 처리량을 넘는 수용을 막는 사실상의 제어**라 그것만 고치면 무너진다. 운영: 디스크 부족 축출 뒤 옛 결과 172개를 `/NHNHOME/nxclab_results_overflow/`로 옮기고 심볼릭 링크(지운 것 없음). 70B 복구 확인.
+- **EXP-177·177b·178 (2026-11-24, 밤사이 다각도 검토 + 실험; 수치는 `evidence.md` §13)**: 에이전트 다섯(생존함수·유량 유지 / 예측 버림 / 세 판정 통합 / 오프라인 데이터 / 심사자 관점,
+  보고 `/home/nxclab/scratch/idea1124/reports/`)의 공통 결론: ① v0.6의 KV 넘침은 h step 안의 결정들이 아직 일어나지 않은 같은 유출을 각자 미리 빼서 생긴다(상한 + 6~8 %) → 일어난 유입·유출만 센다,
+  ② Little의 법칙(0.1 % 안에서 성립): 처리 속도 = 묶이는 자원의 용량 ÷ 요청 하나의 평균 사용량 → '누구로 채우나'가 손잡이, ③ 후보 3의 문턱은 넘침이 있어야 켜진다(D0로 확인: 넘침을 끊자 83.9 → 70.9).
+  **후보 A**(물리 KV + 대기 prefill + 새 prompt ≤ pool인 메모리 판정 + 받지 못한 수요로 생기는 KV 쪽 사용량 문턱): 8B 표준 2회 88.41 / 88.64, admitted 99.7, preemption 약 4k — PolyServe보다 11개 지표가 낫고 나쁜 지표 없음.
+  **후보 T**(GPU 시간 쪽 문턱만): 8B 표준 76.47(KV 쪽이 필요), 8B 절반 87.28. **후보 D3**(두 쪽 모두): 8B 절반 87.43(PolyServe 74.88), 8B 표준 r1 88.83. 오프라인 상한 8B 표준 90~94, 절반 88~91.
+  **용어(사용자 지시)**: λ·μ 장치는 '가격'이 아니라 **사용량 문턱 판정**. 진행 중: EXP-178 D3 8B 표준 r2 → 70B 2회(약 17:35 끝). 다음 후보 단계: D3 절반 2회째, 다른 trace, 가치(목표)를 바꾼 변형, 속도 판정의 h 제거(에이전트 ①의 후보 C).
+  코드 브랜치: `exp177-price-limit`, `exp177-kv-stock`(A), `exp177-dual`(D3·T), 바이너리 `/home/nxclab/tools/staging/scheduler-exp177-*`.
 - **EXP-176 (2026-11-23 10:46 ~ 2026-11-24 02:29, 8B, 끝남 — 논문의 8B 조건(모든 budget 절반)과 그보다 더 빡빡한 per-token budget에서 후보 3·v0.6·PolyServe; 사용자 지시)**:
   **절반 budget 결과(여섯 run, 2026-11-23 18:34; 수치는 `evidence.md` §12)**: v0.6·후보 3·PolyServe는 모든 도착·거절률·request goodput이 차이 없음(75.5 / 75.5 / 74.9). FluidServe 둘은 admitted(+2.4~2.8)·token goodput(+8 %)·엔진 출력(+6 %)이 높고, 클래스 구성이 반대(FluidServe가 deepresearch +21~24, swe −15~17). 후보 3 − v0.6은 deepresearch admitted(+2.1) 하나만 다르다. 예측 1 반증. **EXP-126(논문 8B)의 PolyServe는 tier 표 결함으로 돌았다**(chain 로그로 확인, `evidence.md` 항목 12) — 논문의 8B 1.33배는 그대로 쓰지 않는다. 
   **더 빡빡한 budget 결과(여섯 run, 수치는 `evidence.md` §12.4)**: v0.6·후보 3이 PolyServe보다 모든 도착 +8.75·+9.01, admitted +6.0, request goodput +13.5 %로 앞선다(PolyServe가 받은 chat의 8 %가 15 ms 마감을 놓침). 후보 3 − v0.6은 열다섯 지표 모두 차이 없음. 예측 3 맞음. → **토큰 간격 budget이 빡빡해질수록 PolyServe와의 차이가 커지고(절반: 0, 더 빡빡함: 약 9점), 후보 3의 KV 가격은 KV가 한계일 때(8B 표준 budget)만 결정을 바꾼다.** 끝난 뒤 상태: `bin/` scheduler `3251836a`·gateway `590242b0`, gateway 0, 엔진 0, Sionna 실행.
