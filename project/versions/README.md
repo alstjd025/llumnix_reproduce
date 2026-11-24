@@ -27,3 +27,4 @@
 | **v0.6-후보3** | 2026-11-14 | `7dc2355c` + `FS_GATE_UTIL=1.0` / `05745270` | `fsg10` | v0.5 + 판정선 0.9 → 1.0 × 명목 budget (EXP-158 shadow에서 통과한 가장 단순한 변경) | [fluidserve-v0.6-candidate3.md](fluidserve-v0.6-candidate3.md) |
 | v0.6-후보4 | 2026-11-16 | `7dc2355c` + `FS_GATE_UTIL=1.0` + `FS_DEADLINE_FEASIBLE=true` / `05745270` | `fsg10dl` | → **v0.6으로 채택** | [fluidserve-v0.6-candidate4.md](fluidserve-v0.6-candidate4.md) |
 | **v0.6** | 2026-11-17 | `7dc2355c` + `FS_GATE_UTIL=1.0` + `FS_DEADLINE_FEASIBLE=true` / `05745270` | `fsg10dl` | v0.5 + 토큰당 시간 판정선 0.9 → 1.0 × budget + 첫 토큰 마감을 가능/불가 판정에 넣음. **지금 기준선** | [fluidserve-v0.6.md](fluidserve-v0.6.md) |
+| **v0.61** | 2026-11-24 | `1de94045` + `FS_INSTANCE_CAP=false` + `FS_KV_PRICE=dual` / `3590c1af` | `fsxdual` | v0.6 + 물리 KV stock 메모리 판정 + 사용량 문턱 판정(KV·GPU 시간, 받지 못한 수요로 움직임) + cap 끔. EXP-177의 D3. 검증 중이라 v0.7이 아니라 v0.61(사용자 결정) | [fluidserve-v0.61.md](fluidserve-v0.61.md) |
