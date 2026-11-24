@@ -89,5 +89,6 @@ llumnix_reproduce/                     바깥 저장소 (정책 코드)
 2. `system.md` — 구현이 실제로 무엇을 하는가 (논문 구성의 플래그 전체, 알려진 결함)
 3. `evidence.md` — 논문의 각 그림·수치가 어느 run에서 왔고 무엇을 같이 적어야 하는가
 4. `reproduce.md` — 환경 재구축과 실험 실행
+5. `guide/fluidserve-v0.61-guide.html` — v0.61의 판정을 수학 배경부터 코드 위치까지 설명한 해설 페이지(2026-11-24 사본; 수치의 정본은 `evidence.md`)
 
 과거의 설계 논의, 반증된 가설, 실험 140개의 기록은 `archive/`에 있다. 필요할 때만 `archive/INDEX.md`부터 연다.

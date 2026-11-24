@@ -1,0 +1,754 @@
+<title>FluidServe v0.61 해설</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Noto+Serif+KR:wght@600;700&display=swap">
+<style>
+/* Layout: technical manual — sticky table of contents on the left at wide widths, one reading column (~74ch) on the right; formulas set as mono blocks; worked examples in their own boxes; tables scroll inside their own box. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#1b2530; --muted:#5b6876; --line:#d9dee5;
+  --accent:#0f6e7a; --accent-soft:#e3f1f2; --mark:#9a5b00; --mark-soft:#fbf1e1;
+  --ex:#3d5a99; --ex-soft:#eaeff9; --good:#1d7a45; --bad:#b03a2e;
+  --f-display:"Noto Serif KR","Apple SD Gothic Neo","Malgun Gothic",serif;
+  --f-body:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic","Noto Sans KR",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#12171c; --surface:#192028; --fg:#e4e9ee; --muted:#9aa7b4; --line:#2c3641;
+  --accent:#5cc2cc; --accent-soft:#183238; --mark:#e3a54d; --mark-soft:#33281a;
+  --ex:#9db4ec; --ex-soft:#1d2638; --good:#5fc98a; --bad:#ef8a7e; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#12171c; --surface:#192028; --fg:#e4e9ee; --muted:#9aa7b4; --line:#2c3641;
+  --accent:#5cc2cc; --accent-soft:#183238; --mark:#e3a54d; --mark-soft:#33281a;
+  --ex:#9db4ec; --ex-soft:#1d2638; --good:#5fc98a; --bad:#ef8a7e; color-scheme:dark }
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:16px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.wrap{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:240px minmax(0,1fr);gap:48px;padding-block:40px 80px}
+nav.toc{position:sticky;top:env(safe-area-inset-top,0px);align-self:start;max-height:100vh;overflow:auto;padding-top:8px;font-size:14px}
+nav.toc .tt{font-size:12px;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:3px}
+nav.toc a{color:var(--muted);text-decoration:none;display:block;padding:2px 0}
+nav.toc a:hover,nav.toc a:focus-visible{color:var(--accent)}
+nav.toc .sub a{padding-left:12px;font-size:13px}
+main{min-width:0;max-width:74ch}
+header.top{margin-bottom:40px;border-bottom:1px solid var(--line);padding-bottom:24px}
+header.top .eyebrow{font-family:var(--f-mono);font-size:13px;color:var(--accent);letter-spacing:.04em}
+h1{font-family:var(--f-display);font-size:34px;line-height:1.3;margin:8px 0 12px;text-wrap:balance}
+h2{font-family:var(--f-display);font-size:25px;line-height:1.35;margin:60px 0 12px;text-wrap:balance;scroll-margin-top:16px}
+h3{font-size:18.5px;margin:34px 0 8px;font-weight:700;text-wrap:balance;scroll-margin-top:16px}
+h4{font-size:15.5px;margin:22px 0 4px;font-weight:600;color:var(--accent)}
+p{margin:10px 0}
+.lede{font-size:17.5px;color:var(--muted)}
+a{color:var(--accent)}
+code,.m{font-family:var(--f-mono);font-size:.92em}
+.eq{font-family:var(--f-mono);font-size:14.5px;background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);
+  padding:12px 16px;margin:12px 0;overflow-x:auto;white-space:pre;line-height:1.65}
+.note{background:var(--mark-soft);border-left:3px solid var(--mark);padding:10px 14px;margin:14px 0;font-size:15px}
+.note b{color:var(--mark)}
+.ex{background:var(--ex-soft);border-left:3px solid var(--ex);padding:10px 14px;margin:14px 0;font-size:15px}
+.ex .lab{font-weight:700;color:var(--ex);display:block;margin-bottom:2px}
+.ex .eq{background:transparent;border:0;padding:4px 0;margin:4px 0}
+.tbl{overflow-x:auto;margin:14px 0;border:1px solid var(--line);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+th,td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-weight:600;background:var(--accent-soft);white-space:nowrap}
+td.n{text-align:right;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.hl{color:var(--accent);font-weight:600}
+.up{color:var(--good);font-weight:600}.dn{color:var(--bad);font-weight:600}
+.cap{font-size:13.5px;color:var(--muted);margin-top:-6px}
+ul,ol{padding-left:22px}
+li{margin:5px 0}
+.vars{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 14px;font-size:15px;margin:10px 0}
+.vars dt{font-family:var(--f-mono);color:var(--accent);white-space:nowrap}
+.vars dd{margin:0}
+figure{margin:20px 0;background:var(--surface);border:1px solid var(--line);padding:12px;overflow-x:auto}
+figure svg{display:block;max-width:100%;height:auto}
+figure svg.wide{min-width:640px}
+figcaption{font-size:13.5px;color:var(--muted);margin-top:8px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.chip{font-family:var(--f-mono);font-size:12.5px;border:1px solid var(--line);padding:1px 8px;background:var(--surface)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:860px){.wrap{grid-template-columns:minmax(0,1fr);gap:16px;padding-block:24px 60px}
+  nav.toc{position:static;max-height:none;border-bottom:1px solid var(--line);padding-bottom:12px}
+  nav.toc ol{grid-template-columns:1fr 1fr}
+  h1{font-size:27px} h2{font-size:22px}}
+html{scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+</style>
+
+<div class="wrap">
+<nav class="toc" aria-label="목차">
+  <div class="tt">목차</div>
+  <ol>
+    <li><a href="#howto">0. 이 페이지를 읽는 법</a></li>
+    <li><a href="#overview">1. 무엇을 하는 시스템인가</a></li>
+    <li><a href="#math">2. 수학 배경</a></li>
+    <li class="sub"><a href="#m-sum">2.1 기호 읽는 법</a></li>
+    <li class="sub"><a href="#m-exp">2.2 확률과 기댓값</a></li>
+    <li class="sub"><a href="#m-surv">2.3 생존함수</a></li>
+    <li class="sub"><a href="#m-cond">2.4 조건부 확률, residual life</a></li>
+    <li class="sub"><a href="#m-var">2.5 분산과 1.65σ</a></li>
+    <li class="sub"><a href="#m-sq">2.6 E[L²]와 KV × 시간</a></li>
+    <li class="sub"><a href="#m-mult">2.7 곱셈 갱신과 exp</a></li>
+    <li class="sub"><a href="#m-dual">2.8 제약 최적화와 쌍대 변수</a></li>
+    <li class="sub"><a href="#m-little">2.9 Little의 법칙</a></li>
+    <li><a href="#symbols">3. 기호표</a></li>
+    <li><a href="#path">4. 요청 하나가 거치는 경로</a></li>
+    <li><a href="#prep">5. 판정 전에 계산하는 값</a></li>
+    <li><a href="#j1">6. 판정 1·2: 토큰 간격</a></li>
+    <li><a href="#j3">7. 판정 3: 첫 토큰 마감</a></li>
+    <li><a href="#j4">8. 판정 4: 메모리</a></li>
+    <li><a href="#j5">9. 판정 5: 사용량 문턱</a></li>
+    <li><a href="#decide">10. 정렬과 route·pend·reject</a></li>
+    <li><a href="#code">11. 플래그와 코드 위치</a></li>
+    <li><a href="#versions">12. 버전·후보 비교</a></li>
+    <li><a href="#story">13. 왜 이렇게 바뀌었나</a></li>
+    <li><a href="#results">14. 실험 결과</a></li>
+    <li><a href="#little">15. 유량 관점에서 남은 것</a></li>
+    <li><a href="#overlap">16. 판정 단계의 중복 검토</a></li>
+    <li><a href="#limits">17. 한계와 열린 질문</a></li>
+    <li><a href="#refs">18. 참조</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="top">
+  <div class="eyebrow">FluidServe · v0.61 (2026-11-24 기준) · Llumnix 위의 cluster scheduler</div>
+  <h1>FluidServe v0.61: 요청 하나가 받아들여지는 과정</h1>
+  <p class="lede">SLO가 서로 다른 세 종류의 요청(chat, deepresearch, swe)을 여러 vLLM 인스턴스에 나눠 보내고, 받을지 말지를 정하는 scheduler가 있습니다. 이 페이지는 그 scheduler가 하는 판정 다섯 개를 코드 기준으로 설명합니다. 필요한 수학은 2절에서 처음부터 설명하고, v0.6에서 무엇이 왜 바뀌었는지와 근거 실험의 값도 함께 적었습니다.</p>
+  <div class="chips"><span class="chip">scheduler 1de94045</span><span class="chip">gateway 3590c1af</span><span class="chip">branch exp177-dual 3ba37e7</span><span class="chip">arm fsxdual</span></div>
+</header>
+
+<section id="howto">
+<h2>0. 이 페이지를 읽는 법</h2>
+<p>처음 읽으실 때는 다음 순서를 권합니다.</p>
+<ol>
+<li><b>1절</b>에서 scheduler가 무엇을 결정하는지 봅니다.</li>
+<li>수식이 낯설면 <b>2절(수학 배경)</b>을 먼저 읽습니다. 이 페이지에 나오는 수학은 2절에 모두 있고, 2절은 고등학교 수학 정도만 가정합니다.</li>
+<li><b>4절 그림</b>으로 전체 흐름을 잡은 뒤, <b>5~10절</b>에서 판정을 하나씩 봅니다. 판정마다 "묻는 것 → 식 → 변수 → 왜 필요한가 → 숫자 예시" 순서로 썼습니다.</li>
+<li>바뀐 이유와 근거는 <b>13·14절</b>, 앞으로 정리할 점은 <b>16·17절</b>에 있습니다.</li>
+</ol>
+<p>숫자 예시(파란 상자) 가운데 "설명용"이라고 적힌 것은 계산 과정을 보여 드리려고 고른 값입니다. 실험에서 잰 값은 14절 표에만 있고, 그 값은 <code>project/evidence.md</code>와 같습니다.</p>
+</section>
+
+<section id="overview">
+<h2>1. 무엇을 하는 시스템인가</h2>
+<p>요청이 gateway에 도착하면 gateway는 scheduler에게 "이 요청을 어느 인스턴스로 보낼까요?"라고 묻습니다. scheduler의 답은 셋 중 하나입니다.</p>
+<ul>
+  <li><b>route</b>: 인스턴스 하나를 골라 보냅니다.</li>
+  <li><b>pend</b>: 지금 받을 수 있는 인스턴스는 없지만 첫 토큰 마감까지 시간이 남아 있으니 기다리게 합니다. 요청은 gateway가 들고 있고, gateway가 500 ms마다 다시 묻습니다. scheduler에는 따로 대기열이 없습니다.</li>
+  <li><b>reject</b>: 거절합니다. 기다려도 마감을 지킬 수 없을 때입니다.</li>
+</ul>
+<p>요청에는 마감이 두 가지 있습니다.</p>
+<ul>
+<li><b>첫 토큰 budget(TTFT)</b>: 도착부터 첫 출력 토큰까지 걸려도 되는 시간입니다.</li>
+<li><b>토큰당 budget(TBT)</b>: 그다음 토큰 하나마다 걸려도 되는 평균 시간입니다.</li>
+</ul>
+<p>표준 budget은 chat 5 s / 50 ms, deepresearch 10 s / 100 ms, swe 7 s / 75 ms입니다.</p>
+<p>채점 규칙은 <b>ladder95</b>입니다. i번째 출력 토큰의 마감을 "첫 토큰 budget + i × 토큰당 budget"으로 두고, 토큰의 95 % 이상이 마감 안에 나오면 그 요청을 성공으로 셉니다.</p>
+<p>보고하는 주 지표는 다음과 같습니다.</p>
+<ul>
+<li><b>모든 도착</b>: 도착한 요청 가운데 성공한 비율입니다. 거절도 실패로 셉니다.</li>
+<li><b>admitted</b>: 받은 요청 가운데 성공한 비율입니다.</li>
+<li><b>거절률</b></li>
+<li><b>token goodput</b>: 마감 안에 나간 토큰 수를 시간으로 나눈 값입니다.</li>
+</ul>
+<p>scheduler가 할 수 있는 일은 "어디로 보내느냐(routing)"와 "받느냐 마느냐(admission control)" 두 가지뿐입니다. 엔진 안에서 batch를 어떻게 짜는지는 vLLM이 정합니다. 그래서 scheduler는 엔진이 어떻게 반응할지를 예측하는 모델에 의존합니다.</p>
+</section>
+
+<section id="math">
+<h2>2. 수학 배경</h2>
+<p>이 절은 뒤에서 쓰는 수학을 모두 처음부터 설명합니다. 아는 내용은 건너뛰셔도 됩니다. 각 소절 끝에 "FluidServe에서는"이라는 문단을 두어 그 개념이 어디에 쓰이는지 연결했습니다.</p>
+
+<h3 id="m-sum">2.1 기호 읽는 법</h3>
+<dl class="vars">
+<dt>Σ_r x_r</dt><dd>"모든 r에 대해 x_r을 더한다"는 뜻입니다. 예를 들어 Σ_r kv_r은 "이 인스턴스에서 처리 중인 모든 요청의 KV를 더한 값"입니다.</dd>
+<dt>min(a, b)</dt><dd>a와 b 중 작은 값입니다. "판정선 = min(내 budget, 남의 budget)"은 둘 중 더 빡빡한 쪽을 쓴다는 뜻입니다.</dd>
+<dt>min_r A_r</dt><dd>모든 r 가운데 A_r이 가장 작은 값입니다.</dd>
+<dt>(x)⁺</dt><dd>x가 음수이면 0, 아니면 x입니다. "모자라는 만큼만 센다"는 표현에 씁니다.</dd>
+<dt>⌈x⌉</dt><dd>x를 올림한 정수입니다. 이 페이지에서는 쓰지 않습니다(이전 판에 잘못 쓴 곳을 9절에서 바로잡았습니다).</dd>
+<dt>x ← y</dt><dd>"x의 값을 y로 바꾼다"는 뜻입니다. 등식이 아니라 갱신입니다.</dd>
+<dt>exp(x) = eˣ</dt><dd>e ≈ 2.718의 x제곱입니다. x가 작으면 exp(x) ≈ 1 + x로 생각하셔도 됩니다. 예를 들어 exp(0.1) ≈ 1.105입니다.</dd>
+</dl>
+
+<h3 id="m-exp">2.2 확률과 기댓값</h3>
+<p>요청이 출력할 토큰 수 L은 요청이 끝나기 전에는 모릅니다. 그래서 "길이가 이 정도일 확률이 얼마"라는 <b>분포</b>로 다룹니다.</p>
+<p><b>기댓값 E[L]</b>은 "가능한 값 × 그 값의 확률"을 모두 더한 것으로, 같은 종류의 요청을 아주 많이 모았을 때의 평균입니다.</p>
+<div class="ex"><span class="lab">예시 (설명용)</span>
+출력 길이가 100일 확률이 0.5, 700일 확률이 0.5라고 하겠습니다. 그러면 E[L] = 100 × 0.5 + 700 × 0.5 = 400입니다.</div>
+<p><b>FluidServe에서는</b> 클래스(chat, deepresearch, swe)마다 과거 요청의 출력 길이를 모아 분포를 만들어 둡니다(<code>deploy/profiling/…</code>의 프로파일). 같은 클래스의 새 요청은 모두 이 분포를 따른다고 가정합니다. 요청 하나하나의 길이를 예측하지 않고 클래스 분포 하나를 씁니다.</p>
+
+<h3 id="m-surv">2.3 생존함수 S(x)</h3>
+<p><b>S(x) = "출력 길이가 x 토큰보다 길 확률"</b>입니다. "x 토큰을 만든 뒤에도 아직 끝나지 않았을(살아 있을) 확률"이라서 생존함수(survival function)라고 부릅니다. 통계·신뢰성 공학에서 쓰는 표준 용어입니다.</p>
+<ul>
+<li>S(0) = 1입니다. 모든 요청은 0 토큰보다는 깁니다.</li>
+<li>x가 커질수록 S(x)는 줄어듭니다.</li>
+</ul>
+<p>유용한 성질이 하나 있습니다. <b>S(x) 그래프 아래의 넓이가 E[L]</b>입니다. 길이가 L인 요청은 x = 0, 1, …, L−1에서 "아직 살아 있음"으로 한 번씩, 모두 L번 세어집니다. 그러니 S(x)를 모든 x에 대해 더하면 평균 길이가 나옵니다.</p>
+<figure>
+<svg viewBox="0 0 520 220" role="img" aria-label="생존함수 S(x)는 1에서 시작해 줄어드는 곡선이고, 곡선 아래 넓이가 기대 출력 길이이다. j와 j+h에서의 높이 차이를 j에서의 높이로 나누면 h 안에 끝날 확률이다.">
+<g font-family="IBM Plex Sans KR, sans-serif" font-size="12" fill="currentColor" stroke="currentColor">
+<line x1="50" y1="185" x2="500" y2="185" stroke-width="1"/><line x1="50" y1="185" x2="50" y2="15" stroke-width="1"/>
+<text x="505" y="189" stroke="none">x (토큰)</text><text x="20" y="28" stroke="none">S(x)</text>
+<text x="36" y="40" stroke="none" font-size="11">1</text>
+<path d="M50,35 C120,60 170,110 240,140 C300,163 380,176 490,181 L490,185 L50,185 Z" fill="currentColor" fill-opacity="0.08" stroke="none"/>
+<path d="M50,35 C120,60 170,110 240,140 C300,163 380,176 490,181" fill="none" stroke-width="1.8"/>
+<text x="95" y="160" stroke="none">곡선 아래 넓이 = E[L]</text>
+<line x1="170" y1="185" x2="170" y2="104" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="290" y1="185" x2="290" y2="160" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="165" y="202" stroke="none">j</text><text x="278" y="202" stroke="none">j + h</text>
+<text x="300" y="100" stroke="none">S(j) − S(j+h) : j까지 살아 있다가</text>
+<text x="300" y="116" stroke="none">h 안에 끝나는 몫</text>
+</g></svg>
+<figcaption>생존함수의 모양(설명용). 넓이는 평균 길이이고, 두 점의 높이 차이는 그 구간 안에서 끝나는 요청의 몫입니다.</figcaption>
+</figure>
+<p><b>FluidServe에서는</b> 클래스마다 S(x)를 격자 위의 표로 들고 있습니다(코드의 <code>classProfile.Grid</code>, <code>Survival</code>). E[L], 아래의 p_r, R_r, E[L²]가 모두 이 표에서 계산됩니다.</p>
+
+<h3 id="m-cond">2.4 조건부 확률과 residual life</h3>
+<p>이미 j 토큰을 만든 요청은 "길이가 j보다 길다"는 것을 우리가 알고 있습니다. 이런 정보를 반영한 확률을 <b>조건부 확률</b>이라고 합니다.</p>
+<div class="eq">P(앞으로 h 토큰 안에 끝남 | 지금 j 토큰까지 살아 있음) = ( S(j) − S(j + h) ) ÷ S(j)</div>
+<p>읽는 법은 이렇습니다. 분모 S(j)는 "j까지 살아 있는 요청 전체"이고, 분자는 "그 가운데 j + h 전에 끝나는 요청"입니다. 전체 가운데 그 비율을 구한 것입니다.</p>
+<p><b>Residual life R</b>(남은 수명)는 "j까지 살아 있는 요청이 앞으로 더 만들 토큰 수의 기댓값"입니다. 그림으로는 S(j) 오른쪽의 넓이를 S(j)로 나눈 값입니다.</p>
+<div class="eq">R(j) = E[ L − j | L > j ] = ( x ≥ j 범위에서 S(x)를 더한 값 ) ÷ S(j)</div>
+<div class="ex"><span class="lab">예시 (설명용)</span>
+2.2절의 분포(100 또는 700, 각 0.5)를 다시 쓰겠습니다. 처음(j = 0)에는 E[L] = 400입니다. 200 토큰을 만든 요청은 길이 100짜리일 수 없으므로 반드시 700짜리이고, 남은 길이는 R(200) = 500입니다. 이처럼 <b>오래 살아남은 요청일수록 남은 길이가 오히려 길 수 있습니다.</b> 길이가 들쭉날쭉한 분포에서 흔한 성질입니다. 그래서 FluidServe는 처리 중인 요청마다 지금 j를 보고 R을 따로 계산합니다.</div>
+<p><b>FluidServe에서는</b> 두 곳에 쓰입니다. (a) 처리 중 요청 r이 앞으로 100 step 안에 끝날 확률 p_r을 계산해 KV 유출 예측에 씁니다(5절). (b) r의 남은 토큰 수 R_r로 r이 앞으로 지켜야 할 토큰 간격 A_r을 계산합니다(6절 판정 2).</p>
+
+<h3 id="m-var">2.5 분산, 표준편차, 그리고 1.65σ</h3>
+<p>기댓값은 평균일 뿐이고, 실제 값은 그 주변에 흩어집니다. 흩어진 정도를 <b>분산</b>(Var)으로 재고, 그 제곱근이 <b>표준편차</b> σ입니다.</p>
+<div class="eq">Var[X] = E[ (X − E[X])² ] = E[X²] − (E[X])²</div>
+<p><b>끝나느냐 아니냐</b>처럼 결과가 둘뿐인 사건이 확률 p로 일어나면, 그 사건이 풀어 줄 KV(크기 kv)의 기댓값은 p × kv이고 분산은 p(1 − p) × kv²입니다. 서로 독립인 사건 여러 개를 더하면 기댓값과 분산이 각각 더해집니다.</p>
+<p><b>1.65σ의 뜻</b>: 독립적인 작은 값 수백 개를 더한 합은 정규분포에 가까워집니다(중심극한정리). 정규분포에서는 "평균 − 1.65σ"보다 작은 값이 나올 확률이 약 5 %입니다. 그래서 "평균 − 1.65σ"는 "95 % 확률로 이보다는 크다"는 하한입니다.</p>
+<p><b>FluidServe에서는</b> 앞으로 100 step 동안 끝나는 요청들이 풀어 줄 KV를 약 95 % 하한으로 계산할 때 씁니다(5절의 outflow). v0.61의 메모리 판정에서는 이 계산이 빠졌습니다(8절).</p>
+
+<h3 id="m-sq">2.6 E[L²], 그리고 KV × 시간의 넓이</h3>
+<p>요청 하나가 끝날 때까지 쥐는 KV를 step마다 더한 양을 생각해 보겠습니다(그림).</p>
+<figure>
+<svg viewBox="0 0 520 210" role="img" aria-label="요청 하나의 KV는 prompt 몫이 L step 동안 일정하고, 출력 몫이 0에서 L까지 한 step에 하나씩 자란다. 두 넓이의 합이 그 요청의 KV 곱하기 시간이다.">
+<g font-family="IBM Plex Sans KR, sans-serif" font-size="12" fill="currentColor" stroke="currentColor">
+<line x1="50" y1="180" x2="480" y2="180" stroke-width="1"/><line x1="50" y1="180" x2="50" y2="15" stroke-width="1"/>
+<text x="440" y="200" stroke="none">step →</text><text x="8" y="22" stroke="none">KV</text>
+<rect x="50" y="120" width="360" height="60" fill="currentColor" fill-opacity="0.08" stroke-width="1"/>
+<path d="M50,120 L410,40 L410,120 Z" fill="currentColor" fill-opacity="0.18" stroke-width="1"/>
+<text x="150" y="156" stroke="none">prompt 몫: raw × L</text>
+<text x="300" y="108" stroke="none">출력 몫: ≈ L²/2</text>
+<line x1="410" y1="180" x2="410" y2="40" stroke-width="1" stroke-dasharray="3 3"/>
+<text x="404" y="198" stroke="none">L</text>
+<text x="418" y="44" stroke="none">raw + L</text>
+<text x="418" y="124" stroke="none">raw</text>
+</g></svg>
+<figcaption>요청 하나의 KV × 시간입니다. 직사각형(prompt)과 삼각형(출력)의 넓이를 더하면 됩니다.</figcaption>
+</figure>
+<p>길이 L은 모르므로 기댓값을 취합니다. 직사각형의 기댓값은 raw × E[L]이고, 삼각형의 기댓값은 E[L²] ÷ 2입니다. 여기서 <b>E[L²]은 (E[L])²과 다릅니다.</b> 2.5절 식을 바꿔 쓰면 E[L²] = (E[L])² + Var[L]이므로, 길이가 들쭉날쭉할수록(분산이 클수록) E[L²]이 커집니다.</p>
+<div class="ex"><span class="lab">예시 (설명용)</span>
+길이 100 또는 700(각 0.5)이면 E[L]² / 2 = 400² / 2 = 80,000입니다. 하지만 실제 삼각형 넓이의 평균은 (100²/2 + 700²/2) / 2 = (5,000 + 245,000) / 2 = 125,000입니다. 긴 요청 하나가 삼각형을 제곱으로 키우기 때문입니다. 실제 8B chat 분포에서는 E[L²]/2 = 138,424이고 (E[L])²/2 = 77,618이라 1.8배 차이가 납니다.</div>
+<p>계산은 이렇게 합니다. E[L²]/2는 "x × S(x)를 모든 x에 대해 더한 값"과 같습니다. 2.3절의 "S 아래 넓이 = E[L]"과 같은 방식으로 셀 수 있습니다. 코드는 <code>computeHalfSecondMoment</code>(<code>fluidserve_price.go</code>)이고, 정확히 이 합을 격자 위에서 계산합니다.</p>
+<p><b>FluidServe에서는</b> 판정 5의 c(요청 하나가 일생 동안 쓰는 KV × 시간)가 바로 이 넓이입니다(9절).</p>
+
+<h3 id="m-mult">2.7 곱셈 갱신과 exp</h3>
+<p>어떤 값을 "조금씩 키우거나 줄이는" 방법은 두 가지입니다.</p>
+<ul>
+<li><b>덧셈 갱신</b>: x ← x + k × (오차). 이 방식은 k라는 상수를 정해야 하고, x의 크기 단위에 따라 알맞은 k가 달라집니다.</li>
+<li><b>곱셈 갱신</b>: x ← x × exp(오차 × Δt ÷ H). 이 방식은 "비율"로 움직입니다.</li>
+</ul>
+<p>곱셈 갱신에 로그를 취하면 ln x ← ln x + 오차 × Δt ÷ H가 됩니다. 즉 "로그 위에서의 덧셈 갱신"입니다. 오차가 +0.1(10 % 초과)인 상태가 시간 H 동안 이어지면 x가 exp(0.1) ≈ 1.105배, 약 10 % 커집니다. "모자란 비율만큼 H 동안 고친다"는 뜻이 되어 따로 정할 이득 상수가 없습니다. 값이 음수로 내려가지도 않습니다.</p>
+<p><b>FluidServe에서는</b> 판정 5의 문턱 변수 λ, μ를 이 방식으로 고칩니다(9절).</p>
+
+<h3 id="m-dual">2.8 제약이 있는 최적화와 쌍대 변수</h3>
+<p>판정 5가 왜 그런 모양인지 이해하는 데 필요한 배경입니다. 가장 쉬운 경우부터 보겠습니다.</p>
+<h4>자원 하나, 요청 수를 최대로</h4>
+<p>용량이 100인 가방에 물건을 넣는다고 하겠습니다. 물건마다 크기가 다르고, <b>목표는 넣은 물건의 개수</b>입니다. 이때 가장 좋은 방법은 <b>작은 것부터 넣는 것</b>입니다. 큰 물건 하나를 빼면 그 자리에 작은 물건을 여러 개 넣을 수 있기 때문입니다.</p>
+<p>이 규칙은 "크기가 어떤 문턱 T 이하인 물건만 넣는다"로 바꿔 말할 수 있습니다. T는 가방이 꽉 차도록 정해집니다.</p>
+<ul>
+<li>가방이 넉넉하면 T = ∞, 즉 모두 넣습니다.</li>
+<li>가방이 모자라면 T가 내려갑니다.</li>
+</ul>
+<p>1/T를 λ라고 쓰면 규칙은 "<b>λ × 크기 ≤ 1이면 넣는다</b>"가 됩니다.</p>
+<h4>시간에 따라 계속 들어오는 경우</h4>
+<p>요청은 계속 도착하고 계속 끝나므로 T를 한 번에 정할 수 없습니다. 대신 "지금 모자라는가"를 보고 T를 계속 고칩니다.</p>
+<ul>
+<li>모자라면, 즉 받지 못한 수요가 있으면 λ를 올려 큰 요청부터 막습니다.</li>
+<li>남으면 λ를 내립니다.</li>
+<li>전혀 모자라지 않으면 λ = 0이 되어 아무도 막지 않습니다.</li>
+</ul>
+<p>최적화 이론에서는 λ를 그 제약의 <b>쌍대 변수(dual variable)</b> 또는 Lagrange 승수라고 부릅니다. "모자라면 올리고 남으면 내린다"는 갱신을 dual decomposition이라고 하며, 네트워크 혼잡 제어(Kelly 1998, Low–Lapsley 1999)에서 쓰는 방식입니다. 그리고 "제약이 꽉 차지 않으면 쌍대 변수는 0"이라는 성질을 complementary slackness라고 부릅니다. 이 페이지에서는 λ, μ를 <b>문턱 변수</b>라고 부릅니다.</p>
+<h4>자원이 둘이면</h4>
+<p>요청 하나가 KV도 쓰고 GPU 시간도 쓰면 크기가 둘(c, a)입니다. 이때는 자원마다 문턱 변수를 하나씩 두고 둘을 더한 "<b>λ × c + μ × a ≤ 1</b>"로 판정합니다. 모자라는 자원의 문턱 변수만 0보다 커지므로, 그 자원을 많이 쓰는 요청이 먼저 막힙니다. 두 자원 모두 넉넉하면 둘 다 0입니다.</p>
+<p class="note"><b>주의</b>: "작은 것부터"가 최선인 것은 <b>목표가 요청 개수일 때</b>입니다. 목표가 토큰 수라면 "토큰 하나당 자원을 적게 쓰는 것부터"가 최선입니다. 이 선택은 수학이 아니라 우리가 정한 목표에서 나옵니다(17절).</p>
+
+<h3 id="m-little">2.9 Little의 법칙</h3>
+<p>여기서는 기호가 겹치지 않도록 판정 5의 λ와 다른 글자를 씁니다.</p>
+<div class="eq">N = X × W
+N: 시스템 안에 평균적으로 있는 개수      X: 처리되는 속도(개 / 초)      W: 하나가 머무는 평균 시간</div>
+<div class="ex"><span class="lab">예시 (설명용)</span>
+카페에 손님이 1분에 2명씩 들어오고, 한 사람이 평균 10분 머문다고 하겠습니다. 이 상태가 오래 이어지면 카페 안에는 평균 2 × 10 = 20명이 있습니다. 문을 연 지 2분밖에 안 됐다면 아직 4명뿐이므로 성립하지 않습니다. <b>관찰 시간이 머무는 시간보다 충분히 길어야 한다</b>는 것이 조건입니다.</div>
+<p><b>왜 성립하는가</b>: "시간 × 사람"의 넓이를 두 가지 방법으로 셉니다. 가로(시간)로 세면 "각 순간의 인원 수를 시간에 대해 더한 것 = N × 관찰 시간"입니다. 세로(사람)로 세면 "각 사람이 머문 시간을 사람에 대해 더한 것 = (들어온 사람 수) × W = X × 관찰 시간 × W"입니다. 같은 넓이이므로 N = X × W입니다. 관찰을 시작하거나 끝낼 때 걸쳐 있던 사람 몫만 오차가 되고, 관찰 시간이 길면 그 몫은 무시할 수 있습니다.</p>
+<p><b>일반형 H = λG</b>(Brumelle 1971, Stidham 1974; 여기서 λ는 도착률이고 판정 5의 λ와 다릅니다)는 "사람 수" 대신 "각자 쥔 양"을 셉니다. 각 손님이 머무는 동안 쥐는 양(예: KV)을 시간에 대해 더한 것을 G라고 하면, 시스템 전체가 평균적으로 쥔 양 = 처리 속도 × G입니다.</p>
+<p><b>FluidServe에서는</b> 이렇게 됩니다.</p>
+<div class="eq">함대가 평균적으로 쥔 KV ÷ step 시간 = 처리하는 요청 속도 × 요청 하나의 평균 c</div>
+<p>8B 표준 budget run에서 이 식이 0.1 % 안에서 맞았습니다. 이 식을 처리 속도에 대해 풀면 "<b>처리 속도 = 쥘 수 있는 KV ÷ 요청 하나의 평균 사용량</b>"입니다. 용량이 정해져 있을 때 요청 수를 늘리는 방법은 받은 요청들의 평균 사용량을 줄이는 것뿐이고, 그것이 판정 5가 하는 일입니다(15절).</p>
+</section>
+
+<section id="symbols">
+<h2>3. 기호표</h2>
+<p>모든 값은 <b>인스턴스 하나마다</b> 따로 계산합니다. 코드에서 인스턴스 하나의 값을 모아 둔 구조체는 <code>instanceFlux</code>이고, 아래 "코드 이름"은 그 필드나 함수입니다.</p>
+<div class="tbl"><table>
+<tr><th>기호</th><th>뜻</th><th>코드 이름 / 어디서 오나</th></tr>
+<tr><td class="m">q</td><td>지금 판정하는 새 요청</td><td><code>req</code></td></tr>
+<tr><td class="m">r</td><td>그 인스턴스에서 이미 처리 중인 요청 하나</td><td><code>f.live[i]</code>, scheduler 장부(완료 통지로 유지)</td></tr>
+<tr><td class="m">n</td><td>그 인스턴스에서 decode 중인 요청 수</td><td><code>f.nDecode</code>, 엔진 보고</td></tr>
+<tr><td class="m">P_q</td><td>q의 prompt 토큰 수</td><td><code>req.promptTokens</code></td></tr>
+<tr><td class="m">hit</td><td>그 인스턴스에 이미 저장된 q의 prefix 토큰 수</td><td>scheduler의 prefix 색인</td></tr>
+<tr><td class="m">raw = P_q − hit</td><td>q를 그 인스턴스에 넣으면 새로 계산하고 저장할 prompt 토큰 수</td><td><code>c.prefillRaw</code></td></tr>
+<tr><td class="m">L, S(x)</td><td>출력 길이(미리 모름), 그 클래스의 생존함수(2.3절)</td><td>프로파일</td></tr>
+<tr><td class="m">E[L], E[L²]</td><td>출력 길이의 기댓값과 제곱의 기댓값(2.2·2.6절)</td><td><code>req.expectedToks</code>, <code>halfSecondMoment()</code></td></tr>
+<tr><td class="m">j_r</td><td>r이 지금까지 만든 출력 토큰 수</td><td><code>live.j</code></td></tr>
+<tr><td class="m">kv_r</td><td>r이 쥔 KV = r의 prompt + j_r</td><td><code>live.kvTokens</code></td></tr>
+<tr><td class="m">R_r</td><td>r의 남은 출력 길이 기댓값(residual life, 2.4절)</td><td><code>live.remaining</code></td></tr>
+<tr><td class="m">B_q, B_r</td><td>토큰당 budget(ms)</td><td><code>nominalMs</code></td></tr>
+<tr><td class="m">B_min</td><td>그 인스턴스에서 처리 중인 요청들의 토큰당 budget 가운데 가장 작은 값. 어떻게 해도 구할 수 없는 요청(6절)은 빼고, 처리 중 요청이 없으면 ∞</td><td><code>f.gateAllowance</code></td></tr>
+<tr><td class="m">h</td><td>계획 구간, 100 step</td><td><code>horizonSteps</code></td></tr>
+<tr><td class="m">c0, c_n, c_kv</td><td>decode step 시간 식의 계수입니다. decode만 하는 step의 시간 = c0 + c_n × (요청 수) + c_kv × (쥔 KV 토큰). 8B는 c0 4.29 ms, c_n 0.031 ms, c_kv 6.775×10⁻⁶ ms이고, 70B는 c0 16.4 ms입니다</td><td>프로파일, <code>capacityModel</code></td></tr>
+<tr><td class="m">chunk</td><td>엔진이 step 하나에 계산하는 prefill 토큰의 최대 수(vLLM의 <code>max_num_batched_tokens</code>). 이 배포에서는 8,192입니다</td><td><code>f.chunk</code></td></tr>
+<tr><td class="m">t_pre(x)</td><td>prefill 토큰 x개를 실은 step의 시간. 8B는 1,024 토큰에 15.9 ms, 8,192 토큰에 117 ms입니다</td><td><code>prefillStepMs()</code></td></tr>
+<tr><td class="m">prefillSteps(x)</td><td>prefill x 토큰을 처리하는 데 드는 step 수입니다. x ≤ chunk이면 1이고, 그보다 크면 x ÷ chunk(소수 그대로)입니다</td><td><code>prefillSteps()</code></td></tr>
+<tr><td class="m">corr</td><td>인스턴스별 보정 계수(실제로 잰 step 시간 ÷ 모델이 예측한 step 시간). 모델이 덜 맞는 인스턴스를 바로잡습니다</td><td><code>corrLocked(id)</code></td></tr>
+<tr><td class="m">pool</td><td>엔진의 물리 KV 용량(토큰). 8B 엔진 하나가 1,037,648입니다</td><td><code>f.kvCapacity</code>, 엔진 보고</td></tr>
+<tr><td class="m">kvPhysical</td><td>엔진이 실제로 쓰는 KV입니다. 여러 요청이 공유하는 prefix 블록은 한 번만 셉니다</td><td><code>f.kvPhysical</code>, 엔진 보고</td></tr>
+<tr><td class="m">kvLogical</td><td>요청마다 계산된 토큰을 그냥 더한 KV입니다. 공유 블록을 중복해서 셉니다. step 시간 모델은 이 값으로 맞춰져 있습니다</td><td><code>f.kvLogical</code></td></tr>
+<tr><td class="m">pendingPrefill</td><td>받았지만 아직 계산되지 않은 prompt 토큰입니다. 엔진 대기열에 있는 것, prefill 중인 것, 보냈지만 아직 엔진 보고에 나타나지 않은 것을 더합니다</td><td><code>f.pendingPrefill</code></td></tr>
+<tr><td class="m">effectivePrefill</td><td>앞으로 h step 동안 처리할 prefill의 추정치 = max(pendingPrefill, 최근 잰 prefill 비중으로 계산한 h 동안 들어올 prefill)</td><td><code>f.effectivePrefill</code></td></tr>
+<tr><td class="m">meanStep</td><td>q를 넣지 않은 지금 상태로 예측한, 앞으로 h step의 평균 step 시간(corr 포함)</td><td><code>f.meanStep</code></td></tr>
+<tr><td class="m">floor</td><td>빈 인스턴스의 step 시간 = corr × c0. 어떤 batch도 이보다 빠를 수 없습니다</td><td><code>floorStepMs()</code></td></tr>
+</table></div>
+</section>
+
+<section id="path">
+<h2>4. 요청 하나가 거치는 경로</h2>
+<p>두 개의 시계가 따로 돕니다.</p>
+<ul>
+<li><b>요청 시계</b>: 요청이 도착하거나 gateway가 다시 물을 때마다, 인스턴스별로 판정 다섯 개를 합니다.</li>
+<li><b>엔진 상태 시계</b>: 엔진 상태가 새로 올 때마다(약 500 ms), 판정 5에 쓰이는 문턱 변수를 고칩니다.</li>
+</ul>
+<figure>
+<svg class="wide" viewBox="0 0 760 360" role="img" aria-label="요청이 도착하면 인스턴스마다 판정 1에서 5까지를 거쳐 가능한 인스턴스를 고르고, 없으면 pend하거나 거절하며, 막힌 요청은 받지 못한 수요로 기록되어 500 ms마다 문턱 변수를 갱신한다">
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<g font-family="IBM Plex Sans KR, sans-serif" font-size="12.5" fill="currentColor" stroke="currentColor">
+<rect x="10" y="20" width="110" height="44" fill="none" stroke-width="1.2"/>
+<text x="65" y="47" text-anchor="middle" stroke="none">요청 도착</text>
+<line x1="120" y1="42" x2="158" y2="42" stroke-width="1.2" marker-end="url(#ar)"/>
+<rect x="160" y="8" width="330" height="200" fill="none" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="172" y="26" stroke="none" font-size="12">인스턴스마다 (8B는 8대, 70B는 4대)</text>
+<rect x="175" y="36" width="300" height="26" fill="none" stroke-width="1"/><text x="185" y="54" stroke="none">1·2 토큰 간격: 넣은 뒤 step 시간 ≤ 판정선</text>
+<rect x="175" y="68" width="300" height="26" fill="none" stroke-width="1"/><text x="185" y="86" stroke="none">3 첫 토큰: 기다린 시간 + prefill ≤ TTFT</text>
+<rect x="175" y="100" width="300" height="26" fill="none" stroke-width="1"/><text x="185" y="118" stroke="none">4 메모리: 지금 stock + 새 prompt ≤ pool</text>
+<rect x="175" y="132" width="300" height="26" fill="none" stroke-width="1"/><text x="185" y="150" stroke="none">5 사용량 문턱: λ·c + μ·a ≤ 1</text>
+<text x="185" y="190" stroke="none" font-size="12">다섯 개 모두 통과 → 그 인스턴스는 "가능"</text>
+<line x1="490" y1="110" x2="528" y2="110" stroke-width="1.2" marker-end="url(#ar)"/>
+<rect x="530" y="60" width="220" height="100" fill="none" stroke-width="1.2"/>
+<text x="540" y="82" stroke="none">가능한 곳이 있으면 route</text>
+<text x="540" y="104" stroke="none">(같은 클래스 수 → λ·c+μ·a →</text>
+<text x="540" y="122" stroke="none">KV 여유 순으로 1위)</text>
+<text x="540" y="146" stroke="none">없으면 pend 또는 reject</text>
+<line x1="640" y1="160" x2="640" y2="248" stroke-width="1.2" marker-end="url(#ar)"/>
+<rect x="470" y="250" width="280" height="56" fill="none" stroke-width="1.2"/>
+<text x="480" y="272" stroke="none">route 못 한 요청: 4번 하나로만 막힌 곳 →</text>
+<text x="480" y="292" stroke="none">KV 장부, 1·2번 하나로만 → 시간 장부</text>
+<line x1="470" y1="278" x2="332" y2="278" stroke-width="1.2" marker-end="url(#ar)"/>
+<rect x="60" y="250" width="270" height="74" fill="none" stroke-width="1.2"/>
+<text x="70" y="272" stroke="none">엔진 상태마다(500 ms): 부족도 u, s 계산</text>
+<text x="70" y="292" stroke="none">→ 문턱 변수 λ, μ 갱신, 장부 비움</text>
+<text x="70" y="312" stroke="none">→ 다음 판정 5에 쓰임</text>
+<line x1="195" y1="250" x2="195" y2="212" stroke-width="1.2" marker-end="url(#ar)"/>
+</g></svg>
+<figcaption>판정 1·2·3은 v0.6과 같습니다. 판정 4는 v0.61에서 식이 바뀌었고, 판정 5와 아래쪽 되먹임 경로(받지 못한 수요 → 문턱 변수)는 v0.61에서 새로 생겼습니다. 폭이 좁은 화면에서는 그림을 옆으로 밀어 보실 수 있습니다.</figcaption>
+</figure>
+</section>
+
+<section id="prep">
+<h2>5. 판정 전에 계산하는 값 (v0.6부터 그대로)</h2>
+<p>엔진 상태가 오면 <code>buildFlux</code>(<code>fluidserve.go</code> 1202행 부근)가 인스턴스마다 지금 상태를 정리합니다. 요청이 오면 <code>evaluate</code>(2194행 부근)가 "q를 이 인스턴스에 넣으면 어떻게 되나"를 계산합니다. 판정에 쓰는 값은 두 가지입니다.</p>
+
+<h4>(a) 100 step 뒤의 KV 예측 proj</h4>
+<div class="eq">proj     = kvLogical + n × h − outflow
+outflow  = Σ_r p_r × kv_r − 1.65 × √( Σ_r p_r (1 − p_r) kv_r² )
+p_r      = ( S(j_r) − S(j_r + h) ) ÷ S(j_r)</div>
+<dl class="vars">
+<dt>n × h</dt><dd>decode 중인 요청 n개가 h step 동안 한 step에 한 토큰씩 자라는 양입니다.</dd>
+<dt>p_r</dt><dd>r이 앞으로 h step 안에 끝날 확률입니다(2.4절의 조건부 확률).</dd>
+<dt>outflow</dt><dd>h step 안에 끝날 요청들이 풀어 줄 KV입니다. 기댓값에서 표준편차의 1.65배를 뺀, 약 95 % 하한입니다(2.5절). 코드는 <code>expectedOutflow</code>(1487행)입니다.</dd>
+</dl>
+<p><b>뜻</b>: 지금 처리 중인 요청들이 100 step 뒤에 쥐고 있을 KV입니다. v0.61에서는 판정 4의 첫 부분이 이 값을 쓰지 않습니다. 다만 판정 1·2의 step 시간 계산과 판정 4의 둘째 부분(capKv 비교)에는 아직 남아 있습니다.</p>
+
+<h4>(b) 넣은 뒤의 평균 step 시간 meanAfter</h4>
+<div class="eq">meanAfter = corr × [ (h − s_p) × t_dec + s_p × ( t_pre + t_dec − c0 ) ] ÷ h
+t_dec     = c0 + c_n × (n + 1) + c_kv × ( proj + P_q + min(h, E[L]) )
+s_p       = prefillSteps( effectivePrefill + q의 prompt ),  단 h를 넘지 않음</div>
+<dl class="vars">
+<dt>t_dec</dt><dd>q를 넣은 뒤 decode만 하는 step의 시간입니다. 요청 수는 n + 1개이고, KV는 proj에 q가 쥘 양(prompt + 앞으로 h step 안에 만들 출력, 최대 E[L])을 더한 값입니다.</dd>
+<dt>s_p</dt><dd>앞으로 h step 가운데 prefill chunk가 섞이는 step 수입니다.</dd>
+<dt>t_pre + t_dec − c0</dt><dd>prefill과 decode가 함께 실린 step의 시간입니다. c0을 한 번 빼는 것은 고정 비용을 두 번 세지 않기 위해서입니다.</dd>
+</dl>
+<p><b>뜻</b>: 앞으로 h step 가운데 s_p개는 prefill이 섞여 길어지고, 나머지는 decode만 합니다. 그 평균입니다.</p>
+<p class="note"><b>핵심 사실</b>: 엔진은 step 하나마다 처리 중인 모든 요청에서 토큰을 하나씩 만듭니다. 그래서 <b>step 시간이 곧 그 인스턴스에 있는 모든 요청의 토큰 간격</b>입니다. 토큰 간격 판정이 이 값 하나를 budget과 비교하는 이유입니다.</p>
+<div class="ex"><span class="lab">예시 (8B, 설명용 상태)</span>
+decode 중인 요청 n = 300개, proj + q의 청구 = 100만 토큰, 앞으로 100 step 가운데 prefill이 섞이는 step s_p = 2개(chunk 8,192 토큰, t_pre 117 ms), corr = 1이라고 하겠습니다.
+<div class="eq">t_dec     = 4.29 + 0.031 × 301 + 0.000006775 × 1,000,000 = 4.29 + 9.33 + 6.78 ≈ 20.4 ms
+meanAfter = [ 98 × 20.4 + 2 × (117 + 20.4 − 4.29) ] ÷ 100 ≈ (1,999 + 266) ÷ 100 ≈ 22.7 ms</div>
+표준 budget(chat 50 ms)과 비교하면 여유가 큽니다. 그런데 이 정도 KV(엔진 하나의 pool이 약 104만)는 이미 메모리의 한계에 가깝습니다. 그래서 <b>8B 표준 budget에서는 시간보다 KV가 먼저 한계에 닿습니다.</b> 반대로 절반 budget(chat 25 ms)에서는 22.7 ms가 판정선에 거의 닿으므로 <b>시간이 먼저 한계</b>가 됩니다. 14절의 두 결과가 다르게 나오는 이유가 여기에 있습니다.</div>
+<p class="note"><b>h가 하는 일</b>: 여기서 h는 prefill 간섭을 몇 step에 나눠 평균 낼지를 정합니다(s_p ÷ h). h가 크면 긴 prompt 하나의 영향이 작게 잡힙니다. 70B에서 h를 25·50으로 줄이면 h = 100일 때보다 모든 도착이 5.7~6.6점 올랐습니다(EXP-148~152, h를 바꿔 본 실험). 즉 h는 "예측이 얼마나 불확실한가"만이 아니라 "prefill 간섭을 얼마나 너그럽게 보는가"도 함께 정하고 있습니다.</p>
+</section>
+
+<section id="j1">
+<h2>6. 판정 1·2: 토큰 간격 (v0.6과 같음)</h2>
+<h3>판정 1. 토큰 간격 판정 (gate)</h3>
+<p><b>묻는 것</b>: q를 넣은 뒤의 토큰 간격이 q 자신의 budget과, 이 인스턴스에서 가장 빡빡한 요청의 budget을 모두 지키는가?</p>
+<div class="eq">meanAfter ≤ 1.0 × min( B_q , B_min )</div>
+<p><b>왜 필요한가</b>: step 시간은 모든 요청에게 공통입니다. 50 ms짜리 chat이 하나라도 있는 인스턴스는 step을 50 ms 안에 맞춰야 합니다. 그래서 새로 오는 요청이 deepresearch(100 ms)라도 그 인스턴스에서는 50 ms 기준으로 판정합니다.</p>
+<p><b>1.0의 뜻</b>: v0.5까지는 budget의 0.9배를 판정선으로 썼고, v0.6에서 1.0배가 됐습니다(EXP-158~161, 판정선 비율을 바꿔 본 실험). 코드에서는 <code>gateUtil()</code>입니다.</p>
+<p><b>부수 효과</b>: 빡빡한 요청이 있는 인스턴스는 느슨한 요청을 덜 받게 됩니다. 그 결과 클래스가 저절로 서로 다른 인스턴스로 나뉩니다. 70B에서 이렇게 나뉜 몫의 약 86 %가 이 판정에서 생겼습니다.</p>
+
+<h3>판정 2. 처리 중 요청 보호</h3>
+<p><b>묻는 것</b>: 판정 1은 명목 budget만 봅니다. 이미 늦어진 요청이 있으면, 그 요청이 앞으로 지켜야 할 더 빡빡한 간격도 지키는가?</p>
+<div class="eq">meanAfter ≤ min_r A_r
+A_r = ( B_r × (j_r + R_r) − (지금 − r의 decode 시작 시각) ) ÷ R_r</div>
+<dl class="vars">
+<dt>B_r × (j_r + R_r)</dt><dd>r이 끝날 때까지 쓸 수 있는 전체 시간입니다(토큰 수 × 토큰당 budget). 길이를 모르므로 "이미 만든 수 + 남은 기대 수"를 씁니다.</dd>
+<dt>지금 − decode 시작</dt><dd>이미 쓴 시간입니다.</dd>
+<dt>A_r</dt><dd>남은 시간 ÷ 남은 토큰 수, 즉 r이 앞으로 토큰 하나마다 쓸 수 있는 평균 시간입니다. 지금까지 늦었으면 A_r &lt; B_r이 되고, 빨랐으면 A_r &gt; B_r이 됩니다. 아직 prefill 중인 요청은 A_r = B_r입니다.</dd>
+</dl>
+<div class="ex"><span class="lab">예시 (설명용)</span>
+chat 요청 r(B_r = 50 ms)이 6.0 초 동안 100 토큰을 만들었다고 하겠습니다(지금까지 토큰당 60 ms라 늦은 상태입니다). 남은 기대 길이가 R_r = 300이면
+<div class="eq">A_r = ( 50 × (100 + 300) − 6,000 ) ÷ 300 = 14,000 ÷ 300 ≈ 46.7 ms</div>
+이 인스턴스는 앞으로 step을 46.7 ms 안에 맞춰야 합니다. 판정 1의 50 ms보다 빡빡합니다.</div>
+<p><b>계산에서 빼는 요청 두 종류</b>(<code>buildFlux</code> 1314~1349행):</p>
+<ol>
+<li>A_r &lt; floor(빈 인스턴스의 step 시간, corr × c0)인 요청입니다. 어떤 batch로도 구할 수 없으므로 판정 1의 B_min과 판정 2에서 모두 뺍니다. 이런 요청 하나 때문에 인스턴스 전체가 새 요청을 못 받게 되는 것을 막기 위해서입니다.</li>
+<li>A_r &lt; meanStep(지금 이미 내고 있는 step 시간)인 요청입니다. 새 요청을 거절해도 이 요청은 구할 수 없으므로 판정 2에서만 뺍니다.</li>
+</ol>
+<p>residual life R_r(2.4절)이 이 판정에 쓰입니다.</p>
+</section>
+
+<section id="j3">
+<h2>7. 판정 3: 첫 토큰 마감 (v0.6에서 들어옴, v0.61도 같음)</h2>
+<p><b>묻는 것</b>: q를 이 인스턴스에 보내면 첫 토큰이 TTFT budget 안에 나오는가?</p>
+<div class="eq">기다린 시간 + prefillMs ≤ TTFT budget
+prefillMs = q 자신의 prefill 시간 + 앞에 쌓인 prefill을 처리하는 시간
+  자신의 몫 = prefillSteps(raw) × t_pre( min(P_q, chunk) )
+  쌓인 몫   = prefillSteps(effectivePrefill) × t_pre( min(effectivePrefill, chunk) ),
+             그 사이 끼어드는 decode step 시간까지 넣어 늘림 (FS_PREFILL_INTERLEAVE)</div>
+<p><b>왜 필요한가</b>: 판정 1·2는 토큰 간격만 봅니다. 토큰 간격이 괜찮아도 prefill 대기열이 길면 첫 토큰이 늦게 나옵니다. 이 판정이 없던 때는 prefill 대기열이 8만 토큰 쌓인 인스턴스로 deepresearch가 보내져 첫 토큰까지 12.6~13.2 초가 걸린 적이 있습니다(budget 10 초).</p>
+<p><b>알려진 성질</b>: v0.6 기록에 따르면 이 추정은 실제보다 1.3~1.5 초 비관적입니다(swe 기준). 코드는 <code>missesTtftDeadline</code>(2583행)이고, v0.6 이후 이 판정에는 배치 지연 여유를 더하지 않습니다(<code>deadlinedelay=false</code>).</p>
+<div class="ex"><span class="lab">예시 (설명용)</span>
+chat(TTFT 5 s)이 1.2 초 기다렸고, 이 인스턴스의 prefillMs가 0.3 초이면 1.5 ≤ 5이므로 통과합니다.</div>
+</section>
+
+<section id="j4">
+<h2>8. 판정 4: 메모리 (v0.61에서 바뀜)</h2>
+<p><b>묻는 것</b>: q를 받으면 엔진의 KV가 넘쳐 preemption(이미 처리 중인 요청을 밀어내고 나중에 다시 계산하는 것)이 일어나는가?</p>
+<h3>v0.6</h3>
+<div class="eq">proj + P_q + min(h, E[L])  ≤  min( capKv , capMem )
+capMem = 0.95 × pool ÷ (kvPhysical ÷ kvLogical)
+capKv  = 판정 1을 지킬 수 있는 최대 논리 KV</div>
+<dl class="vars">
+<dt>capMem</dt><dd>물리 pool을 논리 단위로 바꾼 것입니다. prefix 공유 때문에 논리 KV가 물리 KV보다 크므로 그 비율로 나눕니다. 0.95는 여유분입니다.</dd>
+<dt>capKv</dt><dd>step 시간 식을 "KV가 얼마일 때 meanAfter = B_min인가"로 거꾸로 푼 값입니다(<code>maxKvForAllowance</code>). KV가 이보다 많으면 step이 판정선보다 길어집니다.</dd>
+</dl>
+<p><b>문제</b>: proj는 앞으로 100 step(8B에서 약 4 초) 동안 빠질 KV를 미리 뺍니다. 그런데 그 4 초 안에 같은 인스턴스로 오는 결정 수십 건이 <b>아직 일어나지 않은 같은 유출을 각자 또 뺍니다.</b> 새 prompt는 받자마자 KV를 차지하지만, 유출은 4 초에 걸쳐 일어납니다.</p>
+<p>그래서 인스턴스가 "한계 + 미리 뺀 유출"에서 머뭅니다. 미리 뺀 유출은 지금 KV의 중앙값 6~8 %였습니다(EXP-177 오프라인 분석, 8B v0.6 run의 367개 순간). 8B 표준 budget에서 run마다 preemption이 약 5만 회 일어난 원인이 이것입니다.</p>
+<h3>v0.61</h3>
+<div class="eq">(첫 부분)  kvPhysical + pendingPrefill + raw  ≤  pool
+(둘째 부분) proj + P_q + min(h, E[L])  ≤  capKv          ← v0.6에서 그대로 남음</div>
+<dl class="vars">
+<dt>kvPhysical</dt><dd>엔진이 지금 실제로 쥔 KV입니다. 끝난 요청이 풀어 준 만큼은 엔진 보고에 이미 반영돼 있습니다.</dd>
+<dt>pendingPrefill</dt><dd>이미 받았지만 아직 계산되지 않은 prompt입니다. 곧 KV를 차지하므로 지금 쥔 것으로 셉니다.</dd>
+<dt>raw</dt><dd>q의 prompt에서 prefix hit를 뺀 것입니다. 이 인스턴스에서 새로 차지할 양입니다.</dd>
+</dl>
+<p><b>왜 이렇게 생겼나</b>: 아직 일어나지 않은 유출도, 아직 오지 않은 도착도 미리 세지 않습니다. 앞으로 오는 요청은 도착할 때 각자 이 판정을 받기 때문입니다. 물리 단위로 쓰므로 공유 비율 환산과 0.95 여유가 필요 없습니다. 엔진이 블록이 모자라 preemption을 일으키는 조건도 정확히 "이 합이 pool을 넘을 때"입니다.</p>
+<p>결과적으로 첫 부분에서는 h, z = 1.65, 0.95가 빠졌습니다. 코드는 <code>evaluate</code> 2392~2398행의 <code>memStock</code>입니다.</p>
+<div class="ex"><span class="lab">예시 (8B, 설명용)</span>
+pool = 1,037,648이고, 지금 쥔 KV가 100만, 대기 prefill이 2만이라고 하겠습니다. 이때 chat(raw 500)은 1,020,500 ≤ 1,037,648이므로 통과합니다. 대기 prefill이 3.5만이었다면 1,035,500으로 역시 통과하지만, 그 상태에서 deepresearch(raw 3,300)는 1,038,300으로 넘치므로 막힙니다.</div>
+<p class="note"><b>데이터로 확인한 것</b>: 처리 중인 요청 수백 개의 기대 KV를 생존함수로 앞으로 그려 보면, 실제 run의 1,100개 순간 가운데 1,099개에서 지금이 가장 높았습니다. 끝나 가는 요청이 풀어 주는 양이 막 들어온 요청이 자라는 양보다 크기 때문입니다. 그래서 "끝까지 내다본 최대치"를 계산해도 결정은 이 지금 상태 판정과 같습니다. 이는 논문 알고리즘 1이 말한 최대치 판정을 정상 상태에서 구현한 형태이기도 합니다.</p>
+</section>
+
+<section id="j5">
+<h2>9. 판정 5: 사용량 문턱 (v0.61에서 새로 생김)</h2>
+<p>판정 1~4는 <b>얼마나</b> 받을지를 지킵니다. 한계에 닿아 있을 때 도착한 요청은 누구든 똑같이 막습니다. 판정 5는 한계에 가까울 때 <b>누구를</b> 받을지를 정합니다. 2.8절의 "작은 것부터 넣기"를 시간에 따라 계속 하는 장치입니다.</p>
+<div class="eq">λ_i × c_q  +  μ_i × a_q  ≤  1          (λ_i = μ_i = 0이면 항상 통과)</div>
+<p>요청 q가 일생 동안 쓸 자원(KV × 시간 c, GPU 시간 a)을 인스턴스 i의 지금 문턱 변수(λ_i, μ_i)와 곱해서 더한 값이 1을 넘으면, 그 인스턴스에서는 받지 않습니다. 코드는 <code>priceCandidate</code>(<code>fluidserve_price.go</code> 399행)입니다. 코드 이름에 남은 <code>price</code>는 실험 초기의 이름이고, 하는 일은 이 문턱 판정입니다.</p>
+
+<h3>9.1 요청 하나가 쓰는 KV × 시간: c</h3>
+<div class="eq">c_q = raw × E[L] + E[L²] ÷ 2           (단위: KV 토큰 × step)</div>
+<p>2.6절 그림의 넓이입니다. raw개의 prompt는 E[L] step 동안 그대로 있고(직사각형), 출력은 0개에서 L개까지 한 step에 하나씩 자랍니다(삼각형). 코드는 <code>lifetimeKvCost</code>(291행)입니다.</p>
+<div class="ex"><span class="lab">예시 (8B, 설명용)</span>
+chat(raw 500, E[L] 약 394, E[L²]/2 = 138,424): c ≈ 500 × 394 + 138,424 ≈ 34만입니다.<br>
+deepresearch(raw 3,300, E[L] 약 1,100): c ≈ 363만 + E[L²]/2 ≈ 430만입니다.<br>
+deepresearch는 chat보다 KV × 시간을 약 12배 씁니다. KV가 모자랄 때 먼저 막히는 이유입니다.</div>
+
+<h3>9.2 요청 하나가 쓰는 GPU 시간: a</h3>
+<p>5절의 step 시간 식은 "c0 + c_n × (요청 수) + c_kv × (KV) + prefill"이었습니다. q 하나가 일생 동안 모든 step에 더하는 몫을 모두 더한 것이 a입니다. 코드는 <code>paceUse</code>(167행)입니다.</p>
+<div class="eq">a_q = prefillSteps(raw) × ( t_pre( min(raw, chunk) ) − c0 )        ← ① prefill 작업
+    + corr × ( c_n × E[L] + c_kv × c_q )                             ← ② decode
+    + corr × c0 × E[L] × ( 1 − B_q ÷ B_min )   (B_q &lt; B_min일 때만)  ← ③ 조이는 비용
+(단위: ms)</div>
+<ol>
+<li><b>prefill 작업</b>: q의 prompt를 계산하는 step들에서, 고정 비용 c0을 뺀 순수 prefill 시간입니다. 이전 판에서는 step 수를 올림(⌈raw ÷ chunk⌉)으로 적었는데, 코드는 "raw ≤ chunk이면 1, 크면 raw ÷ chunk(소수 그대로)"입니다. 이번에 바로잡았습니다.</li>
+<li><b>decode</b>:
+<ul>
+<li>c_n × E[L]: q는 E[L] step 동안 batch에 있고, step마다 요청 하나만큼의 시간(c_n)을 더합니다.</li>
+<li>c_kv × c_q: step마다 그 순간 쥔 KV에 비례하는 시간을 더합니다. 그 합이 정확히 c_kv × (KV × step의 넓이) = c_kv × c_q입니다. KV를 쥐는 것이 곧 GPU 시간을 쓰는 것이기도 하다는 뜻입니다.</li>
+</ul></li>
+<li><b>조이는 비용</b>: q의 budget이 그 인스턴스의 가장 빡빡한 budget보다 작으면, 그 뒤로는 모든 step이 q의 budget 안에 들어야 합니다. step을 짧게 끊으면 고정 비용 c0을 더 자주 내게 되어, 요청 작업에 쓸 수 있는 시간이 (1 − B_q ÷ B_min)만큼 줄어듭니다. 그 손실을 q에게 매깁니다. 예를 들어 deepresearch(100 ms)만 있는 인스턴스에 chat(50 ms)이 들어가면 (1 − 50/100) = 0.5이므로, E[L] step 동안 c0의 절반씩을 더 쓰는 것으로 셉니다. 같은 budget의 요청끼리 모으는 효과(affinity)를 따로 규칙으로 두지 않고 비용으로 바꾼 항입니다.</li>
+</ol>
+<p>오프라인 추정(8B 표준 trace)으로 a는 chat 약 24 ms, swe 55 ms, deepresearch 118 ms입니다. 순서는 c와 같지만 비율은 더 완만합니다. deepresearch는 c로는 chat의 11.4배이고 a로는 4.9배입니다.</p>
+
+<h3>9.3 문턱 변수 λ, μ는 어떻게 움직이나</h3>
+<p>엔진 상태가 새로 올 때마다(약 500 ms) 인스턴스마다 <b>부족도</b>를 재고, 그것으로 문턱 변수를 고칩니다. 코드는 <code>updateKvPrice</code>(323행)와 <code>nextKvPrice</code>(228행)입니다.</p>
+<h4>부족도: 지금 수요가 공급의 몇 배인가</h4>
+<div class="eq">KV 쪽:   u_i = ( kvPhysical + pendingPrefill + Σ unmetKV_i ) ÷ pool
+시간 쪽:  s_i = ( meanStep − corr × c0 + Σ unmetTime_i ) ÷ ( B_min − corr × c0 )</div>
+<dl class="vars">
+<dt>u의 분자</dt><dd>지금 쥔 KV + 곧 쥘 KV + 이 인스턴스가 받고 싶었지만 못 받은 KV입니다.</dd>
+<dt>s의 분자</dt><dd>지금 step 시간에서 고정 비용을 뺀 "요청들이 쓰는 몫"에, 못 받은 요청들이 step마다 썼을 몫을 더한 것입니다.</dd>
+<dt>s의 분모</dt><dd>판정선(B_min)까지 요청들이 쓸 수 있는 몫입니다. 처리 중 요청이 없으면(B_min = ∞) s = 0입니다.</dd>
+<dt>unmetKV_i</dt><dd>직전 엔진 상태 이후, 인스턴스 i에서 <b>판정 4의 첫 부분 하나 때문에만</b> 불가였고 결국 어느 인스턴스로도 route되지 못한 요청들의 raw입니다. 다른 판정에도 함께 걸린 경우는 세지 않습니다. 같은 요청이 500 ms 안에 여러 번 다시 물어도 한 번만 셉니다(요청 id로 기록).</dd>
+<dt>unmetTime_i</dt><dd>같은 방식으로 <b>판정 1·2 하나 때문에만</b> 막힌 요청들의 a ÷ E[L](step 하나당 사용량)입니다.</dd>
+</dl>
+<p>u나 s가 1보다 크면 수요가 공급을 넘는다는 뜻입니다. 기록은 <code>selectInstance</code>(1656행 부근)에서 route할 곳이 없다고 결정한 직후, pend 또는 reject 직전에 합니다.</p>
+<h4>문턱 변수 갱신</h4>
+<div class="eq">λ = 0이고 u ≤ 1이면       → λ = 0 (문턱 없음)
+λ = 0이고 u > 1이면       → λ = 1 ÷ (처리 중 요청 가운데 남은 c의 최댓값)   ← 처음값
+그 뒤                      → λ ← λ × exp( (u − 1) × Δt ÷ H )
+λ가 처음값보다 작아지면   → λ = 0
+μ도 s로 같은 규칙을 따릅니다.</div>
+<dl class="vars">
+<dt>남은 c</dt><dd>처리 중 요청 r이 앞으로 쓸 KV × 시간 = kv_r × R_r + R_r² ÷ 2입니다(<code>residentEntryCost</code>). 시간 쪽 처음값은 남은 GPU 시간 corr × (c_n × R_r + c_kv × (kv_r × R_r + R_r²/2))의 최댓값입니다(<code>residentPaceEntry</code>).</dd>
+<dt>처음값의 뜻</dt><dd>1/λ가 "받아 주는 c의 상한"이므로, 처음에는 "지금 처리 중인 어떤 요청보다도 큰 요청만 막는다"에서 시작합니다. 처리 중 요청이 없으면 기준을 만들 수 없으므로 λ를 그대로 둡니다.</dd>
+<dt>Δt</dt><dd>직전 엔진 상태 이후 지난 시간입니다. H보다 길면 H로 자릅니다.</dd>
+<dt>H</dt><dd>h × step 시간입니다(약 100 step, 8B에서 약 4 초). 2.7절의 곱셈 갱신이라서 u = 1.1이 H 동안 이어지면 λ가 약 10 % 커지고, 문턱(1/λ)은 약 10 % 내려갑니다.</dd>
+<dt>단위</dt><dd>λ는 1 / (토큰 × step), μ는 1 / ms입니다. 그래서 λ × c와 μ × a는 단위가 없는 수가 되어 서로 더할 수 있습니다.</dd>
+</dl>
+<p><b>왜 이 모양인가</b>: 2.8절의 쌍대 변수 갱신입니다. 수요가 공급을 넘는 동안 문턱을 조이고, 넘지 않으면 풀어서 0으로 돌아가게 합니다. 곱셈과 exp로 갱신하므로 조정할 이득 상수가 없습니다.</p>
+
+<h3>9.4 시간 순서 예시 (8B 인스턴스 하나, 설명용 숫자)</h3>
+<div class="tbl"><table>
+<tr><th>시각</th><th>상태</th><th>결과</th></tr>
+<tr><td>0</td><td>지금 쥔 KV 100만 + 대기 prefill 2만 = 102만 (pool 104만의 98 %)</td><td>chat(prompt 500)은 판정 4를 통과해 route됩니다</td></tr>
+<tr><td>0.2 s</td><td>deepresearch(prompt 3,300)가 도착합니다. 다른 인스턴스들도 비슷하게 차 있습니다</td><td>판정 4 하나 때문에만 불가 → pend. KV 장부에 3,300을 기록합니다</td></tr>
+<tr><td>0.5 s</td><td>새 엔진 상태: u = (102만 + 3,300 + …) ÷ 104만 &gt; 1</td><td>λ가 생깁니다. 처음 문턱 = 처리 중 요청의 최대 남은 c(예: 300만)</td></tr>
+<tr><td>이후</td><td>자리가 나도 c가 문턱보다 큰 deepresearch는 판정 5에서 막힙니다</td><td>빈자리는 c가 작은 chat·swe가 먼저 씁니다</td></tr>
+<tr><td>그 뒤</td><td>못 받은 수요가 사라져 u &lt; 1이 됩니다</td><td>문턱이 올라가다가 없어집니다(λ = 0)</td></tr>
+</table></div>
+</section>
+
+<section id="decide">
+<h2>10. 정렬과 route · pend · reject</h2>
+<h4>정렬 (<code>sortCandidates</code>, 2036행)</h4>
+<p>판정 다섯 개를 통과한 인스턴스를 다음 순서로 비교해 1위를 고릅니다.</p>
+<ol>
+<li>같은 클래스 요청을 가장 많이 처리 중인 곳(affinity, 가중치 1.0)</li>
+<li>같으면 λ × c + μ × a가 작은 곳(v0.61에서 추가)</li>
+<li>같으면 KV 여유(room)가 큰 곳</li>
+<li>같으면 인스턴스 id 순서</li>
+</ol>
+<h4>route</h4>
+<p>통과한 인스턴스가 하나라도 있으면 1위로 보냅니다.</p>
+<h4>pend (<code>canWait</code>, 3013행)</h4>
+<p>통과한 곳이 없으면 먼저 9.3절의 장부에 기록하고, 다음 조건이면 기다리게 합니다.</p>
+<div class="eq">기다린 시간 &lt; TTFT − ( prefillMs + 배치 지연 여유 ) − 재질의 간격(500 ms)
+배치 지연 여유 = 그 인스턴스에서 잰 (실제 − 예측) 배치 지연의 평균 + 1.65 × 표준편차
+               (표본이 50개 미만이면 300 ms)</div>
+<p>읽는 법은 이렇습니다. "500 ms 뒤에 다시 물어서 그때 보내도 첫 토큰 마감을 지킬 수 있다면 기다린다." prefillMs는 1위 인스턴스의 값입니다.</p>
+<h4>reject</h4>
+<p>기다릴 수 없으면 거절합니다. v0.6부터 <code>FS_FORCE=false</code>이므로, 마감을 넘길 것을 알면서 억지로 보내는 일(forced placement)은 하지 않습니다.</p>
+<h4>클래스별 인스턴스 상한</h4>
+<p>v0.6에는 클래스마다 쓸 수 있는 인스턴스 수를 도착률로 제한하는 필터가 있었습니다(<code>fluidserve_instancecap.go</code>). v0.61에서는 껐습니다(후보 3부터).</p>
+</section>
+
+<section id="code">
+<h2>11. 플래그와 코드 위치</h2>
+<p>행 번호는 바깥 저장소 worktree <code>/home/nxclab/tools/wt-exp177-dual</code>(브랜치 <code>exp177-dual</code>, 커밋 <code>1a8ca1e</code>)의 <code>pkg/scheduler/policy/</code> 기준입니다. <code>1a8ca1e</code>는 v0.61(<code>3ba37e7</code>) 위에 T 모드만 더한 것이라, v0.61의 결정 경로는 같습니다.</p>
+<div class="tbl"><table>
+<tr><th>무엇</th><th>파일 : 함수 (행)</th></tr>
+<tr><td>엔진 상태 정리, proj, meanStep, B_min, A_r 제외 규칙, capKv</td><td><code>fluidserve.go : buildFlux</code> (1202~1460)</td></tr>
+<tr><td>outflow (2.5절의 95 % 하한)</td><td><code>fluidserve.go : expectedOutflow</code> (1487)</td></tr>
+<tr><td>판정 1~4, 판정 5 호출, "하나 때문에만" 표시</td><td><code>fluidserve.go : evaluate</code> (2194; 판정 1·2는 2335~2345, 판정 4는 2380~2398, 판정 3은 2409)</td></tr>
+<tr><td>정렬</td><td><code>fluidserve.go : sortCandidates</code> (2036)</td></tr>
+<tr><td>route / 장부 기록 / pend / reject</td><td><code>fluidserve.go : selectInstance</code> (1656; 장부 1777~1789, pend 1793)</td></tr>
+<tr><td>pend 조건, 첫 토큰 판정</td><td><code>fluidserve.go : canWait</code> (3013), <code>missesTtftDeadline</code> (2583)</td></tr>
+<tr><td>A_r 계산</td><td><code>fluidserve_registry.go</code> (900~945)</td></tr>
+<tr><td>prefill step 수</td><td><code>fluidserve_capacity.go : prefillSteps</code> (382)</td></tr>
+<tr><td>c, E[L²]/2, a</td><td><code>fluidserve_price.go : lifetimeKvCost</code> (291), <code>computeHalfSecondMoment</code> (275), <code>paceUse</code> (167)</td></tr>
+<tr><td>부족도와 문턱 변수 갱신</td><td><code>fluidserve_price.go : updateKvPrice</code> (323), <code>nextKvPrice</code> (228)</td></tr>
+<tr><td>판정 5</td><td><code>fluidserve_price.go : priceCandidate</code> (399)</td></tr>
+</table></div>
+<h4>v0.61의 플래그 (드라이버 환경 변수 → 스케줄러 플래그)</h4>
+<div class="tbl"><table>
+<tr><th>환경 변수</th><th>값</th><th>무엇을 정하나</th></tr>
+<tr><td class="m">FS_KV_PRICE</td><td>dual</td><td>판정 4를 물리 stock으로 바꾸고, 판정 5를 KV 쪽 + 시간 쪽 둘 다 켭니다(<code>--fluidserve-kv-price</code>). stock = A, time = T, off = v0.6</td></tr>
+<tr><td class="m">FS_INSTANCE_CAP</td><td>false</td><td>클래스별 인스턴스 상한을 끕니다</td></tr>
+<tr><td class="m">FS_GATE_UTIL</td><td>1.0</td><td>판정 1의 판정선 비율</td></tr>
+<tr><td class="m">FS_DEADLINE_FEASIBLE</td><td>true</td><td>판정 3을 켭니다</td></tr>
+<tr><td class="m">FS_MEMORY_PACE_CAP</td><td>true</td><td>판정 4의 둘째 부분(capKv 비교)을 켭니다</td></tr>
+<tr><td class="m">FS_AFFINITY_METRIC</td><td>count</td><td>정렬 1번 기준을 "같은 클래스 요청 수"로 합니다</td></tr>
+<tr><td class="m">FS_PREFILL_INTERLEAVE</td><td>true</td><td>판정 3에서 쌓인 prefill 시간에 decode가 끼어드는 몫을 넣습니다</td></tr>
+<tr><td class="m">FS_PER_INSTANCE_CORR</td><td>true</td><td>보정 계수 corr를 인스턴스마다 따로 둡니다</td></tr>
+<tr><td class="m">FS_PREFIX</td><td>true</td><td>prefix hit를 계산에 넣습니다(raw = P − hit)</td></tr>
+<tr><td class="m">FS_FORCE</td><td>false</td><td>기다릴 수 없을 때 억지로 보내지 않고 거절합니다</td></tr>
+<tr><td class="m">FS_EXACT_RESIDENCY, FS_EXACT_PROGRESS</td><td>1</td><td>처리 중 요청 장부를 완료 통지로 정확히 유지합니다(j_r, R_r의 바탕)</td></tr>
+</table></div>
+<p class="cap">나머지(FS_CLASS_HARM=false, FS_OWN_BUDGET_GATE=false, FS_SWE_TBT_MS=75, h = 100, z = 1.65, gateway <code>--wait-scheduling-timeout 35000ms</code>)는 v0.6과 같습니다(<code>project/versions/fluidserve-v0.6.md</code>).</p>
+</section>
+
+<section id="versions">
+<h2>12. 버전·후보 비교</h2>
+<div class="tbl"><table>
+<tr><th>구성</th><th>판정 4 (메모리)</th><th>판정 5 (사용량 문턱)</th><th>cap</th><th>바이너리</th></tr>
+<tr><td>v0.4 (제출 논문)</td><td>h 끝점 예측 ≤ capMem(0.95)</td><td>없음</td><td>켬</td><td class="m">6dc9f035</td></tr>
+<tr><td>v0.6 (기준선)</td><td>h 끝점 예측 ≤ min(capKv, capMem)</td><td>없음</td><td>켬</td><td class="m">7dc2355c</td></tr>
+<tr><td>후보 3 (EXP-172)</td><td>v0.6과 같음</td><td>KV 쪽만. u = (물리 + 대기)/pool이라 넘쳤을 때만 문턱이 생김</td><td>끔</td><td class="m">5d52124e</td></tr>
+<tr><td>D0 (EXP-177)</td><td>지금 논리 KV + 청구 ≤ min(capKv, capMem)</td><td>후보 3과 같음</td><td>끔</td><td class="m">5d52124e + 플래그</td></tr>
+<tr><td>A (EXP-177)</td><td>물리 KV + 대기 + raw ≤ pool (+ capKv)</td><td>KV 쪽만. u에 못 받은 수요 추가</td><td>끔</td><td class="m">1b89579b</td></tr>
+<tr><td>T (EXP-177)</td><td>A와 같음</td><td>시간 쪽만(λ = 0)</td><td>끔</td><td class="m">58a6e641</td></tr>
+<tr><td><b>v0.61 = D3</b></td><td>A와 같음</td><td>KV 쪽 + 시간 쪽: λ·c + μ·a ≤ 1</td><td>끔</td><td class="m">1de94045</td></tr>
+</table></div>
+<p class="cap">판정 1·2·3은 v0.6 이후 모두 같습니다.</p>
+</section>
+
+<section id="story">
+<h2>13. 왜 이렇게 바뀌었나</h2>
+<ol>
+<li><b>8B 표준 budget에서 v0.6이 PolyServe에 졌습니다.</b> 모든 도착이 63.5 대 78.0이었습니다(EXP-174, 8B 재측정). 5절 예시처럼 8B 엔진에서는 토큰당 budget이 느슨해서 KV가 먼저 한계가 됩니다.</li>
+<li><b>후보 3(KV 쪽 사용량 문턱)이 83.9로 올렸습니다.</b> 그러나 admitted가 95.9였고 preemption이 약 5만 회였습니다(EXP-174).</li>
+<li><b>Little의 법칙(2.9절)으로 이유를 확인했습니다.</b> "함대가 쥔 KV ÷ step = 처리 속도 × 평균 c"가 0.1 % 안에서 맞았습니다. 두 정책이 쓴 KV × 시간의 합은 같았고(731 G 대 728 G), 후보 3의 +29 %는 전부 평균 c가 23 % 줄어든 데서 왔습니다. 즉 "누구로 채우느냐"가 처리량을 정했습니다.</li>
+<li><b>v0.6에서 넘치는 원인</b>은 판정 4가 미래 유출을 미리 빼고, 그 유출을 여러 결정이 중복으로 쓴 것이었습니다(8절).</li>
+<li><b>D0(판정 4만 지금 상태 기준으로 바꿈)</b>: 넘침은 사라졌지만(preemption 1.5만 회), 후보 3의 문턱이 넘침이 있어야 생기는 구조여서 함께 꺼졌습니다. 문턱 판정이 혼자 막은 경우가 약 160만 회에서 1.7만 회로 줄었고, 거절이 도착 순서대로 일어나 모든 도착이 70.9가 됐습니다.</li>
+<li><b>A</b>: 문턱이 생기는 신호를 "넘침"에서 "못 받은 수요"로 바꿨습니다. 넘침 없이도 고르는 효과가 유지되어 모든 도착 88.4 / 88.6, admitted 99.7, preemption 약 4천 회가 됐습니다.</li>
+<li><b>8B 절반 budget에서는 세 정책이 비겼습니다</b>(약 75, EXP-176). 토큰 간격이 먼저 한계라 KV 쪽 문턱이 생기지 않았고, 늘어난 처리 능력은 deepresearch로 갔습니다.</li>
+<li><b>T와 D3</b>: 같은 원리를 GPU 시간에 적용했습니다. 절반 budget에서 87.3 / 87.4가 나왔습니다. 표준 budget에서는 T만으로는 76.5였고(KV 쪽이 필요), D3는 88.8 / 89.5였습니다. 그래서 두 쪽을 함께 둔 D3가 두 조건을 모두 덮습니다.</li>
+</ol>
+</section>
+
+<section id="results">
+<h2>14. 실험 결과</h2>
+<p>모든 run에서 gateway의 대체 배치는 0건이었고, 파드 안 바이너리 md5와 플래그를 확인했습니다. 비교 기준이 다른 세션의 기록이면 세션 간 문턱을 씁니다. 모든 도착·거절률·클래스별 값은 max(4.6, 반복 범위), admitted는 max(1, 반복 범위), goodput은 max(5 %, 반복 범위)입니다. 차이가 이 문턱보다 작으면 "차이 없음"으로 판정합니다.</p>
+<h3>14.1 8B 표준 budget</h3>
+<p class="cap">Llama-3.1-8B × 8 (TP1), chat 5 s/50 ms · deepresearch 10 s/100 ms · swe 7 s/75 ms, 한 시간 trace <code>shift62</code>(약 61만 도착), 부하 생성 36 프로세스</p>
+<div class="tbl"><table>
+<tr><th>지표</th><th>v0.61 (2회)</th><th>A (2회)</th><th>T (1회)</th><th>D0 (1회)</th><th>후보 3 (2회)</th><th>v0.6 (1회)</th><th>PolyServe (2회)</th></tr>
+<tr><td>모든 도착</td><td class="n hl">88.83 / 89.53</td><td class="n">88.41 / 88.64</td><td class="n">76.47</td><td class="n">70.85</td><td class="n">83.94</td><td class="n">63.53</td><td class="n">77.95</td></tr>
+<tr><td>admitted</td><td class="n">98.79 / 99.28</td><td class="n">99.68 / 99.75</td><td class="n">99.86</td><td class="n">99.83</td><td class="n">95.90</td><td class="n">96.56</td><td class="n">99.13</td></tr>
+<tr><td>거절률 %</td><td class="n">9.88 / 9.61</td><td class="n">11.14 / 10.97</td><td class="n">23.27</td><td class="n">28.90</td><td class="n">12.29</td><td class="n">34.04</td><td class="n">21.29</td></tr>
+<tr><td>token goodput tok/s</td><td class="n">83,980 / 84,344</td><td class="n">83,262 / 83,299</td><td class="n">75,407</td><td class="n">72,764</td><td class="n">81,880</td><td class="n">68,535</td><td class="n">74,226</td></tr>
+<tr><td>chat 모든 도착 / admitted / 거절</td><td class="n">97.62 / 98.73 / 0.98</td><td class="n">97.07 / 99.65 / 2.47</td><td class="n">82.21 / 99.82 / 17.53</td><td class="n">74.68 / 99.93 / 25.18</td><td class="n">89.76 / 94.66 / 5.06</td><td class="n">63.67 / 96.22 / 33.74</td><td class="n">85.99 / 98.79 / 12.90</td></tr>
+<tr><td>deepresearch</td><td class="n">59.67 / 99.73 / 39.83</td><td class="n">59.32 / 99.84 / 40.30</td><td class="n">63.91 / 99.94 / 35.72</td><td class="n">70.97 / 99.44 / 28.31</td><td class="n">62.98 / 99.20 / 36.18</td><td class="n">72.76 / 97.79 / 25.12</td><td class="n">52.52 / 100.00 / 47.35</td></tr>
+<tr><td>swe</td><td class="n">95.44 / 99.88 / 4.35</td><td class="n">93.75 / 99.94 / 6.13</td><td class="n">68.35 / 100.00 / 31.59</td><td class="n">51.46 / 99.94 / 48.47</td><td class="n">89.27 / 98.64 / 9.39</td><td class="n">47.64 / 95.76 / 50.18</td><td class="n">79.49 / 100.00 / 20.51</td></tr>
+<tr><td>preemption</td><td class="n">4,449 / 4,565</td><td class="n">4,577 / 3,901</td><td class="n">3,642</td><td class="n">15,168</td><td class="n">약 51,000</td><td class="n">52,335</td><td class="n">0</td></tr>
+<tr><td>KV 평균</td><td class="n">0.735 / 0.732</td><td class="n">0.738 / 0.742</td><td class="n">0.795</td><td class="n">0.809</td><td class="n">0.80</td><td class="n">0.815</td><td class="n">0.50</td></tr>
+</table></div>
+<p class="cap">v0.61·A·T·D0: EXP-177·178(2026-11-24). 후보 3·v0.6·PolyServe: EXP-174(2026-11-22). 2회인 구성의 클래스 값은 2회 평균입니다.</p>
+<ul>
+<li><b>v0.61 − PolyServe</b>: 모든 도착 <span class="up">+11.23</span>, 거절률 <span class="up">−11.54</span>, goodput <span class="up">+13.4 %</span>, 클래스별 모든 도착·거절률 모두 낫습니다. admitted는 같습니다. 나빠진 지표는 없습니다.</li>
+<li><b>v0.61 − 후보 3</b>: 모든 도착 <span class="up">+5.24</span>, admitted <span class="up">+3.13</span>, chat <span class="up">+7.86 / +4.08</span>(모든 도착 / admitted), swe 모든 도착 <span class="up">+6.17</span>. 나머지 지표는 차이가 없습니다.</li>
+<li><b>v0.61 − A</b>: 열다섯 지표 모두 차이가 없습니다. 표준 budget에서는 KV 쪽 문턱이 일하고, 시간 쪽 문턱은 거의 0에 머물기 때문입니다.</li>
+</ul>
+
+<h3>14.2 8B 절반 budget</h3>
+<p class="cap">같은 함대와 trace, chat 2.5 s/25 ms · deepresearch 5 s/50 ms · swe 3.5 s/38 ms(제출 논문의 8B 조건). 채점 규칙이 달라서 14.1과 한 표에 놓지 않습니다.</p>
+<div class="tbl"><table>
+<tr><th>지표</th><th>v0.61 (1회)</th><th>T (1회)</th><th>PolyServe (2회)</th><th>v0.6 (2회)</th><th>후보 3 (2회)</th></tr>
+<tr><td>모든 도착</td><td class="n hl">87.43</td><td class="n">87.28</td><td class="n">74.88</td><td class="n">75.45</td><td class="n">75.50</td></tr>
+<tr><td>admitted</td><td class="n">99.80</td><td class="n">99.78</td><td class="n">96.84</td><td class="n">99.29</td><td class="n">99.64</td></tr>
+<tr><td>거절률 %</td><td class="n">12.28</td><td class="n">12.40</td><td class="n">22.62</td><td class="n">23.90</td><td class="n">24.12</td></tr>
+<tr><td>request goodput r/s</td><td class="n">148.53</td><td class="n">148.24</td><td class="n">127.23</td><td class="n">128.17</td><td class="n">128.24</td></tr>
+<tr><td>token goodput tok/s</td><td class="n">81,883</td><td class="n">82,048</td><td class="n">69,936</td><td class="n">75,614</td><td class="n">75,668</td></tr>
+<tr><td>chat / deepresearch / swe 모든 도착</td><td class="n">96.8 / 58.1 / 89.0</td><td class="n">96.2 / 59.3 / 88.4</td><td class="n">81.3 / 45.9 / 90.2</td><td class="n">78.6 / 67.4 / 72.9</td><td class="n">77.4 / 69.6 / 75.6</td></tr>
+<tr><td>preemption</td><td class="n">638</td><td class="n">852</td><td class="n">0</td><td class="n">약 11,000</td><td class="n">약 8,000</td></tr>
+</table></div>
+<p class="cap">v0.61·T: EXP-177b. 나머지: EXP-176. 제출 논문의 8B 결과(1.33배)는 PolyServe의 tier 표가 잘못 설정된 상태에서 잰 값이었습니다(evidence.md 항목 12).</p>
+
+<h3>14.3 70B</h3>
+<p class="cap">Llama-3.1-70B × 4 (TP2), 표준 budget, 한 시간 trace <code>shift</code>(약 9.8만 도착), 부하 생성 12 프로세스</p>
+<div class="tbl"><table>
+<tr><th>지표</th><th>v0.61 (2회)</th><th>v0.6 (2회)</th><th>후보 3 (2회)</th><th>PolyServe (2회)</th></tr>
+<tr><td>모든 도착</td><td class="n hl">84.82 / 84.33</td><td class="n">80.69</td><td class="n">82.62</td><td class="n">53.80</td></tr>
+<tr><td>admitted</td><td class="n">99.97 / 99.95</td><td class="n">99.90</td><td class="n">99.94</td><td class="n">65.71</td></tr>
+<tr><td>거절률 %</td><td class="n">14.97 / 15.47</td><td class="n">19.00</td><td class="n">17.12</td><td class="n">17.93</td></tr>
+<tr><td>token goodput tok/s</td><td class="n">11,722 / 11,641</td><td class="n">11,763</td><td class="n">11,950</td><td class="n">8,674</td></tr>
+<tr><td>chat / deepresearch / swe 모든 도착</td><td class="n">96.6 / 52.1 / 77.7</td><td class="n">85.4 / 69.2 / 75.9</td><td class="n">88.4 / 67.2 / 78.9</td><td class="n">52.0 / 42.9 / 80.7</td></tr>
+<tr><td>chat / deepresearch / swe 거절률 %</td><td class="n">3.3 / 47.6 / 22.2</td><td class="n">14.5 / 30.0 / 23.5</td><td class="n">11.5 / 32.2 / 20.7</td><td class="n">5.2 / 56.3 / 18.8</td></tr>
+<tr><td>preemption</td><td class="n">38 / 32</td><td class="n">약 1,670</td><td class="n">약 1,020</td><td class="n">0</td></tr>
+</table></div>
+<p class="cap">v0.61: EXP-178b 2회. v0.6: EXP-161. 후보 3·PolyServe: EXP-175. 클래스 값은 2회 평균입니다.</p>
+<p class="note"><b>70B 판정 (2회)</b>: v0.6과 비교하면 모든 도착 +3.88, admitted, 거절률, token goodput(−0.7 %)이 모두 세션 간 문턱 안이라 <b>차이가 없습니다</b>. 다른 지표는 클래스별 값입니다. chat 모든 도착은 +11.2로 좋아졌고, <b>deepresearch 모든 도착은 −17.1, 거절률은 +17.5로 나빠졌습니다.</b> 처리한 토큰 총량은 그대로이고, 그 토큰을 deepresearch 대신 chat에 쓴 것입니다. 1회째만 보고 적었던 "+4.1"은 2회 평균으로 문턱 안입니다. 70B에서는 KV가 한계가 아니었고(메모리 판정 하나로 막힌 평가 약 2.5천), 일한 것은 시간 쪽 문턱입니다. PolyServe와 비교하면 모든 도착 +30.8로 크게 낫습니다.</p>
+
+<h3>14.4 상한 (오프라인, Little의 법칙으로 계산)</h3>
+<p>trace의 시간 구간별 클래스 도착률과 요청당 사용량을 놓고, 사용량이 작은 요청부터 용량을 채워 계산한 처리량 상한입니다(EXP-177 밤사이 검토의 데이터 분석, <code>/home/nxclab/scratch/idea1124/data/</code>). 8B 표준은 90~94(v0.61 89.2), 8B 절반은 88~91(v0.61 87.4)입니다. v0.61은 두 조건 모두 상한에 가깝습니다.</p>
+</section>
+
+<section id="little">
+<h2>15. 유량 관점에서 남은 것과 버린 것</h2>
+<h3>Little의 법칙이 말해 주는 것</h3>
+<div class="eq">(함대가 평균적으로 쥔 KV) ÷ (step 시간) = (처리하는 요청 속도) × (요청 하나의 평균 c)</div>
+<p>2.9절의 일반형 H = λG를 KV에 적용한 것입니다. 성립 조건은 관찰 구간(50분)이 요청이 머무는 시간(1분 안쪽)보다 충분히 길다는 것뿐입니다. 8B 표준 budget에서 v0.6은 10.22 M 대 10.23 M, 후보 3은 10.85 M 대 10.85 M으로 맞았습니다.</p>
+<p>이 식을 처리 속도에 대해 풀면 <b>처리 속도 = 묶이는 자원의 용량 ÷ 요청 하나의 평균 사용량</b>입니다. 용량이 정해져 있으므로, 처리하는 요청 수를 늘리는 방법은 받은 요청들의 평균 사용량을 낮추는 것뿐입니다. 판정 5의 기준이 요청 하나의 사용량(c, a)인 이유이고, c와 a가 이 식의 G에 해당합니다.</p>
+<h3>말해 주지 않는 것</h3>
+<p>무엇을 늘려야 하는지(목표)는 말해 주지 않습니다. 요청 수를 늘리려면 c·a가 작은 요청을, 토큰 수를 늘리려면 토큰 하나당 사용량이 작은 요청을 먼저 받아야 합니다. "작은 요청을 먼저 받는다"는 이 법칙만의 결론이 아니라, 요청 수를 목표로 둔 선택(2.8절)과 이 법칙을 합친 결론입니다.</p>
+<h3>남은 것과 버린 것</h3>
+<ul>
+<li><b>버린 것</b>: 앞으로의 유입·유출을 예측해서 지금 얼마나 받을지 정하는 것입니다. 이번 데이터에서 이 방식은 넘침(미리 뺀 유출)이나 덜 받기(미리 센 유입)만 만들었습니다. 유입을 미리 센 시도는 EXP-114·125·126·155·158·173에서 모두 처리량을 줄였습니다.</li>
+<li><b>남은 것 ①</b>: 실제로 일어난 유입·유출만 센다는 회계 원칙입니다. 판정 4가 보는 kvPhysical은 끝난 요청이 풀어 준 만큼 이미 줄어든 값입니다. TCP의 conservation of packets(Jacobson 1988)와 같은 원리입니다.</li>
+<li><b>남은 것 ②</b>: 들어오지 못한 유입(못 받은 수요)을 신호로 쓰는 것입니다. 판정 5의 문턱이 이것으로 생기고 움직입니다.</li>
+<li><b>남은 것 ③</b>: 정상 상태의 유량 관계(Little)로 사용량의 단위와 상한을 정한 것입니다.</li>
+</ul>
+<p class="note"><b>논문에 쓸 때</b>: "유량 예측 기반 admission"이라고 쓰면 정확하지 않습니다. "정상 상태의 유량 관계로 요청 하나의 자원 사용량을 정의하고, 받지 못한 수요로 사용량 문턱을 조정한다"가 정확합니다.</p>
+</section>
+
+<section id="overlap">
+<h2>16. 판정 단계의 중복 검토 (2026-11-24 요청)</h2>
+<p>다섯 판정을 자원별로 다시 묶으면 자원이 세 개 보입니다. 자원마다 <b>한계</b>(넘으면 안 되는 양)와 <b>배분</b>(한계 안을 누구로 채우나)이 있습니다.</p>
+<div class="tbl"><table>
+<tr><th>자원</th><th>한계 (얼마나)</th><th>배분 (누구를)</th><th>겹치거나 합칠 수 있는 곳</th></tr>
+<tr><td>GPU 시간 (토큰 간격)</td><td>판정 1 + 판정 2</td><td>판정 5의 μ × a, 정렬의 "같은 클래스 수"</td><td>① 1과 2는 같은 양(meanAfter)을 두 상한과 비교하므로 meanAfter ≤ min(B_q, B_min, min_r A_r) 하나로 쓸 수 있습니다(빼는 요청 규칙만 다름). ② a의 조이는 비용 항과 "같은 클래스 수" 정렬은 목적이 같습니다(budget이 같은 요청 모으기)</td></tr>
+<tr><td>KV</td><td>판정 4 첫 부분 (물리 stock ≤ pool)</td><td>판정 5의 λ × c</td><td>③ 판정 4의 둘째 부분(capKv)은 "판정 1을 지킬 수 있는 최대 KV"라서, 판정 1과 같은 제약을 KV 단위로 한 번 더 쓴 것입니다. 게다가 proj(100 step 예측)를 아직 씁니다</td></tr>
+<tr><td>prefill 처리 능력 (첫 토큰)</td><td>판정 3</td><td>없음</td><td>④ 첫 토큰 때문에 막히는 수요가 많은 조건에서는 같은 구조의 배분이 필요할 수 있습니다(열린 질문)</td></tr>
+</table></div>
+<p><b>합치면 안 되는 것</b>: 한계와 배분(예: 판정 4와 λ)은 합치지 않습니다. 배분만 남기면 문턱이 생기기 전까지 넘침을 막을 것이 없습니다. D0와 A가 보여 준 것처럼, 둘은 같은 양(물리 stock)을 읽는 한 쌍(제약과 그 쌍대 변수, 2.8절)으로 두는 것이 맞습니다.</p>
+<p><b>정리 제안</b>: 논문에서는 "판정 다섯 개"보다 <b>"세 자원 × (한계, 배분)"</b>으로 설명하는 것을 권합니다. 바꾸는 것이 하나뿐인 실험은 둘입니다.</p>
+<ul>
+<li><b>E1</b>: v0.61 + <code>FS_MEMORY_PACE_CAP=false</code>로 판정 4의 둘째 부분(capKv)을 뺍니다. ③이 정말 중복인지 봅니다. 예측은 "어느 지표도 다르지 않다"입니다. 플래그만 바꾸면 됩니다.</li>
+<li><b>E2</b>: "같은 클래스 수" 정렬을 끕니다. ②가 중복인지 봅니다. <b>주의</b>: 지금 코드에서 <code>--fluidserve-enable-affinity=false</code>로 끄면 정렬 1번 기준이 "KV 여유"가 되어, λ × c + μ × a는 KV 여유가 같을 때만 쓰입니다. ②를 제대로 보려면 "λ × c + μ × a가 작은 순"을 1번 기준으로 올리는 작은 코드 변경이 필요합니다. 8B에서는 차이가 없을 가능성이 크고, 70B(c0이 커서 조이는 비용이 큼)에서 클래스 분리가 유지되는지가 관건입니다.</li>
+<li>①은 동작이 거의 바뀌지 않는 서술 통합이므로, 실험 대신 판정 기록에서 두 조건의 결론이 갈린 경우를 세어 확인할 수 있습니다.</li>
+</ul>
+<p class="cap">이력: 명목 budget 없이 남은 허용치만으로 토큰 간격을 판정한 시도(EXP-157, ladder 판정선)는 70B에서 모든 도착이 12점 낮았습니다. 그래서 판정 1의 명목 부분을 없애는 통합은 하지 않습니다.</p>
+</section>
+
+<section id="limits">
+<h2>17. 한계와 열린 질문</h2>
+<ul>
+<li><b>목표에 따라 결과가 달라집니다</b>: 요청 하나의 가치를 모두 1로 둡니다. 그래서 deepresearch를 더 거절합니다(8B 약 40 %, 70B 47.6 %; 70B에서는 v0.6의 30.0 %보다 17.5점 많습니다). 그래도 PolyServe보다는 deepresearch를 더 처리합니다(8B 표준 59.7 대 52.5, 절반 58.1 대 45.9, 70B 52.5 대 42.9). 클래스별 가치 v_c를 운영자 입력으로 받으면(λ·c + μ·a ≤ v_c) 같은 장치로 우선순위나 가중 공정성을 표현할 수 있습니다.</li>
+<li><b>반복 수</b>: v0.61은 8B 표준 2회, 8B 절반 1회, 70B 2회입니다. 비교 기준은 다른 세션의 기록입니다.</li>
+<li><b>70B에서는 v0.6보다 나아지지 않았습니다</b>: 전체 지표는 같고 클래스 구성만 바뀌었습니다(14.3절). deepresearch 손해가 목표(요청 수)의 대가인지, a가 deepresearch를 과하게 매긴 것인지를 가려야 합니다. 토큰 하나당 사용량(a ÷ E[L])으로 고르는 변형이 이를 가르는 실험이 될 수 있습니다.</li>
+<li><b>trace</b>: 한 계열뿐입니다(클래스가 섞인 한 시간 trace, 8B는 6.2배로 키운 것). 다른 클래스 구성과 단일 클래스 trace가 필요합니다.</li>
+<li><b>길이 분포</b>: 클래스별 분포는 오프라인 프로파일입니다. 분포가 바뀌면 c·a가 틀어집니다. 문턱 변수는 수요 변화에는 적응하지만 사용량 추정 오류는 고치지 못합니다.</li>
+<li><b>h가 남은 곳</b>: 판정 1·2의 step 시간(prefill 간섭 s_p/h, proj), 판정 4의 capKv 비교, 첫 토큰 추정(h 동안 들어올 prefill), 문턱 변수의 시간 상수 H입니다.</li>
+<li><b>못 받은 수요가 여러 곳에 기록됨</b>: 한 요청이 여러 인스턴스에서 같은 이유로 막히면, 그 인스턴스들의 부족도가 함께 오릅니다. 실제 부족보다 크게 잡힐 수 있습니다.</li>
+</ul>
+</section>
+
+<section id="refs">
+<h2>18. 참조</h2>
+<div class="tbl"><table>
+<tr><th>무엇</th><th>위치</th></tr>
+<tr><td>버전 명세</td><td><code>project/versions/fluidserve-v0.61.md</code>, <code>fluidserve-v0.6.md</code></td></tr>
+<tr><td>수치 (정본)</td><td><code>project/evidence.md</code> §10(8B 표준 재측정), §12(8B 절반·더 빡빡한 budget), §11(70B 후보 3, EXP-175), §13(EXP-177·178 회계 일관성과 사용량 문턱 판정)</td></tr>
+<tr><td>구현 설명</td><td><code>project/system.md</code> §4(결정 경로), §7(논문과 코드의 대응)</td></tr>
+<tr><td>실험 기록</td><td><code>Agent_applications/agent_motivation_experiment/experiments/</code>: EXP-172(후보 3), EXP-174(8B 재측정), EXP-175(70B 후보 3), EXP-176(절반·더 빡빡한 budget), EXP-177(D0·A·T·D3), EXP-178(v0.61 8B·70B)</td></tr>
+<tr><td>코드</td><td>바깥 저장소 브랜치 <code>exp177-dual</code> <code>3ba37e7</code>(v0.61), <code>exp177-kv-stock</code>(A), <code>exp172-cand3-price</code>(후보 3). 아직 원격 저장소에 올라가 있지 않습니다</td></tr>
+<tr><td>밤사이 검토 보고</td><td><code>/home/nxclab/scratch/idea1124/reports/</code> keep·drop·unify·data·reviewer</td></tr>
+<tr><td>run 이름 (v0.61)</td><td>8B 표준 <code>261123_1907_exp178hr1_fsxdual_shift62</code>, <code>261123_2017_exp178hr2_fsxdual_shift62</code>; 8B 절반 <code>261123_1510_exp177bhr1_fsxdual_shift62h</code>; 70B <code>261123_2138_exp178bhr1_fsxdual_shift</code></td></tr>
+<tr><td>문헌</td><td>Little(1961) N = XW; Brumelle(1971), Stidham(1974) H = λG; Kelly(1998), Low–Lapsley(1999) 네트워크 자원 배분의 dual decomposition; Jacobson(1988) conservation of packets</td></tr>
+</table></div>
+</section>
+</main>
+</div>
