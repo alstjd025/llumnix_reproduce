@@ -29,10 +29,10 @@ arm 파일 `/home/nxclab/scratch/exp172/arms/fsxdual.env`, 드라이버 `run_exp
 |---|---|---|---|
 | EXP-178 | 8B 표준, 2회 | 모든 도착 88.83 / 89.53, admitted 98.79 / 99.28 | 후보 A와 모든 지표 같음; PolyServe(77.95) 대비 나쁜 지표 없음 |
 | EXP-177b | 8B 절반, 1회 | 87.43, admitted 99.80 | PolyServe 74.88, v0.6 75.45(EXP-176) |
-| EXP-178b | 70B 표준, r1 | 84.82, admitted 99.97, token goodput 11,722 | v0.6 80.69(EXP-161), PolyServe 53.80(EXP-175); token goodput은 v0.6과 같고 클래스 구성(chat ↑, deepresearch ↓)이 바뀜 |
+| EXP-178b | 70B 표준, 2회 | 84.82 / 84.33, admitted 99.97 / 99.95 | v0.6(EXP-161)과 모든 도착·admitted·거절률·token goodput 차이 없음; chat 모든 도착 +11.2(좋음), deepresearch −17.1(나쁨). PolyServe(EXP-175) 대비 +30.8 |
 
 ## 3. 알려진 성질과 아직 남은 것
 
 - 요청 하나의 가치를 모두 1로 둔다(요청 수 목표). 그래서 요청 하나당 자원을 가장 많이 쓰는 deepresearch를 더 거절한다(8B 약 40 %, 70B r1 47 %). PolyServe보다는 deepresearch를 더 처리한다.
-- 70B에서는 처리한 토큰 총량이 v0.6과 같다. 처리한 요청 수만 늘었다.
-- 남은 것: 70B 2회째(진행 중), 8B 절반 budget 2회째, 다른 trace, 판정 단계 사이의 중복 정리(2026-11-24 사용자 요청), 목표(가치)를 바꾼 변형.
+- 70B에서는 v0.6보다 나아지지 않았다: 처리한 토큰 총량이 같고 늘어난 요청 수(+3.9)는 세션 간 문턱 안이며, deepresearch를 17점 덜 처리한다(`evidence.md` §13.3).
+- 남은 것: 8B 절반 budget 2회째, 다른 trace, 판정 단계 사이의 중복 정리(2026-11-24 사용자 요청), 목표(가치)를 바꾼 변형.
